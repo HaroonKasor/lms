@@ -21,18 +21,7 @@ export default function ProfilePage() {
                 setError('');
 
                 const currentUser = getUser();
-                if (!currentUser) {
-                    setError('Please sign in to view your profile');
-                    return;
-                }
-                const userId = currentUser?.id;
-                const username = currentUser?.username;
-
-                const query = new URLSearchParams();
-                if (userId) query.set('userId', String(userId));
-                if (username) query.set('username', username);
-
-                const res = await fetch(`/api/users/profile?${query.toString()}`, {
+                const res = await fetch('/api/users/profile', {
                     cache: 'no-store',
                 });
                 const data = await res.json();
@@ -42,6 +31,26 @@ export default function ProfilePage() {
                 }
 
                 setUser(data);
+                try {
+                    const fallbackRemember = typeof window !== 'undefined'
+                        ? Boolean(localStorage.getItem('lms_user'))
+                        : false;
+                    const remember = getRememberMePreference(fallbackRemember);
+                    saveUser(
+                        {
+                            ...(currentUser || {}),
+                            ...data,
+                            id: Number(data?.id || currentUser?.id || 0) || undefined,
+                            username: data?.username || currentUser?.username || '',
+                            email: data?.email || currentUser?.email || '',
+                            fullName: data?.fullName || currentUser?.fullName || '',
+                        },
+                        { remember }
+                    );
+                    window.dispatchEvent(new Event('lms_user_updated'));
+                } catch {
+                    // ignore storage sync errors
+                }
             } catch (err) {
                 setError(err.message || 'Failed to load profile');
             } finally {

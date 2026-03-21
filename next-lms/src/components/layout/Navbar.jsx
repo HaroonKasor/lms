@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import ChatPanel from '@/components/ui/ChatPanel';
-import { clearUser, getUser } from '@/lib/auth';
+import { clearUser, getRememberMePreference, getUser, saveUser } from '@/lib/auth';
 
 const DEFAULT_AVATAR_URL = '/images/default-avatar.svg';
 const NOTIFICATION_POLLING_MS = 5000;
@@ -58,15 +58,58 @@ export default function Navbar() {
     const chatRef = useRef(null);
     const notificationSnapshotRef = useRef({ initialized: false, ids: new Set() });
     const toastTimersRef = useRef(new Map());
+    const userSyncAttemptedRef = useRef(false);
 
     const readStoredUser = React.useCallback(() => {
-        setUser(getUser());
+        const current = getUser();
+        setUser(current);
+        return current;
+    }, []);
+
+    const syncUserFromServer = React.useCallback(async () => {
+        try {
+            const res = await fetch('/api/users/profile', {
+                cache: 'no-store',
+                credentials: 'include',
+            });
+            if (!res.ok) {
+                if (res.status === 401 || res.status === 403) {
+                    clearUser();
+                    setUser(null);
+                }
+                return null;
+            }
+            const data = await res.json();
+            const fallbackRemember = typeof window !== 'undefined'
+                ? Boolean(localStorage.getItem('lms_user'))
+                : false;
+            const remember = getRememberMePreference(fallbackRemember);
+            saveUser(data, { remember });
+            setUser(data);
+            return data;
+        } catch {
+            return null;
+        }
     }, []);
 
     useEffect(() => {
         setIsHydrated(true);
-        readStoredUser();
-    }, [readStoredUser]);
+        const current = readStoredUser();
+        if (!current) {
+            void syncUserFromServer();
+        }
+    }, [readStoredUser, syncUserFromServer]);
+
+    useEffect(() => {
+        if (!isHydrated) return;
+        if (user) {
+            userSyncAttemptedRef.current = false;
+            return;
+        }
+        if (userSyncAttemptedRef.current) return;
+        userSyncAttemptedRef.current = true;
+        void syncUserFromServer();
+    }, [isHydrated, user, syncUserFromServer]);
 
     useEffect(() => {
         if (!isHydrated) return undefined;
@@ -290,6 +333,12 @@ export default function Navbar() {
                 cache: 'no-store',
                 keepalive: true,
             });
+            await fetch('/api/auth/logout', {
+                method: 'GET',
+                credentials: 'include',
+                cache: 'no-store',
+                keepalive: true,
+            });
         } catch { }
         clearUser();
         localStorage.removeItem('lms_ui_chat_open');
@@ -300,7 +349,7 @@ export default function Navbar() {
         setUnreadNotificationCount(0);
         setShowChat(false);
         if (typeof window !== 'undefined') {
-            window.location.assign('/login?force=1&loggedOut=1');
+            window.location.replace(`/login?force=1&loggedOut=1&t=${Date.now()}`);
             return;
         }
         router.push('/login?force=1&loggedOut=1');
