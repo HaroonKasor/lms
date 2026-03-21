@@ -300,10 +300,10 @@ export default function Navbar() {
         setUnreadNotificationCount(0);
         setShowChat(false);
         if (typeof window !== 'undefined') {
-            window.location.assign('/login?loggedOut=1');
+            window.location.assign('/login?force=1&loggedOut=1');
             return;
         }
-        router.push('/login');
+        router.push('/login?force=1&loggedOut=1');
     };
 
     const displayName = user?.fullName || user?.username || 'User';
@@ -556,6 +556,7 @@ export default function Navbar() {
                                     {/* Logout */}
                                     <div className="border-t border-[#F2F2F7]">
                                         <button
+                                            type="button"
                                             className="flex items-center gap-3 px-5 py-3 w-full hover:bg-[#FFF5F5] transition-colors"
                                             onClick={handleLogout}
                                         >

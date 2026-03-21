@@ -179,8 +179,10 @@ export async function middleware(request) {
         // Keep login/register accessible when:
         // 1) a `next` target is present (avoid stale-session redirect loops), or
         // 2) `force=1` is present (manual QA/debug to re-open auth form).
+        // 3) `loggedOut=1` is present (allow post-logout landing page).
         const forceAuthPage = request.nextUrl.searchParams.get('force') === '1';
-        if (request.nextUrl.searchParams.has('next') || forceAuthPage) {
+        const isLoggedOutLanding = request.nextUrl.searchParams.get('loggedOut') === '1';
+        if (request.nextUrl.searchParams.has('next') || forceAuthPage || isLoggedOutLanding) {
             return NextResponse.next();
         }
         const url = request.nextUrl.clone();
