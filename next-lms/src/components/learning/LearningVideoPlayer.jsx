@@ -46,7 +46,7 @@ export default function LearningVideoPlayer({
                         }`}
                     >
                         <Image
-                            src="/messageImage_1772439871651.jpg"
+                            src="/images/ai-assistant-icon.jpg"
                             alt="LMS bot"
                             width={24}
                             height={22}

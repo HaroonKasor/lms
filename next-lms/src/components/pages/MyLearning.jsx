@@ -415,7 +415,7 @@ export default function MyLearning() {
                             {/* Empty State */}
                             {filteredCourses.length === 0 && (
                                 <div className="flex flex-col items-center justify-center py-20 text-center">
-                                    <img src="/messageImage_1772440583769.jpg" alt="No courses" className="w-[160px] h-auto mb-6 opacity-70" />
+                                    <img src="/images/empty-state-courses.jpg" alt="No courses" className="w-[160px] h-auto mb-6 opacity-70" />
                                     <p className="text-[#6B778B] text-base leading-relaxed mb-6">
                                         You haven&apos;t enrolled in any courses yet.<br />
                                         Let&apos;s find something exciting to learn today.
@@ -592,7 +592,7 @@ function CourseCard({ enrollment, formatDuration }) {
     const isCompleted = normalizedStatus === 'COMPLETED';
     const isLearning = normalizedStatus === 'LEARNING';
     const isPending = normalizedStatus === 'PENDING';
-    const certificateImage = '/messageImage_1772596552610.jpg';
+    const certificateImage = '/images/certificate-placeholder.jpg';
     const thumbnail = course?.thumbnail || '/course.png';
     const tabStatus = isCompleted ? 'Completed' : isLearning ? 'Learning' : isPending ? 'Pending Approval' : 'Enrolled';
     const statusColorClass = isCompleted ? 'text-[#1DBA9F]' : isLearning ? 'text-[#687EFF]' : isPending ? 'text-[#F59E0B]' : 'text-[#8E8E93]';

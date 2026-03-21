@@ -75,7 +75,7 @@ export default function LandingPage() {
                     <div className="flex-1 flex flex-col items-start pb-16 lg:pb-24">
                         {/* Light bulb icon */}
                         <FadeIn direction="right" delay={80} className="mb-8 mix-blend-multiply">
-                            <img src="/messageImage_1772443033023.png" alt="idea" className="w-[80px] h-[80px] object-contain mix-blend-multiply" />
+                            <img src="/images/idea-icon.png" alt="idea" className="w-[80px] h-[80px] object-contain mix-blend-multiply" />
                         </FadeIn>
 
                         <FadeIn direction="right" className="flex flex-col items-start">
@@ -134,13 +134,13 @@ export default function LandingPage() {
 
                         {/* Star decoration */}
                         <FadeIn direction="down" delay={260} className="absolute left-[10%] top-[3%] z-20">
-                            <img src="/messageImage_1772443052524.png" alt="star" className="w-[50px] h-[50px] object-contain mix-blend-multiply" />
+                            <img src="/images/star-icon.png" alt="star" className="w-[50px] h-[50px] object-contain mix-blend-multiply" />
                         </FadeIn>
 
                         {/* Hero Image - larger, anchored to bottom */}
                         <div className="flex items-end justify-center w-full relative z-20">
                             <img
-                                src="/messageImage_1772443005375.png"
+                                src="/images/hero-student.png"
                                 alt="Student"
                                 className="w-[520px] max-w-full h-auto object-contain"
                             />

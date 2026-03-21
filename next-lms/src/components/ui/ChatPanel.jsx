@@ -131,7 +131,7 @@ export default function ChatPanel({ isOpen, onClose }) {
                 </button>
                 <div className="flex items-center gap-2 flex-1">
                     <img
-                        src="/messageImage_1772439871651.jpg"
+                        src="/images/ai-assistant-icon.jpg"
                         alt="LMS bot"
                         className="w-8 h-7 object-contain shrink-0"
                     />

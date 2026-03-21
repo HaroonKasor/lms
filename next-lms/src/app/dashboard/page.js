@@ -176,7 +176,7 @@ export default function LearnerDashboard() {
                                 </div>
                             ) : (
                                 <div className="flex flex-col items-center justify-center py-8 text-center">
-                                    <img src="/messageImage_1772440583769.jpg" alt="No courses" className="w-[120px] h-auto mb-4 opacity-70" />
+                                    <img src="/images/empty-state-courses.jpg" alt="No courses" className="w-[120px] h-auto mb-4 opacity-70" />
                                     <p className="text-[#6B778B] text-sm mb-4">You haven't enrolled in any courses yet.</p>
                                     <Link href="/courses" className="bg-[#F87A53] hover:bg-[#e06a45] text-white px-6 py-2 rounded-full text-sm font-medium transition-colors">
                                         Browse Courses
@@ -318,7 +318,7 @@ export default function LearnerDashboard() {
                                 })}
                                 {enrollments.length === 0 && (
                                     <div className="flex flex-col items-center justify-center py-8 text-center">
-                                        <img src="/messageImage_1772440583769.jpg" alt="No activity" className="w-[100px] h-auto mb-4 opacity-60" />
+                                        <img src="/images/empty-state-courses.jpg" alt="No activity" className="w-[100px] h-auto mb-4 opacity-60" />
                                         <p className="text-[#6B778B] text-sm">No activity yet</p>
                                     </div>
                                 )}

@@ -26,7 +26,7 @@ export default function AboutPage() {
             comments: 105,
             author: "Jordan Walk",
             authorRole: "Education Specialist",
-            image: "/messageImage_1772443005375.png" // placeholder
+            image: "/images/hero-student.png" // placeholder
         },
         {
             id: 2,
@@ -37,7 +37,7 @@ export default function AboutPage() {
             comments: 24,
             author: "David Millar",
             authorRole: "Senior Developer",
-            image: "/messageImage_1772443033023.png" // placeholder
+            image: "/images/idea-icon.png" // placeholder
         },
         {
             id: 3,
@@ -49,7 +49,7 @@ export default function AboutPage() {
             desc: "User experience is the key to product success in the digital age. Learn why investing in UX design is crucial for your business.",
             author: "Wade Warren",
             authorRole: "UX Designer",
-            image: "/messageImage_1772443052524.png" // placeholder
+            image: "/images/star-icon.png" // placeholder
         },
         {
             id: 4,
@@ -61,7 +61,7 @@ export default function AboutPage() {
             desc: "A step-by-step guide for aspiring data scientists. Learn the essential skills and tools you need to break into this exciting field.",
             author: "Jenny Wilson",
             authorRole: "Data Scientist",
-            image: "/messageImage_1772443005375.png" // placeholder
+            image: "/images/hero-student.png" // placeholder
         },
         {
             id: 5,
@@ -73,7 +73,7 @@ export default function AboutPage() {
             desc: "React Hooks have revolutionized how we write React components. Learn everything you need to know about useState, useEffec...",
             author: "David Millar",
             authorRole: "Senior Developer",
-            image: "/messageImage_1772443033023.png" // placeholder
+            image: "/images/idea-icon.png" // placeholder
         },
         {
             id: 6,
@@ -85,7 +85,7 @@ export default function AboutPage() {
             desc: "Stay ahead of the competition with these proven digital marketing strategies for 2025. From SEO to social media, we cover it all.",
             author: "Sarah Johnson",
             authorRole: "Marketing Director",
-            image: "/messageImage_1772443052524.png" // placeholder
+            image: "/images/star-icon.png" // placeholder
         }
     ];
 

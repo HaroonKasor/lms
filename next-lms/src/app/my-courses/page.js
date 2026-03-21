@@ -55,7 +55,7 @@ export default function MyCoursesPage() {
                     {/* Content */}
                     {filtered.length === 0 ? (
                         <div className="text-center py-20 flex flex-col items-center">
-                            <img src="/messageImage_1772440583769.jpg" alt="No courses" className="w-[160px] h-auto mb-6 opacity-70" />
+                            <img src="/images/empty-state-courses.jpg" alt="No courses" className="w-[160px] h-auto mb-6 opacity-70" />
                             <p className="text-[#6B778B] text-base leading-relaxed mb-6">
                                 You haven't enrolled in any courses yet.<br />
                                 Let's find something exciting to learn today.

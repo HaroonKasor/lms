@@ -660,7 +660,7 @@ export default function Navbar() {
                                 title="SkillBot AI Assistant"
                                 className="cursor-pointer shrink-0 flex items-center justify-center hover:opacity-80 transition-opacity focus:outline-none"
                             >
-                                <img src="/messageImage_1772439871651.jpg" alt="AI Chat" className="w-[32px] h-[29px] object-contain" />
+                                <img src="/images/ai-assistant-icon.jpg" alt="AI Chat" className="w-[32px] h-[29px] object-contain" />
                             </button>
                             <ChatPanel isOpen={showChat} onClose={() => setShowChat(false)} />
                         </div>

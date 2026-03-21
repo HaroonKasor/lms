@@ -185,7 +185,7 @@ export default function ContactPage() {
                     {/* Left side image */}
                     <div className="lg:w-1/2 rounded-[24px] overflow-hidden shadow-lg relative min-h-[400px] bg-slate-200">
                         {/* Course Image Placeholder */}
-                        <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url('/messageImage_1772443005375.png')" }}></div>
+                        <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url('/images/hero-student.png')" }}></div>
                         <div className="absolute inset-0 bg-black/10"></div>
 
                         {/* Optional text overlaid on image to mimic "Course" text in design */}

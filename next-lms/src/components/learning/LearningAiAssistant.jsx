@@ -35,7 +35,7 @@ export default function LearningAiAssistant({ onClose }) {
                 </button>
                 <div className="flex items-center gap-2 flex-1">
                     <Image
-                        src="/messageImage_1772439871651.jpg"
+                        src="/images/ai-assistant-icon.jpg"
                         alt="LMS bot"
                         width={32}
                         height={29}

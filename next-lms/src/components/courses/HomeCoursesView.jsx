@@ -30,7 +30,7 @@ export default function HomeCoursesView() {
             rating: 4.8,
             price: 49.99,
             oldPrice: 99.99,
-            image: "/messageImage_1772443005375.png", // placeholder
+            image: "/images/hero-student.png", // placeholder
             bgColor: "bg-[#F87A53]"
         },
         {
@@ -42,7 +42,7 @@ export default function HomeCoursesView() {
             rating: 4.5,
             price: 39.99,
             oldPrice: null,
-            image: "/messageImage_1772443033023.png", // placeholder
+            image: "/images/idea-icon.png", // placeholder
             bgColor: "bg-[#FFC224]"
         },
         {
@@ -54,7 +54,7 @@ export default function HomeCoursesView() {
             rating: 4.8,
             price: 59.99,
             oldPrice: 89.99,
-            image: "/messageImage_1772443005375.png", // placeholder
+            image: "/images/hero-student.png", // placeholder
             bgColor: "bg-[#F87A53]"
         },
         {
@@ -66,7 +66,7 @@ export default function HomeCoursesView() {
             rating: 4.6,
             price: 29.99,
             oldPrice: null,
-            image: "/messageImage_1772443005375.png", // placeholder
+            image: "/images/hero-student.png", // placeholder
             bgColor: "bg-[#F87A53]"
         },
         {
@@ -78,7 +78,7 @@ export default function HomeCoursesView() {
             rating: 4.9,
             price: 89.99,
             oldPrice: 120.00,
-            image: "/messageImage_1772443033023.png", // placeholder
+            image: "/images/idea-icon.png", // placeholder
             bgColor: "bg-[#FFC224]"
         },
         {
@@ -90,7 +90,7 @@ export default function HomeCoursesView() {
             rating: 4.8,
             price: 69.99,
             oldPrice: 129.99,
-            image: "/messageImage_1772443005375.png", // placeholder
+            image: "/images/hero-student.png", // placeholder
             bgColor: "bg-[#F87A53]"
         },
     ];
