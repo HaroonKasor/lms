@@ -1,0 +1,4227 @@
+'use client';
+
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
+import Navbar from '@/components/layout/Navbar';
+import LoadScreen from '@/components/ui/LoadScreen';
+import LearningLessonSidebar from '@/components/learning/LearningLessonSidebar';
+import LearningVideoPlayer from '@/components/learning/LearningVideoPlayer';
+import LearningAiAssistant from '@/components/learning/LearningAiAssistant';
+import {
+    sendStatement,
+    buildVideoEventStatement,
+    buildVideoProgressStatement,
+    buildCompletionStatement,
+    updateProgress,
+    getProgress,
+} from '@/lib/xapi';
+import { getUser } from '@/lib/auth';
+
+function normalizeTinCanActivities(content) {
+    if (!content || content.type !== 'tincan' || !Array.isArray(content.activities)) {
+        return content;
+    }
+
+    const normalizePath = (value = '') =>
+        String(value || '')
+            .replace(/^https?:\/\/[^/]+/i, '')
+            .replace(/\\/g, '/')
+            .split('?')[0]
+            .split('#')[0]
+            .replace(/^\/+/, '')
+            .toLowerCase();
+
+    const entryPath = normalizePath(content.entryPoint || '');
+    const entryDir = entryPath.includes('/') ? entryPath.slice(0, entryPath.lastIndexOf('/') + 1) : '';
+    const contentTitle = String(content?.title || '').trim().toLowerCase();
+    const seenKeys = new Set();
+
+    const getIdPath = (activity) => {
+        const raw = String(activity?.activityId || activity?.id || '').trim();
+        if (!raw) return '';
+        try {
+            if (/^https?:\/\//i.test(raw)) {
+                const url = new URL(raw);
+                return normalizePath(`${url.pathname}${url.search}${url.hash}`);
+            }
+        } catch {
+            // ignore URL parse errors
+        }
+        return normalizePath(raw);
+    };
+
+    const hasLessonPathInId = (activity) => {
+        const idPath = getIdPath(activity);
+        if (!idPath) return false;
+        return (
+            /(^|\/)data\//i.test(idPath)
+            || /(^|\/)(?:post|pre)?test[^/]*\/index\.html$/i.test(idPath)
+            || /\.html$/i.test(idPath)
+        );
+    };
+
+    const filtered = content.activities.filter((activity) => {
+        const launch = String(activity?.launch || '').trim();
+        const activityName = String(activity?.name || '').trim().toLowerCase();
+        const activityId = String(activity?.id || '').trim().toLowerCase();
+        const idLooksLikeLesson = hasLessonPathInId(activity);
+        const isCourseLikeName = activityName && contentTitle && activityName === contentTitle;
+        const isCourseLikeId = activityId && !activityId.includes('/data/') && !activityId.includes('.html');
+
+        if (!launch) {
+            const isPageFlag = activity?.ispage;
+            if (isPageFlag === false || String(isPageFlag).toLowerCase() === 'false') {
+                return false;
+            }
+            // Keep no-launch activities only when id clearly points to a real lesson page.
+            return idLooksLikeLesson;
+        }
+
+        const launchPath = normalizePath(launch);
+        const resolvedPath = launchPath.includes('/') ? launchPath : `${entryDir}${launchPath}`;
+
+        // Drop wrapper launch page (same as TinCan entry point) to keep chapter index aligned.
+        if (entryPath && resolvedPath === entryPath && (isCourseLikeName || isCourseLikeId || !idLooksLikeLesson)) {
+            return false;
+        }
+
+        // Drop root course activity row (course title), keep only actual lesson activities.
+        const isRootCourseByName = activityName && contentTitle && activityName === contentTitle;
+        const isRootCourseById = activityId && !activityId.includes('/data/') && !activityId.includes('.html');
+        const isIndexWrapper = launchPath === 'index.html' || launchPath.endsWith('/index.html');
+        if (content.activities.length > 1 && isIndexWrapper && (isRootCourseByName || isRootCourseById)) {
+            return false;
+        }
+
+        const dedupeKey = resolvedPath || getIdPath(activity) || `${activityId}:${activityName}`;
+        if (dedupeKey) {
+            if (seenKeys.has(dedupeKey)) return false;
+            seenKeys.add(dedupeKey);
+        }
+
+        return true;
+    });
+
+    if (filtered.length === 0) {
+        const fallback = content.activities.filter((activity) => hasLessonPathInId(activity));
+        if (fallback.length > 0) {
+            return { ...content, activities: fallback };
+        }
+        return content;
+    }
+    return { ...content, activities: filtered };
+}
+
+function toTimestamp(value) {
+    const t = new Date(value || 0).getTime();
+    return Number.isFinite(t) ? t : 0;
+}
+
+function isTruthyFlag(value) {
+    if (value === true) return true;
+    if (typeof value === 'number') return value > 0;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (!normalized) return false;
+        return ['1', 'true', 'yes', 'y', 'passed', 'completed', 'done', 'success'].includes(normalized);
+    }
+    return false;
+}
+
+function asFiniteNumber(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+}
+
+function normalizeStatusText(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function hasFailureStatusSignal(value) {
+    const statusText = normalizeStatusText(value);
+    if (!statusText) return false;
+    return (
+        statusText.includes('fail')
+        || statusText.includes('failed')
+        || statusText.includes('incomplete')
+        || statusText.includes('not complete')
+        || statusText.includes('not completed')
+        || statusText.includes('not passed')
+        || statusText.includes('ยังไม่ผ่าน')
+        || statusText.includes('ไม่ผ่าน')
+        || statusText.includes('ไม่สำเร็จ')
+    );
+}
+
+function hasPassStatusSignal(value) {
+    const statusText = normalizeStatusText(value);
+    if (!statusText) return false;
+    return (
+        statusText.includes('pass')
+        || statusText.includes('passed')
+        || statusText.includes('success')
+        || statusText.includes('ผ่าน')
+        || statusText.includes('สำเร็จ')
+    );
+}
+
+function hasCompletionStatusSignal(value) {
+    const statusText = normalizeStatusText(value);
+    if (!statusText) return false;
+    if (hasFailureStatusSignal(statusText)) return false;
+    return (
+        /\bcompleted?\b/.test(statusText)
+        || statusText.includes('เสร็จสิ้น')
+        || statusText.includes('สำเร็จ')
+    );
+}
+
+function sanitizeStorageScope(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9._-]+/g, '_');
+}
+
+export default function LearnPage() {
+    const params = useParams();
+    const searchParams = useSearchParams();
+    const routeId = params.id;
+    const [mounted, setMounted] = useState(false);
+    const isLaunchMode = mounted && searchParams.get('launch') === '1';
+    const requestedSectionId = useMemo(() => {
+        const value = Number(searchParams.get('sectionId'));
+        return Number.isInteger(value) && value > 0 ? value : null;
+    }, [searchParams]);
+
+    const [content, setContent] = useState(null);
+    const [course, setCourse] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [progress, setProgress] = useState(0);
+    const [currentTime, setCurrentTime] = useState(0);
+    const [duration, setDuration] = useState(0);
+    const [status, setStatus] = useState('NOT_STARTED');
+    const [statements, setStatements] = useState([]);
+    const [currentUser, setCurrentUser] = useState(null);
+    const [userResolved, setUserResolved] = useState(false);
+    const [enrollmentId, setEnrollmentId] = useState(null);
+    const [resumeLoaded, setResumeLoaded] = useState(false);
+    const [selectedActivityIndex, setSelectedActivityIndex] = useState(0);
+    const [activeSectionId, setActiveSectionId] = useState(null);
+    const [iframeSrc, setIframeSrc] = useState('');
+    const [isTinCanFrameReady, setIsTinCanFrameReady] = useState(false);
+    const [tinCanActivityStatus, setTinCanActivityStatus] = useState([]);
+    const [progressUserId, setProgressUserId] = useState('anonymous');
+    const [isLearningSidebarOpen, setIsLearningSidebarOpen] = useState(true);
+    const [isLearningAiOpen, setIsLearningAiOpen] = useState(false);
+    const [showCompletionToast, setShowCompletionToast] = useState(false);
+
+    const videoRef = useRef(null);
+    const iframeRef = useRef(null);
+    const frameRevealTimeoutRef = useRef(null);
+    const lastSentTimeRef = useRef(0);
+    const lastTincanSyncRef = useRef({ position: null, status: null, progress: null, at: 0 });
+    const lastTinCanStatusSigRef = useRef('');
+    const resumeGuardUntilRef = useRef(0);
+    const manualSelectionRef = useRef({ target: null, until: 0 });
+    const hasShownCompletionToastRef = useRef(false);
+    const tinCanSyncInFlightRef = useRef(false);
+    const enrollmentSyncStateRef = useRef({
+        inFlight: false,
+        blockedUntil: 0,
+        lastStatus: '',
+        lastProgress: -1,
+        lastAt: 0,
+    });
+    const progressRefreshStateRef = useRef({ inFlight: false, lastAt: 0 });
+    const highestSeenActivityIndexRef = useRef(0);
+    const selectedActivitySyncStateRef = useRef({ idx: null, status: '', at: 0 });
+    const legacyWebSyncStateRef = useRef({ idx: null, status: '', at: 0 });
+    const progressWriteBlockRef = useRef({ disabled: false, reason: '' });
+    const trackedStudySecondsRef = useRef(0);
+    const trackedStudyTickAtRef = useRef(0);
+    const lastUserInteractionAtRef = useRef(0);
+    const iframeInteractionCleanupRef = useRef(null);
+    const playerReflowTimeoutsRef = useRef([]);
+    const reflowSessionRef = useRef(0);
+    const completionLockRef = useRef(false);
+
+    const markLearningInteraction = useCallback(() => {
+        const now = Date.now();
+        // Throttle noisy events (mousemove etc.)
+        if (now - Number(lastUserInteractionAtRef.current || 0) >= 300) {
+            lastUserInteractionAtRef.current = now;
+        }
+    }, []);
+
+    const clearIframeInteractionTracking = useCallback(() => {
+        try {
+            if (typeof iframeInteractionCleanupRef.current === 'function') {
+                iframeInteractionCleanupRef.current();
+            }
+        } catch {
+            // ignore cleanup errors
+        } finally {
+            iframeInteractionCleanupRef.current = null;
+        }
+    }, []);
+
+    useEffect(() => {
+        setMounted(true);
+    }, []);
+
+    // Learning player should always start with global chatbot closed.
+    useEffect(() => {
+        try {
+            localStorage.removeItem('lms_ui_chat_open');
+        } catch {
+            // ignore storage errors
+        }
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (frameRevealTimeoutRef.current) {
+                clearTimeout(frameRevealTimeoutRef.current);
+            }
+            const pending = Array.isArray(playerReflowTimeoutsRef.current)
+                ? playerReflowTimeoutsRef.current
+                : [];
+            pending.forEach((timer) => clearTimeout(timer));
+            playerReflowTimeoutsRef.current = [];
+            clearIframeInteractionTracking();
+        };
+    }, [clearIframeInteractionTracking]);
+
+    useEffect(() => {
+        setCurrentUser(getUser());
+        setUserResolved(true);
+    }, []);
+
+    useEffect(() => {
+        const completed = String(status || '').toUpperCase() === 'COMPLETED';
+        if (completed) {
+            completionLockRef.current = true;
+        }
+        if (completed && !hasShownCompletionToastRef.current) {
+            hasShownCompletionToastRef.current = true;
+            setShowCompletionToast(true);
+            const timer = setTimeout(() => setShowCompletionToast(false), 2600);
+            return () => clearTimeout(timer);
+        }
+        if (!completed) {
+            hasShownCompletionToastRef.current = false;
+            setShowCompletionToast(false);
+        }
+    }, [status]);
+
+    const actor = useMemo(() => {
+        const email = currentUser?.email || `${currentUser?.username || 'anonymous'}@lms.local`;
+        return {
+            name: currentUser?.fullName || currentUser?.username || 'Anonymous Learner',
+            email,
+        };
+    }, [currentUser]);
+
+    const canonicalProgressUserId = useMemo(
+        () => (currentUser?.username || 'anonymous').trim() || 'anonymous',
+        [currentUser]
+    );
+
+    const progressUserCandidates = useMemo(() => {
+        if (!userResolved) return [];
+        const username = (currentUser?.username || '').trim();
+        const email = (currentUser?.email || '').trim();
+        const fallbackEmail = username ? `${username}@lms.local` : '';
+        if (username) {
+            // Logged-in users should not fallback to anonymous progress.
+            return [username, email, fallbackEmail].filter(Boolean);
+        }
+        return ['anonymous'];
+    }, [currentUser, userResolved]);
+
+    const learningUserId = actor.email;
+    const resolvedContentId = content?.id || routeId;
+    const progressContentId = useMemo(() => {
+        const numericCourseId = Number(course?.id);
+        if (Number.isInteger(numericCourseId) && numericCourseId > 0) {
+            return String(numericCourseId);
+        }
+        const routeKey = String(routeId || '').trim();
+        if (routeKey) return routeKey;
+        return String(resolvedContentId || '').trim();
+    }, [course?.id, routeId, resolvedContentId]);
+    const iframeRenderKey = useMemo(() => {
+        const contentKey = String(content?.id || routeId || 'unknown');
+        const sectionKey = Number.isInteger(Number(activeSectionId)) && Number(activeSectionId) > 0
+            ? String(Number(activeSectionId))
+            : 'default';
+        return `${contentKey}:${sectionKey}:${isLaunchMode ? 'launch' : 'default'}`;
+    }, [content?.id, routeId, activeSectionId, isLaunchMode]);
+    const scopedStorageSuffix = useMemo(() => {
+        const userKey = sanitizeStorageScope(canonicalProgressUserId || 'anonymous') || 'anonymous';
+        const sectionKey = Number.isInteger(Number(activeSectionId)) && Number(activeSectionId) > 0
+            ? `:section:${Number(activeSectionId)}`
+            : '';
+        const enrollmentKey = Number.isInteger(Number(enrollmentId)) && Number(enrollmentId) > 0
+            ? `:enrollment:${Number(enrollmentId)}`
+            : '';
+        return `:user:${userKey}${enrollmentKey}${sectionKey}`;
+    }, [canonicalProgressUserId, enrollmentId, activeSectionId]);
+    const tincanResumeStorageKeys = useMemo(() => {
+        const values = [
+            String(progressContentId || '').trim(),
+            String(course?.id || '').trim(),
+            String(routeId || '').trim(),
+        ].filter(Boolean);
+
+        const unique = Array.from(new Set(values));
+        return unique.map((value) => `lms_tincan_resume:${value}${scopedStorageSuffix}`);
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffix]);
+    const tincanResumePathStorageKeys = useMemo(() => {
+        const values = [
+            String(progressContentId || '').trim(),
+            String(course?.id || '').trim(),
+            String(routeId || '').trim(),
+        ].filter(Boolean);
+
+        const unique = Array.from(new Set(values));
+        return unique.map((value) => `lms_tincan_resume_path:${value}${scopedStorageSuffix}`);
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffix]);
+    const webResumeStorageKeys = useMemo(() => {
+        const values = [
+            String(progressContentId || '').trim(),
+            String(course?.id || '').trim(),
+            String(routeId || '').trim(),
+        ].filter(Boolean);
+
+        const unique = Array.from(new Set(values));
+        return unique.map((value) => `lms_web_resume:${value}${scopedStorageSuffix}`);
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffix]);
+    const webStatusStorageKeys = useMemo(() => {
+        const values = [
+            String(progressContentId || '').trim(),
+            String(course?.id || '').trim(),
+            String(routeId || '').trim(),
+        ].filter(Boolean);
+
+        const unique = Array.from(new Set(values));
+        return unique.map((value) => `lms_web_status:${value}${scopedStorageSuffix}`);
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffix]);
+
+    const persistTincanResumeIndex = useCallback((idx) => {
+        if (!content || content.type !== 'tincan') return;
+        const value = Number(idx);
+        if (!Number.isFinite(value) || value < 0) return;
+        if (!Array.isArray(tincanResumeStorageKeys) || tincanResumeStorageKeys.length === 0) return;
+        try {
+            const serialized = String(Math.floor(value));
+            for (const key of tincanResumeStorageKeys) {
+                localStorage.setItem(key, serialized);
+            }
+        } catch {
+            // ignore storage errors
+        }
+    }, [content, tincanResumeStorageKeys]);
+
+    const readTincanResumeIndex = useCallback(() => {
+        if (!content || content.type !== 'tincan') return null;
+        if (!Array.isArray(tincanResumeStorageKeys) || tincanResumeStorageKeys.length === 0) return null;
+        try {
+            let best = null;
+            for (const key of tincanResumeStorageKeys) {
+                const raw = localStorage.getItem(key);
+                if (!raw) continue;
+                const value = Number(raw);
+                if (!Number.isFinite(value) || value < 0) continue;
+                const safe = Math.floor(value);
+                if (!Number.isFinite(best) || safe > best) {
+                    best = safe;
+                }
+            }
+            return Number.isFinite(best) ? best : null;
+        } catch {
+            return null;
+        }
+    }, [content, tincanResumeStorageKeys]);
+
+    const normalizeActivityPathKey = useCallback((value = '') => {
+        const raw = String(value || '').trim();
+        if (!raw) return '';
+        let normalized = raw;
+        if (/^https?:\/\//i.test(normalized)) {
+            try {
+                const url = new URL(normalized);
+                normalized = `${url.pathname}${url.search}${url.hash}`;
+            } catch {
+                // keep raw format if URL parsing fails
+            }
+        }
+        normalized = normalized
+            .replace(/^https?:\/\/[^/]+/i, '')
+            .replace(/\\/g, '/')
+            .split('?')[0]
+            .split('#')[0]
+            .replace(/^\/+/, '')
+            .toLowerCase();
+        return normalized;
+    }, []);
+
+    const persistTincanResumePath = useCallback((pathValue) => {
+        if (!content || content.type !== 'tincan') return;
+        if (!Array.isArray(tincanResumePathStorageKeys) || tincanResumePathStorageKeys.length === 0) return;
+        const normalized = normalizeActivityPathKey(pathValue);
+        if (!normalized) return;
+        try {
+            for (const key of tincanResumePathStorageKeys) {
+                localStorage.setItem(key, normalized);
+            }
+        } catch {
+            // ignore storage errors
+        }
+    }, [content, tincanResumePathStorageKeys, normalizeActivityPathKey]);
+
+    const readTincanResumePath = useCallback(() => {
+        if (!content || content.type !== 'tincan') return '';
+        if (!Array.isArray(tincanResumePathStorageKeys) || tincanResumePathStorageKeys.length === 0) return '';
+        try {
+            for (const key of tincanResumePathStorageKeys) {
+                const raw = localStorage.getItem(key);
+                const normalized = normalizeActivityPathKey(raw);
+                if (normalized) return normalized;
+            }
+        } catch {
+            // ignore storage errors
+        }
+        return '';
+    }, [content, tincanResumePathStorageKeys, normalizeActivityPathKey]);
+
+    const persistWebResumeIndex = useCallback((idx) => {
+        if (!content || content.type !== 'web') return;
+        const value = Number(idx);
+        if (!Number.isFinite(value) || value < 0) return;
+        if (!Array.isArray(webResumeStorageKeys) || webResumeStorageKeys.length === 0) return;
+        try {
+            const serialized = String(Math.floor(value));
+            for (const key of webResumeStorageKeys) {
+                localStorage.setItem(key, serialized);
+            }
+        } catch {
+            // ignore storage errors
+        }
+    }, [content, webResumeStorageKeys]);
+
+    const readWebResumeIndex = useCallback(() => {
+        if (!content || content.type !== 'web') return null;
+        if (!Array.isArray(webResumeStorageKeys) || webResumeStorageKeys.length === 0) return null;
+        try {
+            let best = null;
+            for (const key of webResumeStorageKeys) {
+                const raw = localStorage.getItem(key);
+                if (!raw) continue;
+                const value = Number(raw);
+                if (!Number.isFinite(value) || value < 0) continue;
+                const safe = Math.floor(value);
+                if (!Number.isFinite(best) || safe > best) {
+                    best = safe;
+                }
+            }
+            return Number.isFinite(best) ? best : null;
+        } catch {
+            return null;
+        }
+    }, [content, webResumeStorageKeys]);
+
+    const persistWebStatusSnapshot = useCallback((snapshot) => {
+        if (!content || content.type !== 'web') return;
+        if (!Array.isArray(webStatusStorageKeys) || webStatusStorageKeys.length === 0) return;
+        if (!Array.isArray(snapshot) || snapshot.length === 0) return;
+        try {
+            const compact = snapshot.map((row) => ({
+                attempted: row?.attempted === true,
+                completed: row?.completed === true,
+                passed: row?.passed === true,
+                quizzed: row?.quizzed === true,
+            }));
+            const serialized = JSON.stringify(compact);
+            for (const key of webStatusStorageKeys) {
+                localStorage.setItem(key, serialized);
+            }
+        } catch {
+            // ignore storage errors
+        }
+    }, [content, webStatusStorageKeys]);
+
+    const readWebStatusSnapshot = useCallback(() => {
+        if (!content || content.type !== 'web') return null;
+        if (!Array.isArray(webStatusStorageKeys) || webStatusStorageKeys.length === 0) return null;
+        try {
+            for (const key of webStatusStorageKeys) {
+                const raw = localStorage.getItem(key);
+                if (!raw) continue;
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed) || parsed.length === 0) continue;
+                return parsed.map((row) => ({
+                    attempted: row?.attempted === true,
+                    completed: row?.completed === true,
+                    passed: row?.passed === true,
+                    quizzed: row?.quizzed === true,
+                }));
+            }
+        } catch {
+            // ignore parse/storage errors
+        }
+        return null;
+    }, [content, webStatusStorageKeys]);
+
+    const computeTinCanProgress = useCallback((position, total, completed = false) => {
+        const totalLessons = Math.max(1, Number(total) || 0);
+        const safePos = Math.max(1, Math.min(totalLessons, Number(position) || 1));
+        if (completed) return 100;
+        // Keep LEARNING below 100 to avoid dashboard desync before true completion.
+        return Math.max(0, Math.min(99, Math.round((safePos / totalLessons) * 100)));
+    }, []);
+
+    const isCompletedVerb = useCallback((verb = {}) => {
+        const verbId = String(verb?.id || '').toLowerCase();
+        const verbLabel = String(verb?.display?.['en-US'] || verb?.display?.en || '').toLowerCase();
+        return hasCompletionStatusSignal(`${verbId} ${verbLabel}`);
+    }, []);
+
+    const isAssessmentActivity = useCallback((activity) => {
+        if (activity && typeof activity === 'object') {
+            if (
+                activity.assessment === true
+                || activity?.config?.isAssessment === true
+            ) {
+                return true;
+            }
+
+            const masteryScore = Number(
+                activity.masteryScore
+                ?? activity?.config?.masteryScore
+                ?? activity?.metadata?.masteryScore
+            );
+            if (Number.isFinite(masteryScore) && masteryScore > 0) {
+                return true;
+            }
+
+            const calculatescore = activity.calculatescore
+                ?? activity.calculateScore
+                ?? activity?.config?.calculateScore
+                ?? activity?.metadata?.calculatescore;
+            if (calculatescore === true) {
+                return true;
+            }
+
+            const attemptLimit = Number(
+                activity.attemptLimit
+                ?? activity.limitQuizzed
+                ?? activity?.config?.limitQuizzed
+                ?? activity?.metadata?.attemptLimit
+            );
+            if (Number.isFinite(attemptLimit) && attemptLimit > 0) {
+                return true;
+            }
+        }
+
+        const raw = typeof activity === 'string'
+            ? activity
+            : (activity?.name || activity?.title || activity?.launch || activity?.activityId || activity?.id || '');
+        return /quiz|test|exam|assessment|post[\s-_]?test|pre[\s-_]?test|แบบทดสอบ|ทดสอบ/i.test(String(raw));
+    }, []);
+
+    const getAssessmentPassingScore = useCallback((activity) => {
+        if (!activity || typeof activity !== 'object') return 80;
+        const raw = Number(
+            activity.masteryScore
+            ?? activity?.config?.masteryScore
+            ?? activity?.metadata?.masteryScore
+            ?? activity?.passScore
+            ?? activity?.config?.passScore
+            ?? activity?.metadata?.passScore
+            ?? 80
+        );
+        if (!Number.isFinite(raw)) return 80;
+        if (raw > 0 && raw <= 1) return Math.round(raw * 100);
+        return Math.max(1, Math.min(100, Math.round(raw)));
+    }, []);
+
+    const isTinCanLessonPassed = useCallback((item, activity = null) => {
+        if (!item || typeof item !== 'object') return false;
+        const isAssessment = isAssessmentActivity(activity);
+
+        const statusText = normalizeStatusText(
+            item.status
+            ?? item.result
+            ?? item.completionStatus
+            ?? item.successStatus
+            ?? ''
+        );
+        if (statusText) {
+            const hasExplicitFail = hasFailureStatusSignal(statusText);
+            if (hasExplicitFail) return false;
+
+            const hasExplicitPass = hasPassStatusSignal(statusText);
+            if (hasExplicitPass) return true;
+
+            if (!isAssessment && hasCompletionStatusSignal(statusText)) {
+                return true;
+            }
+        }
+
+        const explicitSuccess = typeof item.success === 'boolean'
+            ? item.success
+            : (typeof item?.result?.success === 'boolean' ? item.result.success : null);
+        if (explicitSuccess === false) return false;
+        if (explicitSuccess === true) return true;
+
+        const explicitPass =
+            isTruthyFlag(item.passed) ||
+            isTruthyFlag(item.isPassed) ||
+            isTruthyFlag(item?.result?.passed);
+        if (explicitPass) return true;
+
+        const score = asFiniteNumber(
+            item.score
+            ?? item.rawScore
+            ?? item.raw
+            ?? item.resultScore
+            ?? item.scoreRaw
+            ?? item?.result?.score?.raw
+        );
+        const scoreMax = asFiniteNumber(
+            item.scoreMax
+            ?? item.maxScore
+            ?? item.max
+            ?? item.totalScore
+            ?? item?.result?.score?.max
+        );
+        const percent = asFiniteNumber(item.percent ?? item.percentage ?? item.progressPercent);
+        const scaled = asFiniteNumber(
+            item.scaledScore
+            ?? item.scaled
+            ?? item.scoreScaled
+            ?? item.normalizedScore
+            ?? item?.result?.score?.scaled
+        );
+
+        const normalizedFromScore = score !== null ? (score <= 1 ? score * 100 : score) : null;
+        const normalizedFromScaled = scaled !== null ? (scaled <= 1 ? scaled * 100 : scaled) : null;
+        const normalizedFromRawMax =
+            score !== null && scoreMax !== null && scoreMax > 0
+                ? (score / scoreMax) * 100
+                : null;
+
+        if (isAssessment) {
+            const passingScore = getAssessmentPassingScore(activity);
+            if (normalizedFromScore !== null && normalizedFromScore >= passingScore) return true;
+            if (normalizedFromScaled !== null && normalizedFromScaled >= passingScore) return true;
+            if (normalizedFromRawMax !== null && normalizedFromRawMax >= passingScore) return true;
+            return false;
+        }
+
+        if (isTruthyFlag(item.completed)) return true;
+        if (normalizedFromScore !== null && normalizedFromScore >= 100) return true;
+        if (percent !== null && percent >= 100) return true;
+        if (normalizedFromScaled !== null && normalizedFromScaled >= 100) return true;
+        return false;
+    }, [isAssessmentActivity, getAssessmentPassingScore]);
+
+    const isTinCanLessonClearedForAdvance = useCallback((item, activity = null) => {
+        // Strict gating: previous lesson must be completed/passed before moving forward.
+        return isTinCanLessonPassed(item, activity);
+    }, [isTinCanLessonPassed]);
+
+    const hasAssessmentActivities = useMemo(() => {
+        if (content?.type !== 'tincan' || !Array.isArray(content?.activities)) return false;
+        return content.activities.some((activity) => isAssessmentActivity(activity));
+    }, [content, isAssessmentActivity]);
+
+    const areAssessmentActivitiesPassed = useMemo(() => {
+        if (content?.type !== 'tincan' || !Array.isArray(content?.activities)) return false;
+        if (!hasAssessmentActivities) return true;
+        return content.activities.every((activity, index) => {
+            if (!isAssessmentActivity(activity)) return true;
+            return isTinCanLessonPassed(tinCanActivityStatus[index], activity);
+        });
+    }, [content, hasAssessmentActivities, isAssessmentActivity, isTinCanLessonPassed, tinCanActivityStatus]);
+
+    const hasAssessmentFailureSignals = useMemo(() => {
+        if (content?.type !== 'tincan' || !Array.isArray(content?.activities)) return false;
+        if (!hasAssessmentActivities) return false;
+        return content.activities.some((activity, index) => {
+            if (!isAssessmentActivity(activity)) return false;
+            const item = tinCanActivityStatus[index];
+            const statusText = normalizeStatusText(
+                item?.status
+                ?? item?.result
+                ?? item?.completionStatus
+                ?? item?.successStatus
+                ?? ''
+            );
+            if (hasFailureStatusSignal(statusText)) {
+                return true;
+            }
+            if (item?.success === false) return true;
+            return false;
+        });
+    }, [content, hasAssessmentActivities, isAssessmentActivity, tinCanActivityStatus]);
+
+    useEffect(() => {
+        if (hasAssessmentFailureSignals) {
+            completionLockRef.current = false;
+        }
+    }, [hasAssessmentFailureSignals]);
+
+    const requireAssessmentPass = useMemo(() => {
+        const completedWhenDoAll = content?.completionPolicy?.completedWhenDoAllMasteryscore;
+        if (completedWhenDoAll === false) return false;
+        if (hasAssessmentActivities) return true;
+        const configured = content?.completionPolicy?.requireAssessmentPass;
+        if (typeof configured === 'boolean') return configured;
+        return false;
+    }, [content?.completionPolicy?.requireAssessmentPass, content?.completionPolicy?.completedWhenDoAllMasteryscore, hasAssessmentActivities]);
+
+    const canFinalizeTinCanCompletion = useCallback(({
+        completedByProgress: _completedByProgress = false,
+        completedByPackage = false,
+        completedByActivities = false,
+        activityIndex: _activityIndex = -1,
+    } = {}) => {
+        const totalActivities = Array.isArray(content?.activities) ? content.activities.length : 0;
+        const hasMultipleActivities = totalActivities > 1;
+
+        // Do not trust raw progress-only signals for finalization because some runtimes
+        // can report 100% too early (e.g. single-page packages on launch).
+        const completionSignalForMulti =
+            completedByPackage ||
+            completedByActivities;
+        const completionSignalForSingle =
+            completedByPackage ||
+            completedByActivities;
+
+        // Guard against instant false-positive completion on initial launch.
+        const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
+        if (studiedSeconds < 10) return false;
+
+        if (!requireAssessmentPass) {
+            if (hasMultipleActivities) {
+                return Boolean(completionSignalForMulti);
+            }
+            return Boolean(completionSignalForSingle);
+        }
+
+        // Strict policy for assessment packages: must satisfy completion signal and pass all assessments.
+        const hasValidCompletionSignal = hasMultipleActivities ? completionSignalForMulti : completionSignalForSingle;
+        if (!hasValidCompletionSignal) return false;
+
+        if (hasAssessmentFailureSignals) return false;
+        return areAssessmentActivitiesPassed;
+    }, [requireAssessmentPass, areAssessmentActivitiesPassed, hasAssessmentFailureSignals, content?.activities]);
+
+    const resolveActivityUrl = useCallback((entryPoint, launch) => {
+        if (!entryPoint) return '';
+        if (!launch) {
+            if (/^https?:\/\//i.test(String(entryPoint))) return String(entryPoint);
+            const value = String(entryPoint || '');
+            return value.startsWith('/') ? value : `/${value}`;
+        }
+        if (/^https?:\/\//i.test(launch)) return launch;
+
+        const normalizedLaunch = String(launch).replace(/\\/g, '/');
+        const baseDir = entryPoint.split('/').slice(0, -1).join('/');
+
+        if (/^\/?content\//i.test(normalizedLaunch)) {
+            const normalizedContentPath = normalizedLaunch
+                .replace(/^\/+/, '')
+                .replace(/^content\//i, 'content/');
+            return `/${normalizedContentPath}`;
+        }
+
+        try {
+            const joined = new URL(normalizedLaunch.replace(/^\//, ''), `https://lms.local/${baseDir}/`);
+            return `${joined.pathname}${joined.search}${joined.hash}`;
+        } catch {
+            const value = String(entryPoint || '');
+            return value.startsWith('/') ? value : `/${value}`;
+        }
+    }, []);
+
+    const resolvePlayerSrc = useCallback((entryPoint) => {
+        const value = String(entryPoint || '').trim();
+        if (!value) return '';
+        if (/^https?:\/\//i.test(value)) return value;
+        return value.startsWith('/') ? value : `/${value}`;
+    }, []);
+
+    const resolveActivityCandidateUrl = useCallback((activity) => {
+        if (!activity) return '';
+
+        const launch = String(activity.launch || '').trim();
+        if (launch) {
+            return resolveActivityUrl(content?.entryPoint, launch);
+        }
+
+        // Some recovered TinCan metadata has empty launch but full activity id URL.
+        const activityId = String(activity.activityId || activity.id || '').trim();
+        if (/^https?:\/\//i.test(activityId)) {
+            try {
+                const url = new URL(activityId);
+                return `${url.pathname}${url.search}${url.hash}`;
+            } catch {
+                return '';
+            }
+        }
+
+        return '';
+    }, [content?.entryPoint, resolveActivityUrl]);
+
+    const ensureVideoAutoplay = useCallback(() => {
+        const video = videoRef.current;
+        if (!video) return;
+        try {
+            // Browsers usually allow autoplay only when muted.
+            video.muted = true;
+            video.playsInline = true;
+            video.play?.().catch(() => { });
+        } catch {
+            // ignore
+        }
+    }, []);
+
+    const getLegacyWebRuntimeWindows = useCallback(() => {
+        if (!iframeRef.current) return [];
+        const windows = [];
+        try {
+            const outer = iframeRef.current.contentWindow;
+            if (outer) windows.push(outer);
+            const inner = outer?.document?.getElementById('contentFrame')?.contentWindow;
+            if (inner) windows.push(inner);
+        } catch {
+            // ignore cross-frame access errors
+        }
+        return windows;
+    }, []);
+
+    const detectLegacyWebPageIndex = useCallback(() => {
+        const windows = getLegacyWebRuntimeWindows();
+        for (const win of windows) {
+            try {
+                const directIndex = Number(win?.currentPage);
+                if (Number.isFinite(directIndex) && directIndex >= 0) {
+                    return Math.floor(directIndex);
+                }
+                const lastSeenIndex = Number(win?.currentState?.lastSeenIndex);
+                if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
+                    return Math.floor(lastSeenIndex);
+                }
+            } catch {
+                // ignore runtime errors
+            }
+        }
+        return -1;
+    }, [getLegacyWebRuntimeWindows]);
+
+    const getLegacyWebPageTotal = useCallback(() => {
+        const windows = getLegacyWebRuntimeWindows();
+        let maxTotal = 0;
+        for (const win of windows) {
+            try {
+                const dataIndex = win?.currentState?.dataIndex;
+                if (Array.isArray(dataIndex) && dataIndex.length > maxTotal) {
+                    maxTotal = dataIndex.length;
+                }
+                const treeArray = win?.treeArray;
+                if (Array.isArray(treeArray) && treeArray.length > maxTotal) {
+                    maxTotal = treeArray.length;
+                }
+                const numpage = Number(win?.numpage);
+                if (Number.isFinite(numpage) && numpage > maxTotal) {
+                    maxTotal = Math.floor(numpage);
+                }
+            } catch {
+                // ignore
+            }
+        }
+        if (maxTotal > 0) return maxTotal;
+
+        const fallback = Number(duration || 0);
+        if (Number.isFinite(fallback) && fallback > 0) {
+            return Math.max(1, Math.floor(fallback));
+        }
+        return 0;
+    }, [duration, getLegacyWebRuntimeWindows]);
+
+    const getLegacyWebPageTitles = useCallback(() => {
+        const windows = getLegacyWebRuntimeWindows();
+        let bestTitles = [];
+
+        const pickTitle = (row, index) => {
+            const candidate = String(
+                row?.title
+                || row?.name
+                || row?.topic
+                || row?.label
+                || row?.text
+                || row?.lessonTitle
+                || ''
+            ).trim();
+            if (candidate) return candidate;
+            return `Lesson ${index + 1}`;
+        };
+
+        for (const win of windows) {
+            try {
+                const treeArray = Array.isArray(win?.treeArray) ? win.treeArray : [];
+                if (treeArray.length > 0) {
+                    const titles = treeArray.map((row, index) => pickTitle(row, index));
+                    if (titles.length > bestTitles.length) {
+                        bestTitles = titles;
+                    }
+                }
+                const dataIndex = Array.isArray(win?.currentState?.dataIndex) ? win.currentState.dataIndex : [];
+                if (dataIndex.length > bestTitles.length) {
+                    const titles = dataIndex.map((row, index) => pickTitle(row, index));
+                    bestTitles = titles;
+                }
+            } catch {
+                // ignore runtime access errors
+            }
+        }
+
+        return bestTitles;
+    }, [getLegacyWebRuntimeWindows]);
+
+    const getCurrentWebStatusSnapshot = useCallback(() => {
+        const windows = getLegacyWebRuntimeWindows();
+        for (const win of windows) {
+            try {
+                const dataIndex = win?.currentState?.dataIndex;
+                if (!Array.isArray(dataIndex) || dataIndex.length === 0) continue;
+                return dataIndex.map((row) => ({
+                    attempted: row?.attempted === true,
+                    completed: row?.completed === true,
+                    passed: row?.passed === true,
+                    quizzed: row?.quizzed === true,
+                }));
+            } catch {
+                // ignore runtime errors
+            }
+        }
+        return null;
+    }, [getLegacyWebRuntimeWindows]);
+
+    const applyWebStatusToRuntime = useCallback((targetIndex = -1) => {
+        const windows = getLegacyWebRuntimeWindows();
+        const stored = readWebStatusSnapshot();
+
+        for (const win of windows) {
+            try {
+                const state = win?.currentState;
+                if (!state || !Array.isArray(state.dataIndex) || state.dataIndex.length === 0) continue;
+
+                const next = state.dataIndex.map((row, index) => {
+                    const source = Array.isArray(stored) ? stored[index] : null;
+                    const shouldBackfill = Number.isFinite(Number(targetIndex)) && index < Number(targetIndex);
+                    return {
+                        ...row,
+                        attempted: row?.attempted === true || source?.attempted === true || shouldBackfill,
+                        completed: row?.completed === true || source?.completed === true || shouldBackfill,
+                        passed: row?.passed === true || source?.passed === true || false,
+                        quizzed: row?.quizzed === true || source?.quizzed === true || false,
+                    };
+                });
+
+                state.dataIndex = next;
+                if (typeof win.drawTOC === 'function') {
+                    win.drawTOC();
+                }
+            } catch {
+                // ignore runtime write errors
+            }
+        }
+    }, [getLegacyWebRuntimeWindows, readWebStatusSnapshot]);
+
+    const canFinalizeLegacyWebCompletion = useCallback(({
+        pageIndex = -1,
+        totalPages = 0,
+    } = {}) => {
+        const safePageIndex = Number.isFinite(Number(pageIndex)) ? Math.floor(Number(pageIndex)) : -1;
+        const safeTotalPages = Math.max(0, Math.floor(Number(totalPages) || 0));
+        const reachedLastPage = safeTotalPages > 0 && safePageIndex >= safeTotalPages - 1;
+
+        const windows = getLegacyWebRuntimeWindows();
+        let completedByRuntime = false;
+        let completedByDataIndex = false;
+        let attemptedAllByDataIndex = false;
+        let hasAnyAttemptByDataIndex = false;
+
+        for (const win of windows) {
+            try {
+                const state = win?.currentState;
+                if (state?.completed === true || state?.completion === true || state?.isCompleted === true) {
+                    completedByRuntime = true;
+                }
+
+                const dataIndex = state?.dataIndex;
+                if (Array.isArray(dataIndex) && dataIndex.length > 0) {
+                    const allCompleted = dataIndex.every((row) => row?.completed === true || row?.passed === true);
+                    if (allCompleted) {
+                        completedByDataIndex = true;
+                    }
+
+                    const hasAnyAttempt = dataIndex.some(
+                        (row) => row?.attempted === true || row?.completed === true || row?.passed === true
+                    );
+                    if (hasAnyAttempt) {
+                        hasAnyAttemptByDataIndex = true;
+                    }
+
+                    const allAttempted = dataIndex.every(
+                        (row) => row?.attempted === true || row?.completed === true || row?.passed === true
+                    );
+                    if (allAttempted) {
+                        attemptedAllByDataIndex = true;
+                    }
+                }
+            } catch {
+                // ignore runtime access errors
+            }
+        }
+
+        return Boolean(
+            completedByRuntime
+            || completedByDataIndex
+            || (reachedLastPage && attemptedAllByDataIndex && hasAnyAttemptByDataIndex)
+        );
+    }, [getLegacyWebRuntimeWindows]);
+
+    const applyLegacyWebResumeToIframe = useCallback(() => {
+        if (!iframeRef.current || content?.type !== 'web' || !resumeLoaded) return;
+
+        const savedIdx = readWebResumeIndex();
+        const progressIdx = Number.isFinite(Number(currentTime)) && Number(currentTime) > 0
+            ? Math.floor(Number(currentTime) - 1)
+            : -1;
+        const requestedIndex = Math.max(
+            Number.isFinite(savedIdx) ? Math.floor(savedIdx) : -1,
+            progressIdx
+        );
+        if (!Number.isFinite(requestedIndex) || requestedIndex <= 0) return;
+
+        let attempts = 0;
+        const maxAttempts = 80;
+        const timer = setInterval(() => {
+            attempts += 1;
+            const windows = getLegacyWebRuntimeWindows();
+            let applied = false;
+
+            for (const win of windows) {
+                try {
+                    const goToPage = win?.goToPage;
+                    if (typeof goToPage !== 'function') continue;
+
+                    const runtimeTotal = Math.max(
+                        0,
+                        Number(Array.isArray(win?.currentState?.dataIndex) ? win.currentState.dataIndex.length : 0),
+                        Number(Array.isArray(win?.treeArray) ? win.treeArray.length : 0),
+                        Number(win?.numpage || 0),
+                    );
+                    const targetIndex = runtimeTotal > 0
+                        ? Math.max(0, Math.min(requestedIndex, runtimeTotal - 1))
+                        : requestedIndex;
+
+                    const current = Number(win?.currentPage);
+                    if (Number.isFinite(current) && current === targetIndex) {
+                        clearInterval(timer);
+                        return;
+                    }
+
+                    const previousLinear = win?.islinear;
+                    try {
+                        win.islinear = false;
+                    } catch {
+                        // ignore
+                    }
+                    goToPage(targetIndex);
+                    try {
+                        win.islinear = previousLinear;
+                    } catch {
+                        // ignore
+                    }
+
+                    applyWebStatusToRuntime(targetIndex);
+
+                    const after = Number(win?.currentPage);
+                    if (Number.isFinite(after) && after === targetIndex) {
+                        clearInterval(timer);
+                        return;
+                    }
+                    applied = true;
+                } catch {
+                    // keep retrying until runtime is ready
+                }
+            }
+
+            if (!applied && attempts >= maxAttempts) {
+                clearInterval(timer);
+            } else if (attempts >= maxAttempts) {
+                clearInterval(timer);
+            }
+        }, 250);
+    }, [content?.type, resumeLoaded, currentTime, readWebResumeIndex, getLegacyWebRuntimeWindows, applyWebStatusToRuntime]);
+
+    const getTinCanRuntimeRowPathKey = useCallback((row) => {
+        const normalize = (value) => String(value || '')
+            .replace(/^https?:\/\/[^/]+/i, '')
+            .replace(/\\/g, '/')
+            .split('?')[0]
+            .split('#')[0]
+            .replace(/^\/+/, '')
+            .toLowerCase()
+            .trim();
+
+        const candidates = [
+            row?.url,
+            row?.urlOffline,
+            row?.launch,
+            row?.href,
+            row?.src,
+            row?.path,
+            row?.link,
+            row?.filename,
+        ];
+
+        for (const candidate of candidates) {
+            const normalized = normalize(candidate);
+            if (normalized) return normalized;
+        }
+
+        return '';
+    }, []);
+
+    const getTinCanRuntimeRows = useCallback(() => {
+        try {
+            const frameWindow = iframeRef.current?.contentWindow;
+            if (!frameWindow) return [];
+
+            // Prefer dataIndex: it reflects actual playable page order/currentPage mapping.
+            // treeArray may include non-page chapter nodes that shift indexes by +1/+N.
+            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
+                ? frameWindow.currentState.dataIndex
+                : [];
+            if (dataIndex.length > 0) {
+                return dataIndex.map((row, index) => ({ row, runtimeIndex: index }));
+            }
+
+            const treeArray = Array.isArray(frameWindow?.treeArray) ? frameWindow.treeArray : [];
+            if (treeArray.length > 0) {
+                // Fallback only: keep rows that look launchable to avoid index skew.
+                const pageRows = treeArray
+                    .map((row, index) => ({ row, runtimeIndex: index }))
+                    .filter((entry) => {
+                        const row = entry?.row || {};
+                        const isPage = row?.ispage;
+                        const hasLaunch = Boolean(
+                            String(row?.url || '').trim()
+                            || String(row?.urlOffline || '').trim()
+                            || String(row?.launch || '').trim()
+                            || String(row?.href || '').trim()
+                            || String(row?.src || '').trim()
+                            || String(row?.path || '').trim()
+                        );
+                        if (isPage === true) return true;
+                        if (String(isPage).toLowerCase() === 'true') return true;
+                        return hasLaunch;
+                    });
+                if (pageRows.length > 0) {
+                    return pageRows.map((entry, index) => ({ row: entry.row, runtimeIndex: index }));
+                }
+            }
+        } catch {
+            // ignore iframe access errors
+        }
+
+        return [];
+    }, []);
+
+    const findRuntimePageIndexForActivity = useCallback((activityIndex) => {
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return -1;
+
+        const safeIndex = Math.max(0, Math.min(activities.length - 1, Math.floor(Number(activityIndex) || 0)));
+        const activity = activities[safeIndex];
+        const candidateUrl = resolveActivityCandidateUrl(activity);
+        const normalize = (value) => String(value || '')
+            .replace(/^https?:\/\/[^/]+/i, '')
+            .replace(/\\/g, '/')
+            .split('?')[0]
+            .split('#')[0]
+            .replace(/^\/+/, '')
+            .toLowerCase()
+            .trim();
+        const candidateKey = normalize(candidateUrl);
+        if (!candidateKey) return -1;
+
+        for (const entry of getTinCanRuntimeRows()) {
+            const rowKey = getTinCanRuntimeRowPathKey(entry?.row);
+            if (!rowKey) continue;
+            if (
+                rowKey === candidateKey
+                || rowKey.endsWith(candidateKey)
+                || candidateKey.endsWith(rowKey)
+            ) {
+                return Number(entry.runtimeIndex);
+            }
+        }
+
+        return -1;
+    }, [content?.activities, resolveActivityCandidateUrl, getTinCanRuntimeRows, getTinCanRuntimeRowPathKey]);
+
+    const findActivityIndexForRuntimePage = useCallback((runtimePageIndex) => {
+        const runtimeIndex = Math.floor(Number(runtimePageIndex));
+        if (!Number.isFinite(runtimeIndex) || runtimeIndex < 0) return -1;
+
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return -1;
+
+        const runtimeRows = getTinCanRuntimeRows();
+        const runtimeRow = runtimeRows.find((entry) => Number(entry?.runtimeIndex) === runtimeIndex)?.row;
+        const rowKey = getTinCanRuntimeRowPathKey(runtimeRow);
+        if (!rowKey) return -1;
+
+        const normalize = (value) => String(value || '')
+            .replace(/^https?:\/\/[^/]+/i, '')
+            .replace(/\\/g, '/')
+            .split('?')[0]
+            .split('#')[0]
+            .replace(/^\/+/, '')
+            .toLowerCase()
+            .trim();
+
+        for (let i = 0; i < activities.length; i++) {
+            const candidateUrl = resolveActivityCandidateUrl(activities[i]);
+            const candidateKey = normalize(candidateUrl);
+            if (!candidateKey) continue;
+            if (
+                rowKey === candidateKey
+                || rowKey.endsWith(candidateKey)
+                || candidateKey.endsWith(rowKey)
+            ) {
+                return i;
+            }
+        }
+
+        return -1;
+    }, [content?.activities, getTinCanRuntimeRows, getTinCanRuntimeRowPathKey, resolveActivityCandidateUrl]);
+
+    const getTinCanRuntimeIndexOffset = useCallback(() => {
+        if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) {
+            return 0;
+        }
+
+        try {
+            const frameWindow = iframeRef.current?.contentWindow;
+            if (!frameWindow) return 0;
+
+            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
+                ? frameWindow.currentState.dataIndex
+                : [];
+            const treeArray = Array.isArray(frameWindow?.treeArray) ? frameWindow.treeArray : [];
+            const activityTotal = content.activities.length;
+            if (activityTotal <= 0) return 0;
+
+            // Most reliable signal: dataIndex aligns with currentPage/goToPage.
+            if (dataIndex.length > 0) {
+                const rawDiff = dataIndex.length - activityTotal;
+                const safeDiff = Number.isFinite(rawDiff) ? Math.max(0, Math.floor(rawDiff)) : 0;
+                return safeDiff;
+            }
+
+            // Fallback: estimate using only launchable/page rows from treeArray.
+            if (treeArray.length > 0) {
+                const launchableCount = treeArray.filter((row) => {
+                    const isPage = row?.ispage;
+                    if (isPage === true) return true;
+                    if (String(isPage).toLowerCase() === 'true') return true;
+                    return Boolean(
+                        String(row?.url || '').trim()
+                        || String(row?.urlOffline || '').trim()
+                        || String(row?.launch || '').trim()
+                        || String(row?.href || '').trim()
+                        || String(row?.src || '').trim()
+                        || String(row?.path || '').trim()
+                    );
+                }).length;
+                const rawDiff = launchableCount - activityTotal;
+                const safeDiff = Number.isFinite(rawDiff) ? Math.max(0, Math.floor(rawDiff)) : 0;
+                return safeDiff;
+            }
+
+            const runtimeTotal = Number(frameWindow?.numpage || 0) || 0;
+            if (runtimeTotal <= 0) return 0;
+            const rawDiff = runtimeTotal - activityTotal;
+            const safeDiff = Number.isFinite(rawDiff) ? Math.max(0, Math.floor(rawDiff)) : 0;
+            return safeDiff;
+        } catch {
+            return 0;
+        }
+    }, [content]);
+
+    const mapRuntimePageToActivityIndex = useCallback((runtimePageIndex) => {
+        const numeric = Number(runtimePageIndex);
+        if (!Number.isFinite(numeric)) return -1;
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return -1;
+
+        const exact = findActivityIndexForRuntimePage(numeric);
+        if (exact >= 0) return exact;
+
+        const offset = getTinCanRuntimeIndexOffset();
+        const mapped = Math.floor(numeric) - offset;
+        if (mapped < 0 || mapped >= activities.length) return -1;
+        return mapped;
+    }, [content?.activities, findActivityIndexForRuntimePage, getTinCanRuntimeIndexOffset]);
+
+    const mapActivityIndexToRuntimePage = useCallback((activityIndex) => {
+        const numeric = Number(activityIndex);
+        if (!Number.isFinite(numeric)) return -1;
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return -1;
+
+        const safeActivityIndex = Math.max(0, Math.min(activities.length - 1, Math.floor(numeric)));
+        const exact = findRuntimePageIndexForActivity(safeActivityIndex);
+        if (exact >= 0) return exact;
+
+        const offset = getTinCanRuntimeIndexOffset();
+        const runtimeTarget = safeActivityIndex + offset;
+        return Math.max(0, runtimeTarget);
+    }, [content?.activities, findRuntimePageIndexForActivity, getTinCanRuntimeIndexOffset]);
+
+    const detectActivityIndexFromIframe = useCallback(() => {
+        if (!iframeRef.current || !content || !Array.isArray(content.activities) || content.activities.length === 0) return -1;
+
+        const frameWindow = iframeRef.current.contentWindow;
+        if (frameWindow) {
+            try {
+                const runtimeDataReady = Array.isArray(frameWindow?.currentState?.dataIndex)
+                    && frameWindow.currentState.dataIndex.length > 0;
+                const directIndex = Number(frameWindow.currentPage);
+                if (runtimeDataReady && Number.isFinite(directIndex) && directIndex >= 0) {
+                    const mapped = mapRuntimePageToActivityIndex(directIndex);
+                    if (mapped >= 0) return mapped;
+                }
+
+                const lastSeenIndex = Number(frameWindow.currentState?.lastSeenIndex);
+                if (runtimeDataReady && Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
+                    const mapped = mapRuntimePageToActivityIndex(lastSeenIndex);
+                    if (mapped >= 0) return mapped;
+                }
+            } catch {
+                // Ignore cross-frame access errors and fallback to URL matching.
+            }
+        }
+
+        let currentHref = '';
+        try {
+            currentHref = frameWindow?.location?.href || '';
+        } catch {
+            return -1;
+        }
+        if (!currentHref) return -1;
+
+        const normalize = (value) => String(value || '')
+            .replace(/^https?:\/\/[^/]+/i, '')
+            .replace(/\\/g, '/')
+            .toLowerCase();
+
+        const current = normalize(currentHref);
+
+        for (let i = 0; i < content.activities.length; i++) {
+            const resolved = resolveActivityCandidateUrl(content.activities[i]);
+            const candidate = normalize(resolved);
+            if (!candidate) continue;
+
+            // Match both full launch and path without query/hash.
+            const candidateNoQuery = candidate.split('?')[0].split('#')[0];
+            const currentNoQuery = current.split('?')[0].split('#')[0];
+
+            if (current.includes(candidate) || current.includes(candidateNoQuery) || currentNoQuery.endsWith(candidateNoQuery)) {
+                return i;
+            }
+        }
+
+        // TinCan wrapper keeps the real activity in its inner iframe (#contentFrame).
+        try {
+            const innerSrc = frameWindow?.document?.getElementById('contentFrame')?.getAttribute('src')
+                || frameWindow?.document?.getElementById('contentFrame')?.src
+                || '';
+            const inner = normalize(innerSrc);
+            if (inner) {
+                for (let i = 0; i < content.activities.length; i++) {
+                    const resolved = resolveActivityCandidateUrl(content.activities[i]);
+                    const candidate = normalize(resolved);
+                    const candidateNoQuery = candidate.split('?')[0].split('#')[0];
+                    const innerNoQuery = inner.split('?')[0].split('#')[0];
+                    if (inner.includes(candidate) || inner.includes(candidateNoQuery) || innerNoQuery.endsWith(candidateNoQuery)) {
+                        return i;
+                    }
+                }
+            }
+        } catch {
+            // ignore inner-frame access errors
+        }
+
+        return -1;
+    }, [content, resolveActivityCandidateUrl, mapRuntimePageToActivityIndex]);
+
+    const syncTinCanActivityStatusFromIframe = useCallback(() => {
+        if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
+
+        try {
+            const frameWindow = iframeRef.current?.contentWindow;
+            const dataIndex = frameWindow?.currentState?.dataIndex;
+            if (!Array.isArray(dataIndex)) return;
+            const offset = getTinCanRuntimeIndexOffset();
+            const runtimeRows = getTinCanRuntimeRows();
+
+            const next = content.activities.map((_, i) => {
+                const mappedRuntimeIndex = findRuntimePageIndexForActivity(i);
+                const mappedRow = mappedRuntimeIndex >= 0
+                    ? runtimeRows.find((entry) => Number(entry?.runtimeIndex) === mappedRuntimeIndex)?.row
+                    : null;
+                const row = mappedRow || dataIndex[i + offset] || {};
+                const activity = content.activities[i];
+                const statusText = normalizeStatusText(
+                    row?.status
+                    ?? row?.result
+                    ?? row?.completionStatus
+                    ?? row?.successStatus
+                    ?? ''
+                );
+                const hasFailStatus = hasFailureStatusSignal(statusText);
+                const hasPassStatus = hasPassStatusSignal(statusText);
+                const rawScore = asFiniteNumber(
+                    row?.score
+                    ?? row?.rawScore
+                    ?? row?.raw
+                    ?? row?.resultScore
+                    ?? row?.scoreRaw
+                    ?? row?.result?.score?.raw
+                );
+                const scaledScore = asFiniteNumber(
+                    row?.scaledScore
+                    ?? row?.scaled
+                    ?? row?.scoreScaled
+                    ?? row?.normalizedScore
+                    ?? row?.result?.score?.scaled
+                );
+                const maxScore = asFiniteNumber(
+                    row?.scoreMax
+                    ?? row?.maxScore
+                    ?? row?.max
+                    ?? row?.totalScore
+                    ?? row?.result?.score?.max
+                );
+                const assessmentPassingScore = getAssessmentPassingScore(activity);
+                const normalizedFromRawMax =
+                    rawScore !== null && maxScore !== null && maxScore > 0
+                        ? (rawScore / maxScore) * 100
+                        : null;
+                const normalizedFromRaw =
+                    rawScore !== null
+                        ? (rawScore <= 1 ? rawScore * 100 : rawScore)
+                        : null;
+                const normalizedFromScaled =
+                    scaledScore !== null
+                        ? (scaledScore <= 1 ? scaledScore * 100 : scaledScore)
+                        : null;
+                const hasPassingScore =
+                    (normalizedFromRawMax !== null && normalizedFromRawMax >= assessmentPassingScore) ||
+                    (normalizedFromScaled !== null && normalizedFromScaled >= assessmentPassingScore) ||
+                    (normalizedFromRaw !== null && normalizedFromRaw >= assessmentPassingScore);
+                const markedPass =
+                    !hasFailStatus &&
+                    (isTruthyFlag(row?.passed) || hasPassStatus || row?.success === true || hasPassingScore);
+                const markedComplete =
+                    !hasFailStatus &&
+                    (isTruthyFlag(row?.completed) || row?.completion === true || hasCompletionStatusSignal(statusText));
+                return {
+                    attempted: isTruthyFlag(row?.attempted),
+                    completed: isAssessmentActivity(activity) ? markedPass : markedComplete,
+                    passed: markedPass,
+                    quizzed: isTruthyFlag(row?.quizzed),
+                    status: String(statusText || ''),
+                    success: typeof row?.success === 'boolean' ? row.success : null,
+                    completion: isTruthyFlag(row?.completed) ? true : (typeof row?.completion === 'boolean' ? row.completion : null),
+                    scoreRaw: rawScore,
+                    scoreScaled: scaledScore,
+                    scoreMax: maxScore,
+                };
+            });
+
+            const sig = JSON.stringify(next);
+            if (sig !== lastTinCanStatusSigRef.current) {
+                lastTinCanStatusSigRef.current = sig;
+                setTinCanActivityStatus(next);
+            }
+        } catch {
+            // ignore iframe state read errors
+        }
+    }, [content, getTinCanRuntimeIndexOffset, isAssessmentActivity, getAssessmentPassingScore, getTinCanRuntimeRows, findRuntimePageIndexForActivity]);
+
+    const applyTincanResumeToIframe = useCallback(() => {
+        if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
+        if (!iframeRef.current || !resumeLoaded) return;
+
+        const frameWindow = iframeRef.current.contentWindow;
+        if (!frameWindow) return;
+
+        const targetIndex = Math.max(0, Math.min(selectedActivityIndex, content.activities.length - 1));
+        let attempts = 0;
+        const maxAttempts = 80;
+
+        const timer = setInterval(() => {
+            attempts += 1;
+            try {
+                const goToPage = frameWindow.goToPage;
+                // Wait until TinCan runtime exposes goToPage; then keep retrying until target page is active.
+                if (typeof goToPage === 'function') {
+                    const runtimeTargetIndex = mapActivityIndexToRuntimePage(targetIndex);
+                    if (runtimeTargetIndex < 0) return;
+                    const current = Number(frameWindow.currentPage);
+                    if (!Number.isFinite(current) || current !== runtimeTargetIndex) {
+                        // Fallback: disable linear check just for resume jump.
+                        const previousLinear = frameWindow.islinear;
+                        try {
+                            frameWindow.islinear = false;
+                        } catch {
+                            // ignore
+                        }
+                        goToPage(runtimeTargetIndex);
+                        try {
+                            frameWindow.islinear = previousLinear;
+                        } catch {
+                            // ignore
+                        }
+                        if (typeof frameWindow.drawTOC === 'function') {
+                            frameWindow.drawTOC();
+                        }
+
+                        // Verify jump applied; if not, keep retrying.
+                        const after = Number(frameWindow.currentPage);
+                        if (Number.isFinite(after) && after === runtimeTargetIndex) {
+                            clearInterval(timer);
+                            return;
+                        }
+                    } else {
+                        clearInterval(timer);
+                        return;
+                    }
+                }
+            } catch {
+                // Keep retrying until script initialization is ready.
+            }
+
+            if (attempts >= maxAttempts) {
+                clearInterval(timer);
+            }
+        }, 250);
+    }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage]);
+
+    const restoreTincanPositionFromProgress = useCallback((entry) => {
+        if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
+
+        const total = content.activities.length;
+        let idx = 0;
+        let resolvedFromProgress = false;
+
+        const savedPathKey = readTincanResumePath();
+        const idxFromSavedPath = savedPathKey
+            ? content.activities.findIndex((activity) => {
+                const candidate = resolveActivityCandidateUrl(activity);
+                const key = normalizeActivityPathKey(candidate || activity?.activityId || activity?.id || '');
+                return Boolean(key) && key === savedPathKey;
+            })
+            : -1;
+
+        // Source 1: currentTime stores selected activity index + 1 for TinCan.
+        const current = Number(entry?.currentTime);
+        let idxFromCurrent = -1;
+        if (Number.isFinite(current) && current >= 1 && current <= total) {
+            idxFromCurrent = Math.floor(current - 1);
+            resolvedFromProgress = true;
+        }
+
+        // If current chapter reached 100% but overall package is not completed yet,
+        // continue from the next chapter instead of restarting the same one.
+        const entryProgress = Number(entry?.progress || 0);
+        const isCourseCompleted = String(entry?.status || '').toUpperCase() === 'COMPLETED';
+        if (
+            idxFromCurrent >= 0 &&
+            !isCourseCompleted &&
+            Number.isFinite(entryProgress) &&
+            entryProgress >= 100 &&
+            idxFromCurrent < total - 1
+        ) {
+            idxFromCurrent += 1;
+        }
+
+        // Source 2: local resume chapter saved from iframe navigation.
+        const savedIdx = readTincanResumeIndex();
+        const idxFromSaved = Number.isFinite(savedIdx) && savedIdx >= 0 && savedIdx < total
+            ? Math.floor(savedIdx)
+            : -1;
+        const idxFromHighestSeen = Number.isFinite(Number(highestSeenActivityIndexRef.current))
+            ? Math.max(0, Math.min(total - 1, Math.floor(Number(highestSeenActivityIndexRef.current))))
+            : -1;
+
+        // Merge server/local resume safely:
+        // - Never regress to an earlier chapter.
+        // - Avoid suspicious stale local jump that is too far ahead.
+        let merged = idxFromCurrent >= 0 ? idxFromCurrent : -1;
+        if (idxFromSaved >= 0) {
+            if (merged < 0) {
+                merged = idxFromSaved;
+            } else if (idxFromSaved >= merged) {
+                const staleAhead = !isCourseCompleted && idxFromSaved > merged + 2;
+                if (!staleAhead) {
+                    merged = idxFromSaved;
+                }
+            }
+        }
+        if (Number.isFinite(idxFromSavedPath) && idxFromSavedPath >= 0) {
+            if (merged < 0) {
+                merged = idxFromSavedPath;
+            } else {
+                const gap = Math.abs(idxFromSavedPath - merged);
+                if (gap > 2) {
+                    // Path-based resume is more precise than historical index snapshots.
+                    merged = idxFromSavedPath;
+                } else {
+                    merged = Math.max(merged, idxFromSavedPath);
+                }
+            }
+        }
+        if (idxFromHighestSeen >= 0) {
+            merged = Math.max(merged, idxFromHighestSeen);
+        }
+
+        idx = Math.max(0, merged);
+        highestSeenActivityIndexRef.current = Math.max(Number(highestSeenActivityIndexRef.current || 0), idx);
+
+        setSelectedActivityIndex(idx);
+        if (idx > 0) {
+            // Guard a short window to avoid early "chapter 1" sync overriding resume target.
+            resumeGuardUntilRef.current = Date.now() + 10000;
+        } else {
+            resumeGuardUntilRef.current = 0;
+        }
+        if (resolvedFromProgress || idx > 0 || (idxFromSaved >= 0 && idxFromSaved !== idx)) {
+            persistTincanResumeIndex(idx);
+        }
+        if (idx >= 0 && idx < content.activities.length) {
+            const resumePath = resolveActivityCandidateUrl(content.activities[idx]);
+            persistTincanResumePath(resumePath || content.activities[idx]?.activityId || content.activities[idx]?.id || '');
+        }
+        // Keep TinCan wrapper loaded (shows TOC/sidebar), then jump chapter via goToPage.
+        setIframeSrc(resolvePlayerSrc(content.entryPoint));
+    }, [content, readTincanResumePath, resolveActivityCandidateUrl, normalizeActivityPathKey, readTincanResumeIndex, persistTincanResumeIndex, persistTincanResumePath, resolvePlayerSrc]);
+
+    useEffect(() => {
+        if (!content) return;
+        clearIframeInteractionTracking();
+        setResumeLoaded(false);
+        setIsTinCanFrameReady(false);
+        setProgress(0);
+        setCurrentTime(0);
+        setDuration(0);
+        setStatus('NOT_STARTED');
+        setTinCanActivityStatus([]);
+        lastTinCanStatusSigRef.current = '';
+        lastTincanSyncRef.current = { position: null, status: null, progress: null, at: 0 };
+        selectedActivitySyncStateRef.current = { idx: null, status: '', at: 0 };
+        legacyWebSyncStateRef.current = { idx: null, status: '', at: 0 };
+        completionLockRef.current = false;
+        resumeGuardUntilRef.current = 0;
+        manualSelectionRef.current = { target: null, until: 0 };
+        highestSeenActivityIndexRef.current = 0;
+        trackedStudySecondsRef.current = 0;
+        trackedStudyTickAtRef.current = 0;
+        lastUserInteractionAtRef.current = Date.now();
+        if (content.type === 'tincan' && content.activities?.length > 0) {
+            setSelectedActivityIndex(0);
+            // Always start from TinCan wrapper page, not activity launch page.
+            setIframeSrc(resolvePlayerSrc(content.entryPoint));
+            return;
+        }
+        setIframeSrc(resolvePlayerSrc(content.entryPoint));
+    }, [content, resolvePlayerSrc, clearIframeInteractionTracking]);
+
+    useEffect(() => {
+        if (!content || content.type !== 'tincan' || !resumeLoaded) return;
+        if (!resumeLoaded) return;
+        applyTincanResumeToIframe();
+    }, [content, selectedActivityIndex, resumeLoaded, applyTincanResumeToIframe]);
+
+    useEffect(() => {
+        if (!content || content.type !== 'web' || !resumeLoaded) return;
+        applyLegacyWebResumeToIframe();
+    }, [content, resumeLoaded, currentTime, applyLegacyWebResumeToIframe]);
+
+    useEffect(() => {
+        if (!content || content.type !== 'tincan') return;
+        // Avoid overwriting saved resume with default lesson 1 before
+        // server/local resume restoration has completed.
+        if (!resumeLoaded) return;
+        const safeIdx = Math.max(0, Number(selectedActivityIndex) || 0);
+        if (safeIdx > Number(highestSeenActivityIndexRef.current || 0)) {
+            highestSeenActivityIndexRef.current = safeIdx;
+        }
+        persistTincanResumeIndex(safeIdx);
+    }, [content, selectedActivityIndex, persistTincanResumeIndex, resumeLoaded]);
+
+    // Resolve enrollment record for this user/course (used to keep /my-learning status synced)
+    useEffect(() => {
+        const loadEnrollment = async () => {
+            if (!course?.id) return;
+            try {
+                const res = await fetch(`/api/enrollments?courseId=${course.id}&raw=1`, { cache: 'no-store' });
+                if (!res.ok) return;
+                const rows = await res.json();
+                if (Array.isArray(rows) && rows.length > 0) {
+                    setEnrollmentId(rows[0].id);
+                }
+            } catch {
+                // ignore enrollment sync lookup errors
+            }
+        };
+        loadEnrollment();
+    }, [course?.id]);
+
+    const syncEnrollmentStatus = useCallback(async (nextStatus, nextProgress) => {
+        const gate = enrollmentSyncStateRef.current;
+        const now = Date.now();
+        const normalizedStatus = String(nextStatus || '').toUpperCase();
+        const numericProgress = Number(nextProgress);
+        const normalizedProgress = Number.isFinite(numericProgress)
+            ? Math.max(0, Math.min(100, Math.round(numericProgress)))
+            : 0;
+
+        if (
+            completionLockRef.current &&
+            normalizedStatus !== 'COMPLETED' &&
+            !hasAssessmentFailureSignals
+        ) {
+            return;
+        }
+
+        if (now < Number(gate.blockedUntil || 0)) return;
+        if (gate.inFlight) return;
+
+        const isDuplicate =
+            gate.lastStatus === normalizedStatus &&
+            Number(gate.lastProgress) === normalizedProgress &&
+            now - Number(gate.lastAt || 0) < 6000;
+        if (isDuplicate) return;
+
+        gate.inFlight = true;
+        try {
+            let targetId = enrollmentId;
+
+            if (!targetId && course?.id) {
+                const res = await fetch(`/api/enrollments?courseId=${course.id}&raw=1`, { cache: 'no-store' });
+                if (res.ok) {
+                    const rows = await res.json();
+                    if (Array.isArray(rows) && rows.length > 0) {
+                        targetId = rows[0].id;
+                        setEnrollmentId(targetId);
+                    }
+                }
+            }
+
+            if (!targetId) return;
+
+            const patchRes = await fetch('/api/enrollments', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: targetId,
+                    status: normalizedStatus,
+                    progress: normalizedProgress,
+                }),
+            });
+            if (!patchRes.ok) {
+                throw new Error(`Enrollment sync failed: ${patchRes.status}`);
+            }
+
+            gate.lastStatus = normalizedStatus;
+            gate.lastProgress = normalizedProgress;
+            gate.lastAt = Date.now();
+            gate.blockedUntil = 0;
+            if (normalizedStatus === 'COMPLETED') {
+                completionLockRef.current = true;
+            } else if (normalizedStatus === 'FAILED') {
+                completionLockRef.current = false;
+            }
+        } catch {
+            // Back off briefly to avoid request storms on transient network issues.
+            gate.blockedUntil = Date.now() + 4000;
+        } finally {
+            gate.inFlight = false;
+        }
+    }, [course?.id, enrollmentId, hasAssessmentFailureSignals]);
+
+    const bindIframeInteractionTracking = useCallback(() => {
+        clearIframeInteractionTracking();
+        const cleanups = [];
+
+        const bindTarget = (target) => {
+            if (!target || typeof target.addEventListener !== 'function') return;
+            const events = ['pointerdown', 'mousedown', 'touchstart', 'keydown', 'click', 'mousemove'];
+            for (const eventName of events) {
+                const handler = () => markLearningInteraction();
+                target.addEventListener(eventName, handler, { passive: true });
+                cleanups.push(() => {
+                    try {
+                        target.removeEventListener(eventName, handler, { passive: true });
+                    } catch {
+                        target.removeEventListener(eventName, handler);
+                    }
+                });
+            }
+        };
+
+        try {
+            const outer = iframeRef.current?.contentWindow;
+            if (outer) {
+                bindTarget(outer);
+                bindTarget(outer.document);
+                const inner = outer.document?.getElementById('contentFrame')?.contentWindow;
+                if (inner) {
+                    bindTarget(inner);
+                    bindTarget(inner.document);
+                }
+            }
+        } catch {
+            // ignore cross-frame access issues
+        }
+
+        iframeInteractionCleanupRef.current = () => {
+            for (const cleanup of cleanups) {
+                try {
+                    cleanup();
+                } catch {
+                    // ignore
+                }
+            }
+        };
+    }, [clearIframeInteractionTracking, markLearningInteraction]);
+
+    const getTrackedStudySeconds = useCallback(() => {
+        const value = Number(trackedStudySecondsRef.current || 0);
+        if (!Number.isFinite(value) || value <= 0) return 0;
+        return Math.max(0, Math.round(value));
+    }, []);
+
+    const syncProgressWithTrackedTime = useCallback(async (payload = {}) => {
+        if (progressWriteBlockRef.current?.disabled) {
+            if (String(payload?.status || '').toUpperCase() === 'COMPLETED') {
+                completionLockRef.current = false;
+                setStatus((prev) => (String(prev || '').toUpperCase() === 'COMPLETED' ? 'LEARNING' : prev));
+                setProgress((prev) => Math.min(99, Math.max(0, Number(prev) || 0)));
+            }
+            return {
+                success: false,
+                reason: progressWriteBlockRef.current.reason || 'PROGRESS_SYNC_DISABLED',
+                skipped: true,
+            };
+        }
+        const requestedStatus = String(payload?.status || '').toUpperCase();
+        const shouldKeepCompleted =
+            completionLockRef.current &&
+            !progressWriteBlockRef.current?.disabled &&
+            requestedStatus !== 'COMPLETED' &&
+            !hasAssessmentFailureSignals;
+        const normalizedPayload = shouldKeepCompleted
+            ? { ...payload, status: 'COMPLETED', progress: 100 }
+            : payload;
+        const trackedSeconds = getTrackedStudySeconds();
+        const result = await updateProgress({
+            ...normalizedPayload,
+            scoreRaw: trackedSeconds,
+        });
+        const reason = String(result?.reason || '').toUpperCase();
+        const statusCode = Number(result?.status || 0);
+        const isForbiddenWrite = reason === 'ENROLLMENT_REQUIRED' || statusCode === 403;
+        if (isForbiddenWrite) {
+            progressWriteBlockRef.current = {
+                disabled: true,
+                reason: reason || 'FORBIDDEN',
+            };
+            completionLockRef.current = false;
+            if (requestedStatus === 'COMPLETED') {
+                setStatus((prev) => (String(prev || '').toUpperCase() === 'COMPLETED' ? 'LEARNING' : prev));
+                setProgress((prev) => Math.min(99, Math.max(0, Number(prev) || 0)));
+            }
+            return {
+                ...(result || {}),
+                success: false,
+                reason: reason || 'ENROLLMENT_REQUIRED',
+            };
+        }
+
+        const writeSucceeded = result && result.success !== false;
+        if (writeSucceeded && String(normalizedPayload?.status || '').toUpperCase() === 'COMPLETED') {
+            completionLockRef.current = true;
+        } else if (!writeSucceeded && requestedStatus === 'COMPLETED' && !shouldKeepCompleted) {
+            completionLockRef.current = false;
+        }
+        return result;
+    }, [getTrackedStudySeconds, hasAssessmentFailureSignals]);
+
+    useEffect(() => {
+        progressWriteBlockRef.current = { disabled: false, reason: '' };
+    }, [enrollmentId, progressContentId, progressUserId, activeSectionId]);
+
+    useEffect(() => {
+        const onVisibility = () => {
+            if (document.visibilityState === 'visible') {
+                markLearningInteraction();
+                trackedStudyTickAtRef.current = Date.now();
+            }
+        };
+
+        const onFocus = () => {
+            markLearningInteraction();
+            trackedStudyTickAtRef.current = Date.now();
+        };
+
+        const onInteraction = () => {
+            markLearningInteraction();
+        };
+
+        const events = ['pointerdown', 'mousedown', 'touchstart', 'keydown', 'click', 'mousemove'];
+        for (const eventName of events) {
+            window.addEventListener(eventName, onInteraction, { passive: true });
+        }
+        window.addEventListener('focus', onFocus);
+        document.addEventListener('visibilitychange', onVisibility);
+        markLearningInteraction();
+
+        return () => {
+            for (const eventName of events) {
+                window.removeEventListener(eventName, onInteraction, { passive: true });
+            }
+            window.removeEventListener('focus', onFocus);
+            document.removeEventListener('visibilitychange', onVisibility);
+        };
+    }, [markLearningInteraction]);
+
+    useEffect(() => {
+        if (!isLaunchMode || !content || !resumeLoaded) {
+            trackedStudyTickAtRef.current = 0;
+            return;
+        }
+
+        trackedStudyTickAtRef.current = Date.now();
+        const timer = setInterval(() => {
+            const now = Date.now();
+            const last = Number(trackedStudyTickAtRef.current || 0);
+            trackedStudyTickAtRef.current = now;
+
+            if (!last) return;
+            if (document.visibilityState !== 'visible') return;
+            if (typeof document.hasFocus === 'function' && !document.hasFocus()) return;
+            const idleSeconds = (now - Number(lastUserInteractionAtRef.current || 0)) / 1000;
+            if (!Number.isFinite(idleSeconds) || idleSeconds > 75) return;
+
+            if (content?.type === 'video') {
+                const video = videoRef.current;
+                if (!video || video.paused || video.ended) return;
+            }
+
+            const deltaSeconds = (now - last) / 1000;
+            if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0 || deltaSeconds > 30) return;
+
+            trackedStudySecondsRef.current = Math.max(0, Number(trackedStudySecondsRef.current || 0)) + deltaSeconds;
+        }, 1000);
+
+        return () => clearInterval(timer);
+    }, [isLaunchMode, content, content?.type, resumeLoaded]);
+
+    // Fallback sync: keep chapter/enrollment status moving even when iframe index detection is flaky.
+    useEffect(() => {
+        if (!isLaunchMode || content?.type !== 'tincan' || !resumeLoaded) return;
+        if (!progressContentId || !progressUserId) return;
+
+        const total = Math.max(1, Number(content?.activities?.length || 0));
+        const safeIdx = Math.max(0, Math.min(total - 1, Math.floor(Number(selectedActivityIndex) || 0)));
+        const completedByActivities =
+            Array.isArray(tinCanActivityStatus) &&
+            tinCanActivityStatus.length > 0 &&
+            tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
+        const shouldComplete = canFinalizeTinCanCompletion({
+            completedByProgress: false,
+            completedByActivities,
+            activityIndex: safeIdx,
+        });
+        const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
+        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
+        const nextProgress = nextStatus === 'COMPLETED'
+            ? 100
+            : computeTinCanProgress(safeIdx + 1, total, false);
+
+        const gate = selectedActivitySyncStateRef.current || {};
+        const now = Date.now();
+        const unchangedRecently =
+            Number(gate.idx) === safeIdx &&
+            String(gate.status || '').toUpperCase() === nextStatus &&
+            now - Number(gate.at || 0) < 5000;
+        if (unchangedRecently) return;
+
+        selectedActivitySyncStateRef.current = { idx: safeIdx, status: nextStatus, at: now };
+        setStatus(nextStatus);
+        setProgress(nextProgress);
+
+        syncProgressWithTrackedTime({
+            contentId: progressContentId,
+            userId: progressUserId,
+            sectionId: activeSectionId,
+            status: nextStatus,
+            progress: nextProgress,
+            currentTime: safeIdx + 1,
+            duration: total,
+        });
+
+        if (nextStatus === 'COMPLETED') {
+            syncEnrollmentStatus('COMPLETED', 100);
+        } else {
+            syncEnrollmentStatus('LEARNING', nextProgress);
+        }
+    }, [isLaunchMode, content, resumeLoaded, progressContentId, progressUserId, activeSectionId, selectedActivityIndex, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, hasAssessmentFailureSignals]);
+
+    // Load content only from user's own enrollment (prevent bypass by direct URL).
+    useEffect(() => {
+        const loadContent = async () => {
+            try {
+                setLoading(true);
+                setError('');
+                setActiveSectionId(null);
+                setEnrollmentId(null);
+                progressWriteBlockRef.current = { disabled: false, reason: '' };
+
+                const enrollmentRes = await fetch('/api/enrollments?raw=1', { cache: 'no-store' });
+                if (enrollmentRes.status === 401) {
+                    window.location.href = '/login';
+                    return;
+                }
+                if (!enrollmentRes.ok) {
+                    setError('Failed to verify enrollment');
+                    return;
+                }
+
+                const enrollments = await enrollmentRes.json();
+                if (!Array.isArray(enrollments) || enrollments.length === 0) {
+                    setError('คุณยังไม่มีสิทธิ์เรียนคอร์สนี้ กรุณาลงทะเบียนก่อน');
+                    return;
+                }
+
+                const numericCourseId = Number(routeId);
+                let candidates = [];
+
+                if (Number.isInteger(numericCourseId) && numericCourseId > 0) {
+                    candidates = enrollments.filter((row) => Number(row?.courseId || row?.course?.id) === numericCourseId);
+                } else {
+                    const routeKey = String(routeId || '').trim();
+                    candidates = enrollments.filter((row) => String(row?.course?.tincanId || '').trim() === routeKey);
+                }
+
+                if (candidates.length === 0) {
+                    setError('คุณยังไม่ได้ลงทะเบียนคอร์สนี้');
+                    return;
+                }
+
+                const canLearnStatuses = new Set(['APPROVED', 'LEARNING', 'COMPLETED']);
+                const allowedCandidates = candidates.filter((row) => canLearnStatuses.has(String(row?.status || '').toUpperCase()));
+                if (allowedCandidates.length === 0) {
+                    const hasPending = candidates.some((row) => String(row?.status || '').toUpperCase() === 'PENDING');
+                    setError(hasPending
+                        ? 'คำขอลงทะเบียนของคุณกำลังรอแอดมินอนุมัติ ยังไม่สามารถเข้าเรียนได้'
+                        : 'คุณยังไม่ได้รับสิทธิ์เข้าเรียนคอร์สนี้');
+                    return;
+                }
+
+                const selectedEnrollment = [...allowedCandidates].sort((a, b) => {
+                    const bTime = toTimestamp(b?.enrolledAt || b?.updatedAt || b?.lastActivityAt || 0);
+                    const aTime = toTimestamp(a?.enrolledAt || a?.updatedAt || a?.lastActivityAt || 0);
+                    if (bTime !== aTime) return bTime - aTime;
+                    return Number(b?.id || 0) - Number(a?.id || 0);
+                })[0] || null;
+                if (!selectedEnrollment) {
+                    setError('Enrollment not found');
+                    return;
+                }
+
+                setEnrollmentId(selectedEnrollment.id || null);
+                setCourse(selectedEnrollment.course || null);
+
+                const availableSections = Array.isArray(selectedEnrollment?.course?.sections)
+                    ? selectedEnrollment.course.sections
+                    : [];
+                const normalizedSelectedSection = selectedEnrollment?.section || null;
+                const mergeSectionWithNormalizedAsset = (candidateSection) => {
+                    if (!candidateSection) return candidateSection;
+                    if (candidateSection?.asset) return candidateSection;
+                    if (!normalizedSelectedSection?.asset) return candidateSection;
+                    const sameSection = Number(candidateSection?.id || 0) === Number(normalizedSelectedSection?.id || 0);
+                    const candidateHasNoMedia = !String(candidateSection?.assetId || '').trim();
+                    if (!sameSection && !candidateHasNoMedia) return candidateSection;
+                    return {
+                        ...candidateSection,
+                        sectionType: normalizedSelectedSection?.sectionType || candidateSection?.sectionType,
+                        asset: normalizedSelectedSection.asset,
+                    };
+                };
+
+                let section = normalizedSelectedSection || null;
+                if (requestedSectionId) {
+                    const matchedSection = availableSections.find(
+                        (candidate) => Number(candidate?.id || 0) === requestedSectionId
+                    );
+                    if (matchedSection) {
+                        section = mergeSectionWithNormalizedAsset(matchedSection);
+                    }
+                }
+                if (!section && availableSections.length > 0) {
+                    const preferred = availableSections.find((candidate) => candidate?.isActive) || availableSections[0];
+                    section = mergeSectionWithNormalizedAsset(preferred);
+                }
+
+                let asset = section?.asset || null;
+                let metadata = (asset?.metadataJson && typeof asset.metadataJson === 'object') ? asset.metadataJson : {};
+                let entryPoint = String(asset?.publicUrl || asset?.storagePath || metadata.entryPoint || '').trim();
+
+                // If requested section has no launchable asset, fallback to a section that does.
+                if (!entryPoint && Array.isArray(availableSections) && availableSections.length > 0) {
+                    const sortedSections = [...availableSections].sort((a, b) => {
+                        const assetScoreA = a?.asset ? 1 : 0;
+                        const assetScoreB = b?.asset ? 1 : 0;
+                        if (assetScoreB !== assetScoreA) return assetScoreB - assetScoreA;
+                        const activeScoreA = a?.isActive ? 1 : 0;
+                        const activeScoreB = b?.isActive ? 1 : 0;
+                        if (activeScoreB !== activeScoreA) return activeScoreB - activeScoreA;
+                        const orderA = Number(a?.orderNo || 0);
+                        const orderB = Number(b?.orderNo || 0);
+                        if (orderA !== orderB) return orderA - orderB;
+                        return Number(a?.id || 0) - Number(b?.id || 0);
+                    });
+
+                    for (const candidate of sortedSections) {
+                        const mergedCandidate = mergeSectionWithNormalizedAsset(candidate);
+                        const candidateAsset = mergedCandidate?.asset || null;
+                        const candidateMetadata =
+                            (candidateAsset?.metadataJson && typeof candidateAsset.metadataJson === 'object')
+                                ? candidateAsset.metadataJson
+                                : {};
+                        const candidateEntryPoint = String(
+                            candidateAsset?.publicUrl || candidateAsset?.storagePath || candidateMetadata.entryPoint || ''
+                        ).trim();
+                        if (!candidateEntryPoint) continue;
+
+                        section = mergedCandidate;
+                        asset = candidateAsset;
+                        metadata = candidateMetadata;
+                        entryPoint = candidateEntryPoint;
+                        break;
+                    }
+                }
+
+                const fallbackTinCanId = String(selectedEnrollment?.course?.tincanId || '').trim();
+                if (!entryPoint && fallbackTinCanId) {
+                    const fallbackCandidate = `/content/${fallbackTinCanId}`;
+                    try {
+                        const res = await fetch(`/api/content/resolve?src=${encodeURIComponent(fallbackCandidate)}`, {
+                            cache: 'no-store',
+                        });
+                        const data = await res.json().catch(() => null);
+                        entryPoint = String(data?.resolvedSrc || fallbackCandidate).trim();
+                    } catch {
+                        entryPoint = fallbackCandidate;
+                    }
+                }
+
+                if (!entryPoint) {
+                    setError('คอร์สนี้ยังไม่มีไฟล์เนื้อหาที่ใช้งานได้');
+                    return;
+                }
+
+                const resolvedSectionId = Number(section?.id || selectedEnrollment?.sectionId || 0);
+                setActiveSectionId(Number.isInteger(resolvedSectionId) && resolvedSectionId > 0 ? resolvedSectionId : null);
+
+                const sectionType = String(section?.sectionType || '').toUpperCase();
+                const metadataType = String(metadata?.type || '').toLowerCase();
+                const hasActivities = Array.isArray(metadata?.activities) && metadata.activities.length > 0;
+                const isVideoByPath = /\.(mp4|webm|ogg|mov)(?:[?#].*)?$/i.test(entryPoint);
+                const isHtmlByPath = /\.x?html?(?:[?#].*)?$/i.test(entryPoint);
+
+                let type = metadataType
+                    || (sectionType === 'VIDEO' ? 'video' : sectionType === 'TINCAN' ? 'tincan' : (isVideoByPath ? 'video' : 'web'));
+
+                // Guard legacy/misconfigured metadata: HTML/TinCan payload should not render in <video>.
+                if (type === 'video' && isHtmlByPath) {
+                    type = hasActivities || sectionType === 'TINCAN' ? 'tincan' : 'web';
+                }
+                // If activities are present, treat content as TinCan regardless of generic "web" tag.
+                if (type === 'web' && hasActivities) {
+                    type = 'tincan';
+                }
+
+                setContent(normalizeTinCanActivities({
+                    id: metadata?.contentId || selectedEnrollment?.course?.tincanId || `course-${selectedEnrollment.courseId}-section-${selectedEnrollment.sectionId || 'default'}`,
+                    title: section?.title || selectedEnrollment?.course?.name || selectedEnrollment?.course?.title || 'Learning Content',
+                    type,
+                    entryPoint,
+                    activities: Array.isArray(metadata?.activities) ? metadata.activities : [],
+                    completionPolicy: metadata?.completionPolicy || null,
+                    packageConfig: metadata?.packageConfig || null,
+                    uploadedAt: asset?.uploadedAt || selectedEnrollment?.course?.createdAt || new Date().toISOString(),
+                }));
+            } catch {
+                setError('Failed to load content');
+            } finally {
+                setLoading(false);
+            }
+        };
+        loadContent();
+    }, [routeId, requestedSectionId]);
+
+    // Load progress
+    useEffect(() => {
+        const loadProgress = async () => {
+            let selectedUserId = canonicalProgressUserId || 'anonymous';
+            let selectedEntry = null;
+
+            const uniqueCandidates = Array.from(new Set(progressUserCandidates));
+            const rowsByCandidate = new Map();
+            for (const candidate of uniqueCandidates) {
+                const progressData = await getProgress(progressContentId, candidate, activeSectionId);
+                if (Array.isArray(progressData) && progressData.length > 0) {
+                    rowsByCandidate.set(candidate, progressData.map((row) => ({ ...row, __candidateUserId: candidate })));
+                }
+            }
+
+            const pickLatest = (rows) => {
+                if (!Array.isArray(rows) || rows.length === 0) return null;
+                const isTinCanContent = String(content?.type || '').toLowerCase() === 'tincan';
+                const sorted = [...rows].sort((a, b) => {
+                    const rank = (value) => {
+                        const key = String(value || '').toUpperCase();
+                        if (key === 'COMPLETED') return 2;
+                        if (key === 'LEARNING' || key === 'IN_PROGRESS') return 1;
+                        return 0;
+                    };
+                    if (isTinCanContent) {
+                        // For TinCan resume, prefer the furthest reached chapter first.
+                        // This avoids old COMPLETED rows (often chapter 1 from legacy data)
+                        // overriding newer in-progress position.
+                        const ca = Number(a.currentTime || 0);
+                        const cb = Number(b.currentTime || 0);
+                        if (cb !== ca) return cb - ca;
+
+                        const ta = new Date(a.updatedAt || 0).getTime();
+                        const tb = new Date(b.updatedAt || 0).getTime();
+                        if (tb !== ta) return tb - ta;
+
+                        const pa = Number(a.progress || 0);
+                        const pb = Number(b.progress || 0);
+                        if (pb !== pa) return pb - pa;
+
+                        const ra = rank(a.status);
+                        const rb = rank(b.status);
+                        if (rb !== ra) return rb - ra;
+
+                        return Number(b.id || 0) - Number(a.id || 0);
+                    }
+                    const ra = rank(a.status);
+                    const rb = rank(b.status);
+                    if (rb !== ra) return rb - ra;
+
+                    const pa = Number(a.progress || 0);
+                    const pb = Number(b.progress || 0);
+                    if (pb !== pa) return pb - pa;
+
+                    const ca = Number(a.currentTime || 0);
+                    const cb = Number(b.currentTime || 0);
+                    if (cb !== ca) return cb - ca;
+
+                    const ta = new Date(a.updatedAt || 0).getTime();
+                    const tb = new Date(b.updatedAt || 0).getTime();
+                    return tb - ta;
+                });
+                return sorted[0];
+            };
+
+            // Priority: use current logged-in user progress first, then fallback candidates.
+            const canonicalEntry = pickLatest(rowsByCandidate.get(canonicalProgressUserId));
+            if (canonicalEntry) {
+                selectedEntry = canonicalEntry;
+                selectedUserId = canonicalProgressUserId;
+            } else {
+                const fallbackOrder = uniqueCandidates.filter((c) => c !== canonicalProgressUserId);
+                for (const candidate of fallbackOrder) {
+                    const candidateEntry = pickLatest(rowsByCandidate.get(candidate));
+                    if (candidateEntry) {
+                        selectedEntry = candidateEntry;
+                        selectedUserId = candidateEntry.userId || candidateEntry.__candidateUserId || selectedUserId;
+                        break;
+                    }
+                }
+            }
+
+            if (selectedEntry) {
+                selectedUserId = selectedEntry.userId || selectedEntry.__candidateUserId || selectedUserId;
+            }
+
+            if (selectedEntry) {
+                const selectedStatus = String(selectedEntry.status || 'NOT_STARTED').toUpperCase();
+                const selectedDuration = Number(selectedEntry.duration || 0);
+                const selectedCurrent = Number(selectedEntry.currentTime || 0);
+                const selectedSuccess = selectedEntry?.success;
+                const selectedTrackedStudySeconds = Number(selectedEntry.scoreRaw || 0);
+                if (Number.isFinite(selectedTrackedStudySeconds) && selectedTrackedStudySeconds > 0) {
+                    trackedStudySecondsRef.current = Math.max(
+                        Number(trackedStudySecondsRef.current || 0),
+                        selectedTrackedStudySeconds
+                    );
+                }
+                const savedWebIdx = content?.type === 'web' ? readWebResumeIndex() : null;
+                const mergedCurrent = content?.type === 'web'
+                    ? Math.max(
+                        selectedCurrent,
+                        Number.isFinite(savedWebIdx) && savedWebIdx >= 0 ? (Math.floor(savedWebIdx) + 1) : 0
+                    )
+                    : selectedCurrent;
+                const mergedDuration = content?.type === 'web'
+                    ? Math.max(
+                        selectedDuration,
+                        Number.isFinite(savedWebIdx) && savedWebIdx >= 0 ? (Math.floor(savedWebIdx) + 1) : 0
+                    )
+                    : selectedDuration;
+                const requiresPassVerification = content?.type === 'tincan' && requireAssessmentPass;
+                const completedNeedsVerification =
+                    selectedStatus === 'COMPLETED' &&
+                    requiresPassVerification &&
+                    selectedSuccess !== true;
+                const restoredStatus = completedNeedsVerification ? 'LEARNING' : selectedStatus;
+                const sanitizedProgress = restoredStatus === 'COMPLETED'
+                    ? 100
+                    : computeTinCanProgress(mergedCurrent || 1, mergedDuration || (content?.activities?.length || 1), false);
+                setProgress(sanitizedProgress);
+                setStatus(restoredStatus);
+                completionLockRef.current = restoredStatus === 'COMPLETED';
+                setCurrentTime(mergedCurrent || 0);
+                setDuration(mergedDuration || 0);
+                restoreTincanPositionFromProgress(selectedEntry);
+                if (content?.type === 'web' && Number.isFinite(savedWebIdx) && savedWebIdx >= 0) {
+                    persistWebResumeIndex(savedWebIdx);
+                }
+
+                // Normalize to canonical user key to avoid future mismatched resume records.
+                if (canonicalProgressUserId && selectedUserId !== canonicalProgressUserId) {
+                    await syncProgressWithTrackedTime({
+                        contentId: progressContentId,
+                        userId: canonicalProgressUserId,
+                        sectionId: activeSectionId,
+                        status: restoredStatus,
+                        progress: sanitizedProgress,
+                        currentTime: mergedCurrent || 0,
+                        duration: mergedDuration || 0,
+                    });
+                    selectedUserId = canonicalProgressUserId;
+                }
+                if (completedNeedsVerification) {
+                    await syncEnrollmentStatus('LEARNING', sanitizedProgress);
+                }
+            }
+
+            if (!selectedEntry && content?.type === 'tincan') {
+                const savedIdx = readTincanResumeIndex();
+                if (Number.isFinite(savedIdx) && savedIdx >= 0) {
+                    const total = Math.max(1, Number(content?.activities?.length || 0));
+                    const safeIdx = Math.max(0, Math.min(total - 1, Math.floor(savedIdx)));
+                    setSelectedActivityIndex(safeIdx);
+                    setCurrentTime(safeIdx + 1);
+                    setProgress(computeTinCanProgress(safeIdx + 1, total, false));
+                    setStatus('LEARNING');
+                }
+            }
+            if (!selectedEntry && content?.type === 'web') {
+                const savedIdx = readWebResumeIndex();
+                if (Number.isFinite(savedIdx) && savedIdx >= 0) {
+                    const safeIdx = Math.max(0, Math.floor(savedIdx));
+                    const total = Math.max(1, safeIdx + 1);
+                    setCurrentTime(safeIdx + 1);
+                    setDuration(total);
+                    setProgress(computeTinCanProgress(safeIdx + 1, total, false));
+                    setStatus('LEARNING');
+                }
+            }
+
+            setProgressUserId(selectedUserId);
+            setResumeLoaded(true);
+        };
+        if (content && progressContentId && progressUserCandidates.length > 0 && Number(enrollmentId) > 0) {
+            loadProgress();
+        }
+    }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, activeSectionId, enrollmentId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass]);
+
+    // Load xAPI statements for this content
+    useEffect(() => {
+        const loadStatements = async () => {
+            try {
+                const res = await fetch(`/api/xapi/statements?contentId=${resolvedContentId}&actor=${encodeURIComponent(learningUserId)}&limit=20`);
+                if (res.ok) {
+                    const data = await res.json();
+                    setStatements(data);
+                }
+            } catch { /* ignore */ }
+        };
+        if (resolvedContentId && learningUserId) loadStatements();
+    }, [resolvedContentId, learningUserId]);
+
+    // Send initialized statement when content loads
+    useEffect(() => {
+        if (content && resumeLoaded && status === 'NOT_STARTED') {
+            sendStatement(buildVideoEventStatement({
+                actor,
+                contentId: content.id,
+                contentName: content.title,
+                verb: 'initialized',
+                currentTime: 0,
+                duration: 0,
+            }));
+            setStatus('LEARNING');
+            syncProgressWithTrackedTime({ contentId: progressContentId, userId: progressUserId, sectionId: activeSectionId, status: 'LEARNING', progress: 0 });
+            syncEnrollmentStatus('LEARNING', 0);
+        }
+    }, [content, status, actor, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, resumeLoaded, syncProgressWithTrackedTime]);
+
+    // Video event handlers
+    const handlePlay = useCallback(() => {
+        if (!content) return;
+        sendStatement(buildVideoEventStatement({
+            actor, contentId: content.id, contentName: content.title,
+            verb: 'played', currentTime: videoRef.current?.currentTime || 0, duration: videoRef.current?.duration || 0,
+        }));
+    }, [content, actor]);
+
+    const handlePause = useCallback(() => {
+        if (!content) return;
+        sendStatement(buildVideoEventStatement({
+            actor, contentId: content.id, contentName: content.title,
+            verb: 'paused', currentTime: videoRef.current?.currentTime || 0, duration: videoRef.current?.duration || 0,
+        }));
+    }, [content, actor]);
+
+    const handleTimeUpdate = useCallback(() => {
+        if (!content || !videoRef.current) return;
+        const video = videoRef.current;
+        const ct = video.currentTime;
+        const dur = video.duration || 1;
+        const prog = Math.round((ct / dur) * 100);
+
+        setCurrentTime(ct);
+        setDuration(dur);
+        setProgress(prog);
+
+        // Send progress statement every 10 seconds
+        if (ct - lastSentTimeRef.current >= 10) {
+            lastSentTimeRef.current = ct;
+            sendStatement(buildVideoProgressStatement({
+                actor, contentId: content.id, contentName: content.title,
+                currentTime: ct, duration: dur,
+            }));
+            syncProgressWithTrackedTime({
+                contentId: progressContentId, userId: progressUserId, sectionId: activeSectionId,
+                status: 'LEARNING', progress: prog, currentTime: ct, duration: dur,
+            });
+            syncEnrollmentStatus('LEARNING', prog);
+        }
+    }, [content, actor, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, syncProgressWithTrackedTime]);
+
+    const handleEnded = useCallback(() => {
+        if (!content) return;
+        sendStatement(buildCompletionStatement({
+            actor, contentId: content.id, contentName: content.title,
+            duration: videoRef.current?.duration || 0,
+        }));
+        setStatus('COMPLETED');
+        setProgress(100);
+        syncProgressWithTrackedTime({
+            contentId: progressContentId, userId: progressUserId, sectionId: activeSectionId,
+            status: 'COMPLETED', progress: 100, currentTime: videoRef.current?.duration || 0, duration: videoRef.current?.duration || 0,
+        });
+        syncEnrollmentStatus('COMPLETED', 100);
+    }, [content, actor, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, syncProgressWithTrackedTime]);
+
+    // Receive xAPI statements emitted from TinCan content inside iframe via postMessage.
+    useEffect(() => {
+        if (!content || content.type !== 'tincan') return;
+
+        const onMessage = async (event) => {
+            if (event.origin !== window.location.origin) return;
+
+            let payload = event?.data;
+            if (!payload) return;
+            if (typeof payload === 'string') {
+                try {
+                    payload = JSON.parse(payload);
+                } catch {
+                    return;
+                }
+            }
+
+            const type = payload?.type || payload?.event || '';
+            if (type && !['xapi', 'xapi-statement', 'statement'].includes(String(type).toLowerCase())) {
+                return;
+            }
+
+            if (!payload) return;
+
+            const incoming = payload.statement || payload.data || payload;
+            if (!incoming?.verb || !incoming?.object) return;
+
+            // Try to infer currently viewed TinCan activity from xAPI object id.
+            let matchedActivityIndex = -1;
+                const incomingObjectId = String(incoming.object?.id || '');
+                if (incomingObjectId && Array.isArray(content.activities)) {
+                    matchedActivityIndex = content.activities.findIndex((a) => {
+                        const activityId = String(a?.activityId || a?.id || '');
+                        return activityId && incomingObjectId === activityId;
+                    });
+                }
+            if (matchedActivityIndex < 0) {
+                matchedActivityIndex = detectActivityIndexFromIframe();
+            }
+
+            // Force statement ownership to current user + current content.
+            // Some TinCan packages send external actor/object IDs that do not map to our DB keys.
+            const statement = {
+                ...incoming,
+                actor: {
+                    mbox: `mailto:${actor.email}`,
+                    name: actor.name,
+                    objectType: 'Agent',
+                },
+                object: {
+                    ...(incoming.object || {}),
+                    id: `http://lms.local/content/${content.id}`,
+                    objectType: incoming.object?.objectType || 'Activity',
+                    definition: {
+                        ...(incoming.object?.definition || {}),
+                        name: {
+                            ...(incoming.object?.definition?.name || {}),
+                            'en-US': incoming.object?.definition?.name?.['en-US'] || content.title,
+                        },
+                    },
+                },
+                context: {
+                    ...(incoming.context || {}),
+                    extensions: {
+                        ...(incoming.context?.extensions || {}),
+                        'https://lms.local/extensions/original-actor-mbox': incoming.actor?.mbox || '',
+                        'https://lms.local/extensions/original-object-id': incoming.object?.id || '',
+                        // Chapter resume is synced by LearnPage logic; don't let nested media overwrite it.
+                        'https://lms.local/extensions/skip-progress-sync': true,
+                    },
+                },
+            };
+
+            const result = await sendStatement(statement);
+            if (result?.success) {
+                const completedByVerbSignal =
+                    isCompletedVerb(incoming?.verb) ||
+                    incoming?.result?.completion === true;
+                let shouldRefreshProgressFromServer = completedByVerbSignal;
+
+                if (matchedActivityIndex >= 0) {
+                    const manualTarget = Number(manualSelectionRef.current?.target);
+                    const manualUntil = Number(manualSelectionRef.current?.until || 0);
+                    const manualActive = Number.isFinite(manualTarget) && Date.now() < manualUntil;
+                    if (manualActive && matchedActivityIndex !== manualTarget) {
+                        return;
+                    }
+                    setTinCanActivityStatus((prev) => {
+                        const total = Array.isArray(content?.activities) ? content.activities.length : 0;
+                        if (total <= 0 || matchedActivityIndex < 0 || matchedActivityIndex >= total) return prev;
+
+                        const next = Array.isArray(prev) && prev.length === total
+                            ? [...prev]
+                            : Array.from({ length: total }, (_, index) => ({
+                                attempted: Boolean(prev?.[index]?.attempted),
+                                completed: Boolean(prev?.[index]?.completed),
+                                passed: Boolean(prev?.[index]?.passed),
+                                quizzed: Boolean(prev?.[index]?.quizzed),
+                                status: String(prev?.[index]?.status || ''),
+                                success: typeof prev?.[index]?.success === 'boolean' ? prev?.[index]?.success : null,
+                                completion: typeof prev?.[index]?.completion === 'boolean' ? prev?.[index]?.completion : null,
+                                scoreRaw: asFiniteNumber(prev?.[index]?.scoreRaw),
+                                scoreScaled: asFiniteNumber(prev?.[index]?.scoreScaled),
+                                scoreMax: asFiniteNumber(prev?.[index]?.scoreMax),
+                            }));
+
+                        const current = next[matchedActivityIndex] || {};
+                        const verbId = String(incoming?.verb?.id || '').toLowerCase();
+                        const verbLabel = String(incoming?.verb?.display?.['en-US'] || incoming?.verb?.display?.en || '').toLowerCase();
+                        const incomingRaw = asFiniteNumber(incoming?.result?.score?.raw);
+                        const incomingScaled = asFiniteNumber(incoming?.result?.score?.scaled);
+                        const incomingMax = asFiniteNumber(incoming?.result?.score?.max);
+                        const matchedActivity = content?.activities?.[matchedActivityIndex];
+                        const passingScore = getAssessmentPassingScore(matchedActivity);
+                        const normalizedIncomingRaw =
+                            incomingRaw !== null
+                                ? (incomingRaw <= 1 ? incomingRaw * 100 : incomingRaw)
+                                : null;
+                        const normalizedIncomingScaled =
+                            incomingScaled !== null
+                                ? (incomingScaled <= 1 ? incomingScaled * 100 : incomingScaled)
+                                : null;
+                        const normalizedIncomingRawMax =
+                            incomingRaw !== null && incomingMax !== null && incomingMax > 0
+                                ? (incomingRaw / incomingMax) * 100
+                                : null;
+                        const incomingHasPassingScore =
+                            (normalizedIncomingRaw !== null && normalizedIncomingRaw >= passingScore) ||
+                            (normalizedIncomingScaled !== null && normalizedIncomingScaled >= passingScore) ||
+                            (normalizedIncomingRawMax !== null && normalizedIncomingRawMax >= passingScore);
+                        const matchedIsAssessment = isAssessmentActivity(matchedActivity);
+                        const markedPass = Boolean(
+                            incoming?.result?.success === true
+                            || verbId.includes('pass')
+                            || verbLabel.includes('pass')
+                            || verbLabel.includes('ผ่าน')
+                            || incomingHasPassingScore
+                        );
+                        const markedComplete = Boolean(
+                            incoming?.result?.completion === true
+                            || isCompletedVerb(incoming?.verb)
+                            || (matchedIsAssessment && markedPass)
+                        );
+
+                        next[matchedActivityIndex] = {
+                            attempted: true,
+                            completed: Boolean(current?.completed) || markedComplete,
+                            passed: Boolean(current?.passed) || markedPass,
+                            quizzed: Boolean(current?.quizzed) || /quiz|test|exam|assessment|แบบทดสอบ|ทดสอบ/i.test(
+                                String(
+                                    content?.activities?.[matchedActivityIndex]?.name
+                                    || content?.activities?.[matchedActivityIndex]?.title
+                                    || ''
+                                )
+                            ),
+                            status: String(current?.status || ''),
+                            success: typeof incoming?.result?.success === 'boolean'
+                                ? incoming.result.success
+                                : (typeof current?.success === 'boolean' ? current.success : null),
+                            completion: typeof incoming?.result?.completion === 'boolean'
+                                ? incoming.result.completion
+                                : (typeof current?.completion === 'boolean' ? current.completion : null),
+                            scoreRaw: asFiniteNumber(incoming?.result?.score?.raw) ?? asFiniteNumber(current?.scoreRaw),
+                            scoreScaled: asFiniteNumber(incoming?.result?.score?.scaled) ?? asFiniteNumber(current?.scoreScaled),
+                            scoreMax: asFiniteNumber(incoming?.result?.score?.max) ?? asFiniteNumber(current?.scoreMax),
+                        };
+
+                        return next;
+                    });
+                    const savedIdx = readTincanResumeIndex();
+                    const savedKnownIndex = Number.isFinite(savedIdx) && savedIdx >= 0 ? Math.floor(savedIdx) : -1;
+                    const currentKnownIndex =
+                        Number.isFinite(currentTime) && Number(currentTime) > 0
+                            ? Math.max(0, Math.floor(Number(currentTime) - 1))
+                            : -1;
+                    const knownFloorIndex = Math.max(selectedActivityIndex, savedKnownIndex, currentKnownIndex, 0);
+                    // Never auto-regress to an earlier lesson from stale/late statements.
+                    // Backward jump is only allowed when user explicitly selected a lesson.
+                    if (!manualActive && matchedActivityIndex < knownFloorIndex) {
+                        return;
+                    }
+                    setSelectedActivityIndex(matchedActivityIndex);
+                    resumeGuardUntilRef.current = 0;
+                    persistTincanResumeIndex(matchedActivityIndex);
+                    const totalActivities = Math.max(content.activities?.length || 0, 1);
+                    const statementProgressRaw =
+                        incoming?.result?.extensions?.['https://w3id.org/xapi/video/extensions/progress'] ??
+                        incoming?.result?.extensions?.progress ??
+                        incoming?.result?.progress;
+                    const statementProgress = Number(statementProgressRaw);
+                    const completedByProgress =
+                        (Number.isFinite(statementProgress) && statementProgress >= 100);
+                    const completedByActivities =
+                        Array.isArray(tinCanActivityStatus) &&
+                        tinCanActivityStatus.length > 0 &&
+                        tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
+                    const shouldComplete = canFinalizeTinCanCompletion({
+                        completedByVerb: completedByVerbSignal,
+                        completedByProgress,
+                        completedByActivities,
+                        activityIndex: matchedActivityIndex,
+                    });
+                    const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
+                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
+                    const nextProgress = nextStatus === 'COMPLETED'
+                        ? 100
+                        : computeTinCanProgress(matchedActivityIndex + 1, totalActivities, false);
+                    await syncProgressWithTrackedTime({
+                        contentId: progressContentId,
+                        userId: progressUserId,
+                        sectionId: activeSectionId,
+                        status: nextStatus,
+                        progress: nextProgress,
+                        currentTime: matchedActivityIndex + 1,
+                        duration: totalActivities,
+                    });
+                    setStatus(nextStatus);
+                    setProgress(nextProgress);
+                    if (nextStatus === 'COMPLETED') {
+                        await syncEnrollmentStatus('COMPLETED', 100);
+                    } else {
+                        await syncEnrollmentStatus('LEARNING', nextProgress);
+                    }
+                    shouldRefreshProgressFromServer = shouldRefreshProgressFromServer || shouldComplete || lockedCompleted;
+                }
+
+                const progressGate = progressRefreshStateRef.current;
+                const now = Date.now();
+                const isRefreshDue = now - Number(progressGate.lastAt || 0) >= 15000;
+                if ((shouldRefreshProgressFromServer || isRefreshDue) && !progressGate.inFlight) {
+                    progressGate.inFlight = true;
+                    try {
+                        const query = new URLSearchParams({
+                            contentId: String(progressContentId || ''),
+                            userId: String(progressUserId || ''),
+                        });
+                        if (Number.isInteger(Number(activeSectionId)) && Number(activeSectionId) > 0) {
+                            query.set('sectionId', String(Number(activeSectionId)));
+                        }
+                        const res = await fetch(`/api/content/progress?${query.toString()}`, { cache: 'no-store' });
+                        if (res.ok) {
+                            const progressData = await res.json();
+                            if (progressData?.length > 0) {
+                                const entry = progressData[0];
+                                const rawStatus = String(entry?.status || 'NOT_STARTED').toUpperCase();
+                                const entryCompletedNeedsVerification =
+                                    rawStatus === 'COMPLETED' &&
+                                    requireAssessmentPass &&
+                                    entry?.success !== true;
+                                const normalizedStatus = entryCompletedNeedsVerification ? 'LEARNING' : rawStatus;
+                                const entryCurrent = Number(entry?.currentTime || 0);
+                                const entryDuration = Number(entry?.duration || 0);
+                                const fallbackProgress = computeTinCanProgress(
+                                    entryCurrent || 1,
+                                    entryDuration || (content?.activities?.length || 1),
+                                    false
+                                );
+                                const normalizedProgress = normalizedStatus === 'COMPLETED'
+                                    ? 100
+                                    : Math.min(
+                                        99,
+                                        Math.max(Number(entry?.progress || 0), Number(fallbackProgress || 0))
+                                    );
+                                setProgress(normalizedProgress);
+                                setStatus(normalizedStatus);
+                                setCurrentTime(entryCurrent || 0);
+                                setDuration(entryDuration || 0);
+                                if (normalizedStatus === 'COMPLETED') {
+                                    syncEnrollmentStatus('COMPLETED', 100);
+                                } else if (normalizedStatus === 'LEARNING') {
+                                    syncEnrollmentStatus('LEARNING', normalizedProgress);
+                                }
+                            }
+                        }
+                    } catch {
+                        // ignore refresh errors; local state already updated
+                    } finally {
+                        progressGate.inFlight = false;
+                        progressGate.lastAt = Date.now();
+                    }
+                }
+            }
+        };
+
+        window.addEventListener('message', onMessage);
+        return () => window.removeEventListener('message', onMessage);
+    }, [content, actor, resolvedContentId, progressContentId, progressUserId, activeSectionId, progress, status, syncEnrollmentStatus, persistTincanResumeIndex, readTincanResumeIndex, selectedActivityIndex, currentTime, computeTinCanProgress, isCompletedVerb, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, resumeLoaded, syncProgressWithTrackedTime, requireAssessmentPass, getAssessmentPassingScore, detectActivityIndexFromIframe, hasAssessmentFailureSignals, isAssessmentActivity]);
+
+    // Format time
+    const formatTime = (seconds) => {
+        if (!seconds || isNaN(seconds)) return '00:00';
+        const m = Math.floor(seconds / 60);
+        const s = Math.floor(seconds % 60);
+        return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    };
+
+    const notifyLearningRefresh = useCallback(() => {
+        try {
+            localStorage.setItem('lms_learning_refresh', String(Date.now()));
+        } catch {
+            // ignore storage write errors
+        }
+        try {
+            const channel = new BroadcastChannel('lms_learning');
+            channel.postMessage({ type: 'refresh', at: Date.now() });
+            channel.close();
+        } catch {
+            // ignore BroadcastChannel errors
+        }
+    }, []);
+
+    const handleCloseLaunch = useCallback(async () => {
+        const fallbackUrl = '/my-learning';
+
+        // Capture latest TinCan page at close time to avoid losing resume position.
+        try {
+            if (content?.type === 'tincan' && Array.isArray(content.activities) && content.activities.length > 0 && progressUserId) {
+                const frameWindow = iframeRef.current?.contentWindow;
+                let idx = -1;
+                try {
+                    const directIndex = Number(frameWindow?.currentPage);
+                    if (Number.isFinite(directIndex) && directIndex >= 0) {
+                        idx = mapRuntimePageToActivityIndex(directIndex);
+                    } else {
+                        const lastSeenIndex = Number(frameWindow?.currentState?.lastSeenIndex);
+                        if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
+                            idx = mapRuntimePageToActivityIndex(lastSeenIndex);
+                        }
+                    }
+                } catch {
+                    idx = -1;
+                }
+
+                if (idx < 0) {
+                    idx = detectActivityIndexFromIframe();
+                }
+                if (idx < 0) {
+                    const savedIdx = readTincanResumeIndex();
+                    if (Number.isFinite(savedIdx) && savedIdx >= 0 && savedIdx < content.activities.length) {
+                        idx = Math.floor(savedIdx);
+                    }
+                }
+                if (idx < 0) {
+                    idx = Math.max(
+                        0,
+                        Math.min(
+                            content.activities.length - 1,
+                            Number(highestSeenActivityIndexRef.current || 0),
+                            Number(selectedActivityIndex || 0)
+                        )
+                    );
+                }
+
+                if (idx >= 0) {
+                    resumeGuardUntilRef.current = 0;
+                    highestSeenActivityIndexRef.current = Math.max(Number(highestSeenActivityIndexRef.current || 0), idx);
+                    persistTincanResumeIndex(idx);
+                    const closeActivity = content.activities[idx];
+                    const closePath = resolveActivityCandidateUrl(closeActivity);
+                    persistTincanResumePath(closePath || closeActivity?.activityId || closeActivity?.id || '');
+                    const total = content.activities.length;
+                    const packageCompleted = Boolean(frameWindow?.currentState?.completed);
+                    const completedByActivities =
+                        Array.isArray(tinCanActivityStatus) &&
+                        tinCanActivityStatus.length > 0 &&
+                        tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
+                    const shouldComplete = canFinalizeTinCanCompletion({
+                        completedByPackage: packageCompleted,
+                        completedByProgress: false,
+                        completedByActivities,
+                        activityIndex: idx,
+                    });
+                    const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
+                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
+                    const nextProgress = computeTinCanProgress(idx + 1, total, nextStatus === 'COMPLETED');
+                    await syncProgressWithTrackedTime({
+                        contentId: progressContentId,
+                        userId: progressUserId,
+                        sectionId: activeSectionId,
+                        status: nextStatus,
+                        progress: nextProgress,
+                        currentTime: idx + 1,
+                        duration: total,
+                    });
+                    if (nextStatus === 'COMPLETED') {
+                        await syncEnrollmentStatus('COMPLETED', 100);
+                    } else {
+                        await syncEnrollmentStatus('LEARNING', nextProgress);
+                    }
+                }
+            } else if (content?.type === 'web' && progressUserId) {
+                let idx = detectLegacyWebPageIndex();
+                if (idx < 0) {
+                    const savedIdx = readWebResumeIndex();
+                    if (Number.isFinite(savedIdx) && savedIdx >= 0) {
+                        idx = Math.floor(savedIdx);
+                    }
+                }
+                if (idx >= 0) {
+                    applyWebStatusToRuntime(idx);
+                    const runtimeSnapshot = getCurrentWebStatusSnapshot();
+                    if (Array.isArray(runtimeSnapshot) && runtimeSnapshot.length > 0) {
+                        persistWebStatusSnapshot(runtimeSnapshot);
+                    }
+                    const total = Math.max(1, getLegacyWebPageTotal() || (idx + 1));
+                    const shouldComplete = canFinalizeLegacyWebCompletion({ pageIndex: idx, totalPages: total });
+                    const nextStatus = shouldComplete ? 'COMPLETED' : 'LEARNING';
+                    const nextProgress = nextStatus === 'COMPLETED'
+                        ? 100
+                        : computeTinCanProgress(idx + 1, total, nextStatus === 'COMPLETED');
+                    persistWebResumeIndex(idx);
+                    await syncProgressWithTrackedTime({
+                        contentId: progressContentId,
+                        userId: progressUserId,
+                        sectionId: activeSectionId,
+                        status: nextStatus,
+                        progress: nextProgress,
+                        currentTime: idx + 1,
+                        duration: total,
+                    });
+                    if (nextStatus === 'COMPLETED') {
+                        await syncEnrollmentStatus('COMPLETED', 100);
+                    } else {
+                        await syncEnrollmentStatus('LEARNING', nextProgress);
+                    }
+                }
+            }
+        } catch {
+            // ignore close-time position sync errors
+        }
+
+        // Before closing, sync final enrollment status from latest stored progress.
+        try {
+            if (progressContentId && progressUserId) {
+                const query = new URLSearchParams({
+                    contentId: String(progressContentId || ''),
+                    userId: String(progressUserId || ''),
+                });
+                if (Number.isInteger(Number(activeSectionId)) && Number(activeSectionId) > 0) {
+                    query.set('sectionId', String(Number(activeSectionId)));
+                }
+                const res = await fetch(`/api/content/progress?${query.toString()}`, { cache: 'no-store' });
+                if (res.ok) {
+                    const rows = await res.json();
+                    const latest = Array.isArray(rows) ? rows[0] : null;
+                    const latestCurrent = Number(latest?.currentTime || 0);
+                    const latestDuration = Number(latest?.duration || 0);
+                    const latestStatus = String(latest?.status || '').toUpperCase();
+                    const hasVerifiedServerCompletion =
+                        latestStatus === 'COMPLETED' &&
+                        (
+                            latest?.success === true ||
+                            latest?.completion === true
+                        );
+                    const isActuallyCompleted = hasVerifiedServerCompletion
+                        || canFinalizeTinCanCompletion({
+                            completedByProgress: false,
+                            completedByActivities:
+                                Array.isArray(tinCanActivityStatus) &&
+                                tinCanActivityStatus.length > 0 &&
+                                tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx])),
+                            activityIndex: (Number.isFinite(latestCurrent) && latestCurrent > 0) ? (latestCurrent - 1) : -1,
+                        });
+                    if (isActuallyCompleted) {
+                        await syncEnrollmentStatus('COMPLETED', 100);
+                    } else if (latest?.status === 'LEARNING' || Number(latest?.progress || 0) > 0) {
+                        const safeProgress = computeTinCanProgress(latestCurrent || 1, latestDuration || (content?.activities?.length || 1), false);
+                        await syncEnrollmentStatus('LEARNING', safeProgress);
+                    }
+                }
+            }
+        } catch {
+            // ignore close-time sync errors
+        }
+
+        // Notify opener tabs (e.g. /my-learning) to refresh data automatically.
+        notifyLearningRefresh();
+
+        try {
+            window.close();
+        } catch {
+            // ignore
+        }
+
+        // If browser blocks close (common for manually opened tabs), redirect back.
+        setTimeout(() => {
+            window.location.href = fallbackUrl;
+        }, 120);
+    }, [content, resolveActivityCandidateUrl, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, notifyLearningRefresh, persistTincanResumeIndex, persistTincanResumePath, persistWebResumeIndex, persistWebStatusSnapshot, computeTinCanProgress, status, tinCanActivityStatus, isTinCanLessonPassed, canFinalizeTinCanCompletion, canFinalizeLegacyWebCompletion, detectActivityIndexFromIframe, detectLegacyWebPageIndex, getLegacyWebPageTotal, readTincanResumeIndex, readWebResumeIndex, selectedActivityIndex, getCurrentWebStatusSnapshot, applyWebStatusToRuntime, syncProgressWithTrackedTime, mapRuntimePageToActivityIndex, requireAssessmentPass, hasAssessmentFailureSignals]);
+
+    const bindIframeCloseHandler = useCallback(() => {
+        const frameWindow = iframeRef.current?.contentWindow;
+        if (!frameWindow) return;
+        try {
+            frameWindow.close = handleCloseLaunch;
+        } catch {
+            // ignore
+        }
+    }, [handleCloseLaunch]);
+
+    const applyTinCanWrapperChrome = useCallback(() => {
+        if (!iframeRef.current) return;
+        const type = String(content?.type || '').toLowerCase();
+        if (!['tincan', 'web'].includes(type)) return;
+
+        let attempts = 0;
+        const maxAttempts = 40;
+
+        const timer = setInterval(() => {
+            attempts += 1;
+            try {
+                const frameWindow = iframeRef.current?.contentWindow;
+                const frameDoc = frameWindow?.document;
+                if (!frameDoc) return;
+
+                const menuBar = frameDoc.getElementById('menuBar');
+                const menuToc = frameDoc.getElementById('menuTOC');
+                const contentFrame = frameDoc.getElementById('contentFrame');
+                const contentContainer = frameDoc.getElementById('divContentFrame');
+
+                const wrapperStyleId = 'lms-force-wrapper-chrome';
+                let styleEl = frameDoc.getElementById(wrapperStyleId);
+                if (!styleEl) {
+                    styleEl = frameDoc.createElement('style');
+                    styleEl.id = wrapperStyleId;
+                    (frameDoc.head || frameDoc.body || frameDoc.documentElement).appendChild(styleEl);
+                }
+                styleEl.textContent = `
+                        html, body {
+                            margin: 0 !important;
+                            padding: 0 !important;
+                            width: 100% !important;
+                            height: 100% !important;
+                            overflow: hidden !important;
+                            background: #000 !important;
+                        }
+                        #menuBar,
+                        #menuTOC,
+                        #menuTOCTop,
+                        #menuTOCStatus {
+                            display: none !important;
+                            visibility: hidden !important;
+                            pointer-events: none !important;
+                        }
+                        #menuTOC {
+                            width: 0 !important;
+                            min-width: 0 !important;
+                            max-width: 0 !important;
+                            left: -99999px !important;
+                            border: 0 !important;
+                            overflow: hidden !important;
+                        }
+                        #divContentFrame,
+                        #contentFrame {
+                            position: absolute !important;
+                            top: 0 !important;
+                            left: 0 !important;
+                            transform: none !important;
+                            width: 100% !important;
+                            height: 100% !important;
+                            margin: 0 !important;
+                            padding: 0 !important;
+                            border: 0 !important;
+                            overflow: hidden !important;
+                        }
+                    `;
+
+                if (menuBar) menuBar.style.display = 'none';
+                if (menuToc) {
+                    menuToc.style.setProperty('display', 'none', 'important');
+                    menuToc.style.setProperty('visibility', 'hidden', 'important');
+                    menuToc.style.setProperty('pointer-events', 'none', 'important');
+                    menuToc.style.setProperty('width', '0px', 'important');
+                    menuToc.style.setProperty('min-width', '0px', 'important');
+                    menuToc.style.setProperty('max-width', '0px', 'important');
+                    menuToc.style.setProperty('left', '-99999px', 'important');
+                    menuToc.style.setProperty('border', '0', 'important');
+                    menuToc.style.setProperty('overflow', 'hidden', 'important');
+                }
+
+                if (contentContainer) {
+                    contentContainer.style.setProperty('top', '0', 'important');
+                    contentContainer.style.setProperty('left', '0', 'important');
+                    contentContainer.style.setProperty('transform', 'none', 'important');
+                    contentContainer.style.setProperty('width', '100%', 'important');
+                    contentContainer.style.setProperty('height', '100%', 'important');
+                    contentContainer.style.setProperty('overflow', 'hidden', 'important');
+                }
+
+                if (contentFrame) {
+                    contentFrame.style.setProperty('top', '0', 'important');
+                    contentFrame.style.setProperty('left', '0', 'important');
+                    contentFrame.style.setProperty('transform', 'none', 'important');
+                    contentFrame.style.setProperty('width', '100%', 'important');
+                    contentFrame.style.setProperty('height', '100%', 'important');
+                    contentFrame.style.setProperty('border', '0', 'important');
+                }
+
+                if (frameDoc.body) {
+                    frameDoc.body.style.margin = '0';
+                    frameDoc.body.style.padding = '0';
+                    frameDoc.body.style.overflow = 'hidden';
+                    frameDoc.body.style.background = '#000';
+                }
+
+                // Legacy quiz/posttest packages often render a fixed-size canvas (e.g. nolpifrm),
+                // which leaves large black margins. Force that frame to cover the whole player.
+                const innerDoc = contentFrame?.contentWindow?.document;
+                if (innerDoc) {
+                    const hasLegacyNolp =
+                        Boolean(innerDoc.getElementById('nolpifrm')) ||
+                        Boolean(innerDoc.querySelector('iframe[name="nolpifrm"]'));
+
+                    if (hasLegacyNolp) {
+                        const styleId = 'lms-force-fullscreen-nolp';
+                        if (!innerDoc.getElementById(styleId)) {
+                            const styleEl = innerDoc.createElement('style');
+                            styleEl.id = styleId;
+                            styleEl.textContent = `
+                                html, body {
+                                    margin: 0 !important;
+                                    padding: 0 !important;
+                                    width: 100% !important;
+                                    height: 100% !important;
+                                    overflow: hidden !important;
+                                    background: #000 !important;
+                                }
+                                span#skin > img, [id="skin"] > img {
+                                    display: none !important;
+                                }
+                                #nolpifrm, iframe[name="nolpifrm"] {
+                                    position: fixed !important;
+                                    inset: 0 !important;
+                                    width: 100vw !important;
+                                    height: 100vh !important;
+                                    border: 0 !important;
+                                    margin: 0 !important;
+                                    padding: 0 !important;
+                                    background: #fff !important;
+                                    z-index: 2147483000 !important;
+                                }
+                            `;
+                            (innerDoc.head || innerDoc.body || innerDoc.documentElement).appendChild(styleEl);
+                        }
+                    }
+                }
+
+                if (contentFrame || contentContainer) {
+                    setIsTinCanFrameReady(true);
+                    if (frameRevealTimeoutRef.current) {
+                        clearTimeout(frameRevealTimeoutRef.current);
+                        frameRevealTimeoutRef.current = null;
+                    }
+                }
+            } catch {
+                // ignore cross-frame access/runtime readiness errors
+            }
+
+            if (attempts >= maxAttempts) {
+                clearInterval(timer);
+            }
+        }, 250);
+    }, [content?.type]);
+
+    const forceTinCanReflow = useCallback(() => {
+        if (!iframeRef.current) return;
+        const type = String(content?.type || '').toLowerCase();
+        if (!['tincan', 'web'].includes(type)) return;
+
+        const sessionId = Date.now();
+        reflowSessionRef.current = sessionId;
+        let attempts = 0;
+        const maxAttempts = 8;
+
+        const tick = () => {
+            if (reflowSessionRef.current !== sessionId) return;
+            attempts += 1;
+            try {
+                const frameWindow = iframeRef.current?.contentWindow;
+                if (frameWindow) {
+                    // Let package script recalc, then immediately override with our full-bleed chrome.
+                    if (typeof frameWindow.updateOC === 'function') frameWindow.updateOC();
+                    if (typeof frameWindow.SetupIFrame === 'function') frameWindow.SetupIFrame();
+                    frameWindow.dispatchEvent(new Event('resize'));
+                    if (typeof frameWindow.resizewindow === 'function') frameWindow.resizewindow();
+                    if (typeof frameWindow.resizeWindow === 'function') frameWindow.resizeWindow();
+
+                    const frameDoc = frameWindow.document;
+                    const contentFrame = frameDoc?.getElementById('contentFrame');
+                    const innerWin = contentFrame?.contentWindow;
+                    if (innerWin) {
+                        innerWin.dispatchEvent(new Event('resize'));
+                    }
+                }
+                applyTinCanWrapperChrome();
+            } catch {
+                // ignore transient iframe access errors
+            }
+
+            if (attempts < maxAttempts) {
+                setTimeout(tick, 80);
+            }
+        };
+
+        tick();
+    }, [content?.type, applyTinCanWrapperChrome]);
+
+    const queuePlayerReflow = useCallback(() => {
+        const pending = Array.isArray(playerReflowTimeoutsRef.current)
+            ? playerReflowTimeoutsRef.current
+            : [];
+        pending.forEach((timer) => clearTimeout(timer));
+        playerReflowTimeoutsRef.current = [];
+
+        // Trigger a few reflow passes while layout animation is running.
+        [24, 140, 300, 520].forEach((delay) => {
+            const timer = setTimeout(() => {
+                forceTinCanReflow();
+            }, delay);
+            playerReflowTimeoutsRef.current.push(timer);
+        });
+    }, [forceTinCanReflow]);
+
+    const handleToggleLearningSidebar = useCallback(() => {
+        setIsLearningSidebarOpen((prev) => !prev);
+        queuePlayerReflow();
+    }, [queuePlayerReflow]);
+
+    const handleCloseLearningSidebar = useCallback(() => {
+        setIsLearningSidebarOpen(false);
+        queuePlayerReflow();
+    }, [queuePlayerReflow]);
+
+    const handleToggleLearningAi = useCallback(() => {
+        setIsLearningAiOpen((prev) => !prev);
+        queuePlayerReflow();
+    }, [queuePlayerReflow]);
+
+    const handleCloseLearningAi = useCallback(() => {
+        setIsLearningAiOpen(false);
+        queuePlayerReflow();
+    }, [queuePlayerReflow]);
+
+    const syncTincanPositionFromIframe = useCallback(async () => {
+        if (tinCanSyncInFlightRef.current) return;
+        tinCanSyncInFlightRef.current = true;
+        try {
+        if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
+        if (!resumeLoaded) return;
+        syncTinCanActivityStatusFromIframe();
+
+        let packageCompleted = false;
+        try {
+            const frameWindow = iframeRef.current?.contentWindow;
+            packageCompleted = Boolean(frameWindow?.currentState?.completed);
+        } catch {
+            packageCompleted = false;
+        }
+
+        const idx = detectActivityIndexFromIframe();
+        if (idx < 0) return;
+        const total = content.activities.length;
+        const position = idx + 1;
+
+        const manualTarget = Number(manualSelectionRef.current?.target);
+        const manualUntil = Number(manualSelectionRef.current?.until || 0);
+        const manualActive = Number.isFinite(manualTarget) && Date.now() < manualUntil;
+        const forceExactPosition = manualActive && idx === manualTarget;
+        if (manualActive) {
+            // While user-initiated jump is still in-flight, ignore old iframe position reports.
+            if (idx !== manualTarget) {
+                return;
+            }
+            // Landed on target chapter, allow backward sync exactly once.
+            manualSelectionRef.current = { target: null, until: 0 };
+        }
+
+        const savedIdx = readTincanResumeIndex();
+        const savedKnownIndex = Number.isFinite(savedIdx) && savedIdx >= 0 ? Math.floor(savedIdx) : -1;
+        const currentKnownIndex =
+            Number.isFinite(currentTime) && Number(currentTime) > 0
+                ? Math.max(0, Math.floor(Number(currentTime) - 1))
+                : -1;
+        const lastKnownIndex =
+            Number.isFinite(Number(lastTincanSyncRef.current?.position))
+                ? Math.max(0, Math.floor(Number(lastTincanSyncRef.current.position) - 1))
+                : -1;
+        const highestSeenIndex = Number.isFinite(Number(highestSeenActivityIndexRef.current))
+            ? Math.max(0, Math.floor(Number(highestSeenActivityIndexRef.current)))
+            : -1;
+        const knownFloorIndex = Math.max(selectedActivityIndex, savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);
+
+        const effectivePosition = position;
+        const effectiveIndex = Math.max(0, Math.min(total - 1, effectivePosition - 1));
+
+        // Ignore auto-sync regressions while restoring/opening TinCan.
+        if (!forceExactPosition && effectiveIndex < knownFloorIndex) {
+            return;
+        }
+
+        if (effectiveIndex !== selectedActivityIndex) {
+            setSelectedActivityIndex(effectiveIndex);
+        }
+        if (effectiveIndex > Number(highestSeenActivityIndexRef.current || 0)) {
+            highestSeenActivityIndexRef.current = effectiveIndex;
+        }
+
+        const completedByActivityFlags =
+            Array.isArray(tinCanActivityStatus) &&
+            tinCanActivityStatus.length > 0 &&
+            tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
+        const shouldComplete = canFinalizeTinCanCompletion({
+            completedByPackage: packageCompleted,
+            completedByProgress: false,
+            completedByActivities: completedByActivityFlags,
+            activityIndex: effectiveIndex,
+        });
+        const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
+        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
+        const nextProgress = computeTinCanProgress(effectivePosition, total, nextStatus === 'COMPLETED');
+        const guardActive = Date.now() < Number(resumeGuardUntilRef.current || 0);
+        if (guardActive && selectedActivityIndex > 0 && effectiveIndex < selectedActivityIndex) {
+            return;
+        }
+        const now = Date.now();
+        const last = lastTincanSyncRef.current || {};
+        const unchangedRecently =
+            last.position === effectivePosition &&
+            last.status === nextStatus &&
+            Number(last.progress) === Number(nextProgress) &&
+            now - Number(last.at || 0) < 5000;
+        if (unchangedRecently) return;
+        lastTincanSyncRef.current = { position: effectivePosition, status: nextStatus, progress: nextProgress, at: now };
+        persistTincanResumeIndex(effectiveIndex);
+        const effectiveActivity = content.activities[effectiveIndex];
+        const effectivePath = resolveActivityCandidateUrl(effectiveActivity);
+        persistTincanResumePath(effectivePath || effectiveActivity?.activityId || effectiveActivity?.id || '');
+        setCurrentTime(effectivePosition);
+        if (nextStatus === 'COMPLETED') {
+            setProgress(100);
+        } else {
+            setProgress(nextProgress);
+        }
+
+        await syncProgressWithTrackedTime({
+            contentId: progressContentId,
+            userId: progressUserId,
+            sectionId: activeSectionId,
+            status: nextStatus,
+            progress: nextProgress,
+            currentTime: effectivePosition,
+            duration: total,
+        });
+
+        setStatus(nextStatus);
+        if (nextStatus === 'COMPLETED') {
+            setProgress(100);
+            await syncEnrollmentStatus('COMPLETED', 100);
+        } else {
+            setProgress(nextProgress);
+            await syncEnrollmentStatus('LEARNING', nextProgress);
+        }
+        } finally {
+            tinCanSyncInFlightRef.current = false;
+        }
+    }, [content, resolveActivityCandidateUrl, detectActivityIndexFromIframe, selectedActivityIndex, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals]);
+
+    const getMaxUnlockedActivityIndex = useCallback(() => {
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return 0;
+
+        let runtimeUnlocked = -1;
+        const frameWindow = iframeRef.current?.contentWindow;
+        try {
+            const dataIndex = frameWindow?.currentState?.dataIndex;
+            if (Array.isArray(dataIndex) && dataIndex.length > 0) {
+                const offset = getTinCanRuntimeIndexOffset();
+                let contiguousPassed = 0;
+                for (let i = 0; i < activities.length; i++) {
+                    const row = dataIndex[i + offset];
+                    if (isTinCanLessonClearedForAdvance(row, activities[i])) {
+                        contiguousPassed += 1;
+                        continue;
+                    }
+                    break;
+                }
+                runtimeUnlocked = Math.max(0, Math.min(activities.length - 1, contiguousPassed));
+            }
+        } catch {
+            // ignore iframe access errors and fallback to local state
+        }
+
+        let localUnlocked = 0;
+        for (let i = 0; i < activities.length; i++) {
+            if (isTinCanLessonClearedForAdvance(tinCanActivityStatus[i], activities[i])) {
+                localUnlocked += 1;
+                continue;
+            }
+            break;
+        }
+        localUnlocked = Math.max(0, Math.min(activities.length - 1, localUnlocked));
+
+        const selectedSafe = Math.max(0, Math.min(activities.length - 1, selectedActivityIndex));
+        let forwardFromSelected = selectedSafe;
+        for (let i = selectedSafe; i < activities.length; i++) {
+            if (isTinCanLessonClearedForAdvance(tinCanActivityStatus[i], activities[i])) {
+                forwardFromSelected = i + 1;
+                continue;
+            }
+            break;
+        }
+        forwardFromSelected = Math.max(0, Math.min(activities.length - 1, forwardFromSelected));
+
+        const highestSeenSafe = Math.max(
+            0,
+            Math.min(
+                activities.length - 1,
+                Number.isFinite(Number(highestSeenActivityIndexRef.current))
+                    ? Math.floor(Number(highestSeenActivityIndexRef.current))
+                    : 0
+            )
+        );
+        return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
+    }, [content, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, getTinCanRuntimeIndexOffset]);
+
+    const handleManualActivitySelect = useCallback(async (idx) => {
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return;
+
+        const safeIndex = Math.max(0, Math.min(activities.length - 1, Number(idx) || 0));
+        const maxUnlocked = getMaxUnlockedActivityIndex();
+        if (safeIndex > maxUnlocked) {
+            window.alert('กรุณาเรียนบทก่อนหน้าให้ผ่านก่อน จึงจะไปบทถัดไปได้');
+            return;
+        }
+
+        manualSelectionRef.current = { target: safeIndex, until: Date.now() + 12000 };
+        highestSeenActivityIndexRef.current = Math.max(
+            Number(highestSeenActivityIndexRef.current || 0),
+            safeIndex
+        );
+        setSelectedActivityIndex(safeIndex);
+        setCurrentTime(safeIndex + 1);
+        resumeGuardUntilRef.current = 0;
+        persistTincanResumeIndex(safeIndex);
+        const targetActivity = activities[safeIndex];
+        const targetPath = resolveActivityCandidateUrl(targetActivity);
+        persistTincanResumePath(targetPath || targetActivity?.activityId || targetActivity?.id || '');
+        applyTincanResumeToIframe();
+
+        // Persist chapter position immediately so reopening won't fall back to lesson 1.
+        if (progressUserId) {
+            try {
+                const total = activities.length;
+                const nextProgress = computeTinCanProgress(safeIndex + 1, total, false);
+                await syncProgressWithTrackedTime({
+                    contentId: progressContentId,
+                    userId: progressUserId,
+                    sectionId: activeSectionId,
+                    status: 'LEARNING',
+                    progress: nextProgress,
+                    currentTime: safeIndex + 1,
+                    duration: total,
+                });
+                await syncEnrollmentStatus('LEARNING', nextProgress);
+            } catch {
+                // ignore manual select sync errors
+            }
+        }
+    }, [content, getMaxUnlockedActivityIndex, persistTincanResumeIndex, resolveActivityCandidateUrl, persistTincanResumePath, applyTincanResumeToIframe, progressContentId, progressUserId, activeSectionId, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime]);
+
+    const handleManualWebPageSelect = useCallback(async (idx) => {
+        if (content?.type !== 'web') return;
+
+        const knownTotal = Math.max(
+            1,
+            Number(getLegacyWebPageTotal() || 0),
+            Number(duration || 0),
+            Number(currentTime || 0),
+            Number(idx || 0) + 1
+        );
+        const safeIndex = Math.max(0, Math.min(knownTotal - 1, Number(idx) || 0));
+
+        persistWebResumeIndex(safeIndex);
+        setCurrentTime(safeIndex + 1);
+        setDuration(Math.max(knownTotal, safeIndex + 1));
+
+        const shouldComplete = canFinalizeLegacyWebCompletion({
+            pageIndex: safeIndex,
+            totalPages: knownTotal,
+        });
+        const nextStatus = shouldComplete ? 'COMPLETED' : 'LEARNING';
+        const nextProgress = nextStatus === 'COMPLETED'
+            ? 100
+            : computeTinCanProgress(safeIndex + 1, knownTotal, false);
+
+        setProgress(nextProgress);
+        if (nextStatus === 'COMPLETED') {
+            setStatus('COMPLETED');
+        } else if (String(status || '').toUpperCase() !== 'COMPLETED') {
+            setStatus('LEARNING');
+        }
+
+        const windows = getLegacyWebRuntimeWindows();
+        for (const win of windows) {
+            try {
+                if (typeof win?.goToPage !== 'function') continue;
+                const previousLinear = win?.islinear;
+                try {
+                    win.islinear = false;
+                } catch {
+                    // ignore
+                }
+                win.goToPage(safeIndex);
+                try {
+                    win.islinear = previousLinear;
+                } catch {
+                    // ignore
+                }
+                if (typeof win.drawTOC === 'function') {
+                    win.drawTOC();
+                }
+            } catch {
+                // ignore runtime navigation errors
+            }
+        }
+
+        applyWebStatusToRuntime(safeIndex);
+        const runtimeSnapshot = getCurrentWebStatusSnapshot();
+        if (Array.isArray(runtimeSnapshot) && runtimeSnapshot.length > 0) {
+            persistWebStatusSnapshot(runtimeSnapshot);
+        }
+
+        if (!progressUserId) return;
+        try {
+            await syncProgressWithTrackedTime({
+                contentId: progressContentId,
+                userId: progressUserId,
+                sectionId: activeSectionId,
+                status: nextStatus,
+                progress: nextProgress,
+                currentTime: safeIndex + 1,
+                duration: knownTotal,
+            });
+            if (nextStatus === 'COMPLETED') {
+                await syncEnrollmentStatus('COMPLETED', 100);
+            } else {
+                await syncEnrollmentStatus('LEARNING', nextProgress);
+            }
+        } catch {
+            // ignore manual select sync errors
+        }
+    }, [
+        content?.type,
+        getLegacyWebPageTotal,
+        duration,
+        currentTime,
+        persistWebResumeIndex,
+        canFinalizeLegacyWebCompletion,
+        computeTinCanProgress,
+        status,
+        getLegacyWebRuntimeWindows,
+        applyWebStatusToRuntime,
+        getCurrentWebStatusSnapshot,
+        persistWebStatusSnapshot,
+        progressUserId,
+        syncProgressWithTrackedTime,
+        progressContentId,
+        activeSectionId,
+        syncEnrollmentStatus,
+    ]);
+
+    useEffect(() => {
+        if (!isLaunchMode || !content || content.type !== 'tincan') return;
+        const timer = setInterval(() => {
+            syncTincanPositionFromIframe();
+        }, 1000);
+        return () => clearInterval(timer);
+    }, [isLaunchMode, content, syncTincanPositionFromIframe]);
+
+    useEffect(() => {
+        if (!isLaunchMode || content?.type !== 'web' || !resumeLoaded) return;
+        if (!progressContentId || !progressUserId) return;
+
+        const timer = setInterval(() => {
+            const idx = detectLegacyWebPageIndex();
+            if (idx < 0) return;
+
+            const total = Math.max(1, getLegacyWebPageTotal() || (idx + 1));
+            const shouldComplete = canFinalizeLegacyWebCompletion({ pageIndex: idx, totalPages: total });
+            const nextStatus = shouldComplete ? 'COMPLETED' : 'LEARNING';
+            const nextProgress = nextStatus === 'COMPLETED'
+                ? 100
+                : computeTinCanProgress(idx + 1, total, nextStatus === 'COMPLETED');
+
+            const gate = legacyWebSyncStateRef.current || {};
+            const now = Date.now();
+            applyWebStatusToRuntime(idx);
+            const runtimeSnapshot = getCurrentWebStatusSnapshot();
+            if (Array.isArray(runtimeSnapshot) && runtimeSnapshot.length > 0) {
+                const shouldPersistSnapshot =
+                    Number(gate.idx) !== idx ||
+                    now - Number(gate.snapshotAt || 0) >= 4000;
+                if (shouldPersistSnapshot) {
+                    persistWebStatusSnapshot(runtimeSnapshot);
+                    legacyWebSyncStateRef.current = { ...gate, snapshotAt: now };
+                }
+            }
+            const latestGate = legacyWebSyncStateRef.current || gate;
+            const unchangedRecently =
+                Number(latestGate.idx) === idx &&
+                String(latestGate.status || '').toUpperCase() === nextStatus &&
+                now - Number(latestGate.at || 0) < 5000;
+            if (unchangedRecently) return;
+
+            legacyWebSyncStateRef.current = { ...latestGate, idx, status: nextStatus, at: now };
+            persistWebResumeIndex(idx);
+            setCurrentTime(idx + 1);
+            setDuration(total);
+            setProgress(nextProgress);
+            if (nextStatus === 'COMPLETED') {
+                setStatus('COMPLETED');
+            } else if (String(status || '').toUpperCase() !== 'COMPLETED') {
+                setStatus('LEARNING');
+            }
+
+            syncProgressWithTrackedTime({
+                contentId: progressContentId,
+                userId: progressUserId,
+                sectionId: activeSectionId,
+                status: nextStatus,
+                progress: nextProgress,
+                currentTime: idx + 1,
+                duration: total,
+            });
+
+            if (nextStatus === 'COMPLETED') {
+                syncEnrollmentStatus('COMPLETED', 100);
+            } else {
+                syncEnrollmentStatus('LEARNING', nextProgress);
+            }
+        }, 1000);
+
+        return () => clearInterval(timer);
+    }, [
+        isLaunchMode,
+        content?.type,
+        resumeLoaded,
+        progressContentId,
+        progressUserId,
+        activeSectionId,
+        status,
+        computeTinCanProgress,
+        syncEnrollmentStatus,
+        detectLegacyWebPageIndex,
+        getLegacyWebPageTotal,
+        persistWebResumeIndex,
+        persistWebStatusSnapshot,
+        getCurrentWebStatusSnapshot,
+        applyWebStatusToRuntime,
+        canFinalizeLegacyWebCompletion,
+        syncProgressWithTrackedTime,
+    ]);
+
+    useEffect(() => {
+        if (!isLaunchMode) return;
+        const type = String(content?.type || '').toLowerCase();
+        if (!['tincan', 'web'].includes(type)) return;
+        const timer = setTimeout(() => {
+            forceTinCanReflow();
+        }, 40);
+        return () => clearTimeout(timer);
+    }, [isLaunchMode, content?.type, forceTinCanReflow]);
+
+    useEffect(() => {
+        if (!isLaunchMode) return;
+        const type = String(content?.type || '').toLowerCase();
+        if (!['tincan', 'web'].includes(type)) return;
+        const timer = setInterval(() => {
+            applyTinCanWrapperChrome();
+        }, 1200);
+        return () => clearInterval(timer);
+    }, [isLaunchMode, content?.type, applyTinCanWrapperChrome]);
+
+    if (!mounted || loading) {
+        return <LoadScreen text="Loading content..." variant="minimal" className="bg-[#0f0f1a]/55" />;
+    }
+
+    if (error || !content) {
+        return (
+            <div className="min-h-screen bg-[#0f0f1a] flex items-center justify-center">
+                <div className="text-center">
+                    <h2 className="text-white text-2xl mb-2">Content Not Found</h2>
+                    <p className="text-white/50">{error || 'The content you are looking for does not exist.'}</p>
+                    <a href={course ? `/courses/${course.id}` : '/courses'} className="text-[#687EFF] mt-4 inline-block hover:underline">← Back to Courses</a>
+                </div>
+            </div>
+        );
+    }
+
+    if (isLaunchMode) {
+        const isTinCanContent = content.type === 'tincan';
+        const isLegacyWebContent = content.type === 'web';
+        const hasStructuredLessons = isTinCanContent || isLegacyWebContent;
+        const normalizedStatus = String(status || '').toUpperCase();
+        const lessonItems = isTinCanContent
+            ? (Array.isArray(content.activities) ? content.activities : [])
+            : (() => {
+                const runtimeTotal = Math.max(
+                    1,
+                    Number(getLegacyWebPageTotal() || 0),
+                    Number(duration || 0),
+                    Number(currentTime || 0)
+                );
+                const runtimeTitles = getLegacyWebPageTitles();
+                return Array.from({ length: runtimeTotal }, (_, index) => ({
+                    id: index + 1,
+                    name: runtimeTitles[index] || `Lesson ${index + 1}`,
+                    duration: '--:--',
+                }));
+            })();
+        const resumePositionIndex =
+            Number.isFinite(Number(currentTime)) && Number(currentTime) > 0
+                ? Math.max(0, Math.floor(Number(currentTime) - 1))
+                : -1;
+        const detectedWebIndex = isLegacyWebContent ? detectLegacyWebPageIndex() : -1;
+        const selectedLessonIndex = isTinCanContent
+            ? Math.max(0, Math.min(lessonItems.length - 1, Number(selectedActivityIndex) || 0))
+            : Math.max(
+                0,
+                Math.min(
+                    lessonItems.length - 1,
+                    Number.isFinite(detectedWebIndex) && detectedWebIndex >= 0
+                        ? detectedWebIndex
+                        : (resumePositionIndex >= 0 ? resumePositionIndex : 0)
+                )
+            );
+        const inferredCompletedThrough = isTinCanContent
+            ? (normalizedStatus === 'COMPLETED'
+                ? lessonItems.length - 1
+                : Math.max(-1, Math.min(lessonItems.length - 1, Math.max(resumePositionIndex, selectedActivityIndex - 1))))
+            : (normalizedStatus === 'COMPLETED'
+                ? lessonItems.length - 1
+                : Math.max(-1, Math.min(lessonItems.length - 1, selectedLessonIndex - 1)));
+        const webStatusSnapshot = isLegacyWebContent
+            ? (getCurrentWebStatusSnapshot() || readWebStatusSnapshot() || [])
+            : [];
+        const completedFlags = lessonItems.map((lesson, index) => {
+            if (isTinCanContent) {
+                const st = tinCanActivityStatus[index];
+                const explicitCompleted = Boolean(st?.passed || st?.completed);
+                if (explicitCompleted) return true;
+                if (!isAssessmentActivity(lesson) && index <= inferredCompletedThrough) {
+                    return true;
+                }
+                return false;
+            }
+            const st = webStatusSnapshot[index];
+            if (normalizedStatus === 'COMPLETED') return true;
+            if (st?.completed || st?.passed) return true;
+            return index <= inferredCompletedThrough;
+        });
+        const lessonStatuses = lessonItems.map((_, index) => {
+            if (index === selectedLessonIndex && normalizedStatus !== 'COMPLETED') return 'in_progress';
+            if (completedFlags[index]) return 'completed';
+            if (isTinCanContent) {
+                const st = tinCanActivityStatus[index];
+                if (st?.attempted || st?.quizzed) return 'attempted';
+            } else {
+                const st = webStatusSnapshot[index];
+                if (st?.attempted || st?.quizzed) return 'attempted';
+            }
+            return 'not_started';
+        });
+        const getLessonStatusLabel = (lessonStatus) => {
+            const normalized = String(lessonStatus || '').toLowerCase();
+            if (normalized === 'completed') return 'เรียนผ่านแล้ว';
+            if (normalized === 'in_progress') return 'กำลังเรียน';
+            if (normalized === 'attempted') return 'เริ่มเรียนแล้ว';
+            return 'ยังไม่เริ่ม';
+        };
+        const activeLessonTitle = lessonItems[selectedLessonIndex]?.name || lessonItems[selectedLessonIndex]?.title || content.title;
+        const lessonModules = [
+            {
+                id: 1,
+                module: 'Module 1',
+                items: lessonItems.map((lesson, index) => ({
+                    id: index + 1,
+                    title: lesson?.name || `Lesson ${index + 1}`,
+                    duration: lesson?.duration || '--:--',
+                    completed: Boolean(completedFlags[index]),
+                    status: lessonStatuses[index],
+                    statusLabel: getLessonStatusLabel(lessonStatuses[index]),
+                })),
+            },
+        ];
+
+        return (
+            <div
+                className="fixed inset-0 bg-white overflow-hidden flex"
+                style={{ fontFamily: 'Inter, system-ui, -apple-system, sans-serif' }}
+            >
+                {hasStructuredLessons && (
+                    <div
+                        className={`h-full overflow-hidden transition-[width,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                            isLearningSidebarOpen ? 'w-[300px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
+                        }`}
+                    >
+                        <div className="h-full w-[300px]">
+                            <LearningLessonSidebar
+                                lessons={lessonModules}
+                                activeLesson={selectedLessonIndex + 1}
+                                onSelectLesson={(lessonId) => {
+                                    const idx = Math.max(0, Number(lessonId) - 1);
+                                    if (isTinCanContent) {
+                                        handleManualActivitySelect(idx);
+                                        return;
+                                    }
+                                    if (isLegacyWebContent) {
+                                        handleManualWebPageSelect(idx);
+                                    }
+                                }}
+                                onClose={handleCloseLearningSidebar}
+                            />
+                        </div>
+                    </div>
+                )}
+
+                <LearningVideoPlayer
+                    lessonTitle={activeLessonTitle}
+                    sidebarOpen={isLearningSidebarOpen}
+                    onToggleSidebar={handleToggleLearningSidebar}
+                    onToggleAi={handleToggleLearningAi}
+                    aiPanelOpen={isLearningAiOpen}
+                    onBack={handleCloseLaunch}
+                >
+                    {content.type === 'video' ? (
+                        <video
+                            ref={videoRef}
+                            src={resolvePlayerSrc(content.entryPoint)}
+                            controls
+                            autoPlay
+                            muted
+                            playsInline
+                            className="w-full h-full object-contain bg-black"
+                            onPlay={handlePlay}
+                            onPause={handlePause}
+                            onTimeUpdate={handleTimeUpdate}
+                            onEnded={handleEnded}
+                            onLoadedMetadata={(e) => {
+                                setDuration(e.target.duration);
+                                ensureVideoAutoplay();
+                            }}
+                            onCanPlay={ensureVideoAutoplay}
+                        />
+                    ) : (
+                        <>
+                            <iframe
+                                key={iframeRenderKey}
+                                ref={iframeRef}
+                                src={iframeSrc || resolvePlayerSrc(content.entryPoint)}
+                                className="w-full h-full border-none transition-opacity duration-150"
+                                style={{
+                                    opacity: content.type === 'tincan' && !isTinCanFrameReady ? 0 : 1,
+                                    transform: 'translateZ(0)',
+                                    willChange: 'transform,width,opacity',
+                                }}
+                                allow="fullscreen; autoplay"
+                                title={content.title}
+                                onLoad={() => {
+                                    setIsTinCanFrameReady(false);
+                                    if (frameRevealTimeoutRef.current) clearTimeout(frameRevealTimeoutRef.current);
+                                    frameRevealTimeoutRef.current = setTimeout(() => {
+                                        setIsTinCanFrameReady(true);
+                                    }, 1800);
+
+                                    applyTinCanWrapperChrome();
+                                    bindIframeCloseHandler();
+                                    bindIframeInteractionTracking();
+                                    applyTincanResumeToIframe();
+                                    applyLegacyWebResumeToIframe();
+                                    syncTinCanActivityStatusFromIframe();
+                                    syncTincanPositionFromIframe();
+                                    setTimeout(() => {
+                                        applyLegacyWebResumeToIframe();
+                                        syncTinCanActivityStatusFromIframe();
+                                        syncTincanPositionFromIframe();
+                                        forceTinCanReflow();
+                                    }, 1200);
+                                }}
+                            />
+                            {content.type === 'tincan' && !isTinCanFrameReady && (
+                                <div className="absolute inset-0 z-20 flex items-center justify-center bg-[#0b1220]">
+                                    <div className="flex items-center gap-3 text-white/80 text-sm">
+                                        <span className="w-3 h-3 rounded-full bg-violet-400 animate-pulse"></span>
+                                        Loading lesson...
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
+                </LearningVideoPlayer>
+
+                <div
+                    className={`h-full overflow-hidden transition-[width,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                        isLearningAiOpen ? 'w-[320px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
+                    }`}
+                >
+                    <div className="h-full w-[320px]">
+                        <LearningAiAssistant onClose={handleCloseLearningAi} />
+                    </div>
+                </div>
+                {showCompletionToast && (
+                    <div className="fixed right-6 top-6 z-[120] rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-emerald-800 shadow-lg">
+                        <div className="text-sm font-semibold">เรียนจบแล้ว</div>
+                        <div className="text-xs text-emerald-700">สถานะถูกบันทึกเป็น Completed แล้ว</div>
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-screen bg-[#0f0f1a] font-['Outfit',sans-serif]">
+            <Navbar />
+
+            <div className="max-w-[1400px] mx-auto px-6 pt-6 pb-20">
+                {/* Breadcrumb */}
+                <div className="flex items-center gap-2 text-[14px] text-white/50 mb-6">
+                    <a href={course ? `/courses/${course.id}` : '/courses'} className="hover:text-white transition-colors">
+                        {course ? 'Course' : 'Courses'}
+                    </a>
+                    <span>/</span>
+                    <span className="text-white/80">{content.title}</span>
+                </div>
+
+                <div className="flex flex-col xl:flex-row gap-8">
+                    {/* Main Player Area */}
+                    <div className="flex-1 min-w-0">
+                        {/* Player Container */}
+                        <div className="bg-black rounded-2xl overflow-hidden shadow-2xl shadow-[#687EFF]/10 relative">
+                            {content.type === 'video' ? (
+                                <video
+                                    ref={videoRef}
+                                    src={resolvePlayerSrc(content.entryPoint)}
+                                    controls
+                                    autoPlay
+                                    muted
+                                    playsInline
+                                    className="w-full aspect-video"
+                                    onPlay={handlePlay}
+                                    onPause={handlePause}
+                                    onTimeUpdate={handleTimeUpdate}
+                                    onEnded={handleEnded}
+                                    onLoadedMetadata={(e) => {
+                                        setDuration(e.target.duration);
+                                        ensureVideoAutoplay();
+                                    }}
+                                    onCanPlay={ensureVideoAutoplay}
+                                />
+                            ) : content.type === 'tincan' || content.type === 'web' ? (
+                                <>
+                                    <iframe
+                                        key={iframeRenderKey}
+                                        ref={iframeRef}
+                                        src={iframeSrc || resolvePlayerSrc(content.entryPoint)}
+                                        className="w-full h-[600px] border-none transition-opacity duration-150"
+                                        style={{
+                                            opacity: content.type === 'tincan' && !isTinCanFrameReady ? 0 : 1,
+                                            transform: 'translateZ(0)',
+                                            willChange: 'transform,width,opacity',
+                                        }}
+                                        allow="fullscreen"
+                                        title={content.title}
+                                        onLoad={() => {
+                                            setIsTinCanFrameReady(false);
+                                            if (frameRevealTimeoutRef.current) clearTimeout(frameRevealTimeoutRef.current);
+                                            frameRevealTimeoutRef.current = setTimeout(() => {
+                                                setIsTinCanFrameReady(true);
+                                            }, 1800);
+
+                                            applyTinCanWrapperChrome();
+                                            bindIframeCloseHandler();
+                                            bindIframeInteractionTracking();
+                                            applyTincanResumeToIframe();
+                                            applyLegacyWebResumeToIframe();
+                                            syncTinCanActivityStatusFromIframe();
+                                            syncTincanPositionFromIframe();
+                                            setTimeout(() => {
+                                                applyLegacyWebResumeToIframe();
+                                                syncTinCanActivityStatusFromIframe();
+                                                syncTincanPositionFromIframe();
+                                                forceTinCanReflow();
+                                            }, 1200);
+                                        }}
+                                    />
+                                    {content.type === 'tincan' && !isTinCanFrameReady && (
+                                        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black">
+                                            <div className="flex items-center gap-3 text-white/80 text-sm">
+                                                <span className="w-3 h-3 rounded-full bg-violet-400 animate-pulse"></span>
+                                                Loading lesson...
+                                            </div>
+                                        </div>
+                                    )}
+                                </>
+                            ) : (
+                                <div className="w-full aspect-video flex items-center justify-center text-white/50">
+                                    Unsupported content type
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Title & Status */}
+                        <div className="mt-6 flex items-start justify-between gap-4">
+                            <div>
+                                <h1 className="text-white text-[24px] font-semibold">{content.title}</h1>
+                                <div className="flex items-center gap-4 mt-2 text-[14px] text-white/50">
+                                    <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${content.type === 'tincan' ? 'bg-purple-500/20 text-purple-300' :
+                                            content.type === 'video' ? 'bg-blue-500/20 text-blue-300' :
+                                                'bg-gray-500/20 text-gray-300'
+                                        }`}>
+                                        {content.type === 'tincan' ? '📦 TinCan Package' : '🎬 Video'}
+                                    </span>
+                                    <span>Uploaded: {new Date(content.uploadedAt).toLocaleDateString('th-TH')}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Activities List (for TinCan) */}
+                        {content.activities?.length > 0 && (
+                            <div className="mt-8 bg-white/5 rounded-xl p-6 border border-white/10">
+                                <h3 className="text-white text-[16px] font-semibold mb-4">📋 Activities</h3>
+                                <div className="flex flex-col gap-2">
+                                    {content.activities.map((act, i) => (
+                                        <button
+                                            key={i}
+                                            type="button"
+                                            onClick={() => {
+                                                handleManualActivitySelect(i);
+                                            }}
+                                            className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${
+                                                selectedActivityIndex === i
+                                                    ? 'bg-[#687EFF]/20 border border-[#687EFF]/40'
+                                                    : 'hover:bg-white/5 border border-transparent'
+                                            }`}
+                                        >
+                                            <div className="w-6 h-6 rounded-full bg-[#687EFF]/20 text-[#687EFF] text-[12px] flex items-center justify-center font-medium">{i + 1}</div>
+                                            <div className="min-w-0">
+                                                <div className="text-white/90 text-[14px] truncate">{act.name || act}</div>
+                                                {act.launch && <div className="text-white/40 text-[11px] truncate">{act.launch}</div>}
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Sidebar: Progress & xAPI Log */}
+                    <div className="w-full xl:w-[360px] shrink-0 flex flex-col gap-6">
+                        {/* Progress Card */}
+                        <div className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10">
+                            <h3 className="text-white text-[16px] font-semibold mb-4">📊 Learning Progress</h3>
+
+                            {/* Circular Progress */}
+                            <div className="flex items-center justify-center mb-6">
+                                <div className="relative w-[140px] h-[140px]">
+                                    <svg className="w-full h-full -rotate-90" viewBox="0 0 120 120">
+                                        <circle cx="60" cy="60" r="52" fill="none" stroke="rgb(255 255 255 / 0.1)" strokeWidth="8" />
+                                        <circle cx="60" cy="60" r="52" fill="none" stroke={status === 'COMPLETED' ? '#1DBA9F' : '#687EFF'}
+                                            strokeWidth="8" strokeLinecap="round"
+                                            strokeDasharray={`${2 * Math.PI * 52}`}
+                                            strokeDashoffset={`${2 * Math.PI * 52 * (1 - progress / 100)}`}
+                                            className="transition-all duration-500"
+                                        />
+                                    </svg>
+                                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                                        <span className="text-white text-[28px] font-bold">{progress}%</span>
+                                        <span className="text-white/50 text-[12px]">Progress</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Status */}
+                            <div className="flex flex-col gap-3 text-[14px]">
+                                <div className="flex justify-between">
+                                    <span className="text-white/50">สถานะ</span>
+                                    <span className={`font-medium ${status === 'COMPLETED' ? 'text-[#1DBA9F]' :
+                                            status === 'LEARNING' ? 'text-[#5BC0DE]' :
+                                                'text-white/50'
+                                        }`}>
+                                        {status === 'COMPLETED' ? ' เสร็จสิ้น' :
+                                            status === 'LEARNING' ? ' กำลังเรียน' :
+                                                '⏳ ยังไม่เริ่ม'}
+                                    </span>
+                                </div>
+                                {content.type === 'video' && (
+                                    <>
+                                        <div className="flex justify-between">
+                                            <span className="text-white/50">เวลาปัจจุบัน</span>
+                                            <span className="text-white/80 font-mono">{formatTime(currentTime)} / {formatTime(duration)}</span>
+                                        </div>
+                                    </>
+                                )}
+                                <div className="flex justify-between">
+                                    <span className="text-white/50">Content Type</span>
+                                    <span className="text-white/80">{content.type === 'tincan' ? 'TinCan' : 'Video'}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* xAPI Statement Log */}
+                        <div className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10">
+                            <h3 className="text-white text-[16px] font-semibold mb-4">
+                                📡 xAPI Statements
+                                <span className="text-white/30 text-[12px] font-normal ml-2">Live</span>
+                            </h3>
+                            <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
+                                {statements.length === 0 ? (
+                                    <p className="text-white/30 text-[13px] text-center py-4">No statements yet. Start learning to generate xAPI data.</p>
+                                ) : statements.slice(0, 15).map((st, i) => (
+                                    <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-white/5 text-[12px]">
+                                        <div className={`w-2 h-2 rounded-full mt-1 shrink-0 ${st.verb?.display?.['en-US'] === 'completed' ? 'bg-[#1DBA9F]' :
+                                                st.verb?.display?.['en-US'] === 'progressed' ? 'bg-[#687EFF]' :
+                                                    st.verb?.display?.['en-US'] === 'played' ? 'bg-green-400' :
+                                                        st.verb?.display?.['en-US'] === 'paused' ? 'bg-yellow-400' :
+                                                            'bg-white/30'
+                                            }`}></div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-1">
+                                                <span className="text-white/70 font-medium">{st.verb?.display?.['en-US'] || 'unknown'}</span>
+                                                {st.result?.extensions?.['https://w3id.org/xapi/video/extensions/progress'] !== undefined && (
+                                                    <span className="text-white/40">({st.result.extensions['https://w3id.org/xapi/video/extensions/progress']}%)</span>
+                                                )}
+                                            </div>
+                                            <div className="text-white/30 truncate">{new Date(st.timestamp).toLocaleTimeString('th-TH')}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Refresh button */}
+                            <button
+                                onClick={async () => {
+                                    const res = await fetch(`/api/xapi/statements?contentId=${resolvedContentId}&actor=${encodeURIComponent(learningUserId)}&limit=20`);
+                                    if (res.ok) setStatements(await res.json());
+                                }}
+                                className="w-full mt-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/50 hover:text-white text-[12px] transition-colors"
+                            >
+                                ↻ Refresh Statements
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}

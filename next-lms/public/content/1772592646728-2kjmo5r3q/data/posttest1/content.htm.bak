@@ -1,0 +1,9 @@
+<html XMLNS:m="http://www.w3.org/1998/Math/MathML">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=tis-620">
+</head>
+<BODY leftmargin=0 topmargin=0 >
+<OBJECT ID=MathPlayer CLASSID="clsid:32F66A20-7614-11D4-BD11-00104BD3F987" width=0 height=0></OBJECT>
+<?IMPORT NAMESPACE="m" IMPLEMENTATION="#MathPlayer" ?>
+<Script language="JavaScript" src="asset/nolp_content.js"></Script>
+<Script language="JavaScript" src="asset/nolp_media.js"></Script>

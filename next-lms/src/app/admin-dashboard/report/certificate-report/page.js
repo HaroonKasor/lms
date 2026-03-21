@@ -1,0 +1,545 @@
+'use client';
+
+import React, { useEffect, useMemo, useState } from 'react';
+import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+
+const DEFAULT_FILTERS = {
+    categoryId: '',
+    courseId: '',
+    certificateStatus: 'ALL',
+    userStatus: 'ALL',
+    fromDate: '',
+    toDate: '',
+    q: '',
+};
+
+function toSafeText(value) {
+    return String(value || '').trim();
+}
+
+function formatDateTime(value) {
+    if (!value) return '-';
+    try {
+        return new Date(value).toLocaleString('th-TH');
+    } catch {
+        return String(value);
+    }
+}
+
+function csvEscape(value) {
+    return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function toCsv(rows = []) {
+    const header = [
+        'No',
+        'Course Category',
+        'Course',
+        'Section',
+        'Username',
+        'First Name',
+        'Last Name',
+        'User Status',
+        'Certificate Status',
+        'Certificate No',
+        'Issued At',
+        'Response By',
+    ];
+    const body = rows.map((row) => [
+        row.no,
+        row.categoryName,
+        row.courseName,
+        row.sectionName,
+        row.username,
+        row.firstName,
+        row.lastName,
+        row.userStatusLabel,
+        row.certificateStatusLabel,
+        row.certificateNo,
+        formatDateTime(row.issuedAt),
+        row.responseBy,
+    ]);
+    return [header, ...body].map((line) => line.map(csvEscape).join(',')).join('\n');
+}
+
+function statusBadgeClass(status) {
+    const key = toSafeText(status).toUpperCase();
+    if (key === 'ISSUED') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    if (key === 'REVOKED') return 'bg-rose-100 text-rose-700 border-rose-200';
+    if (key === 'EXPIRED') return 'bg-amber-100 text-amber-700 border-amber-200';
+    return 'bg-slate-100 text-slate-700 border-slate-200';
+}
+
+function learnerBadgeClass(status) {
+    const key = toSafeText(status).toUpperCase();
+    if (key === 'COMPLETED') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+    if (key === 'LEARNING') return 'bg-blue-100 text-blue-700 border-blue-200';
+    if (key === 'FAILED') return 'bg-rose-100 text-rose-700 border-rose-200';
+    if (key === 'CANCELLED') return 'bg-slate-100 text-slate-700 border-slate-200';
+    return 'bg-indigo-100 text-indigo-700 border-indigo-200';
+}
+
+const ACTION_BUTTONS = {
+    APPROVE: 'bg-indigo-100 text-indigo-700 border-indigo-200 hover:bg-indigo-200',
+    NOT_APPROVE: 'bg-rose-100 text-rose-700 border-rose-200 hover:bg-rose-200',
+    REGENERATE: 'bg-cyan-100 text-cyan-700 border-cyan-200 hover:bg-cyan-200',
+    PRINT: 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200',
+    VIEW_SCORE: 'bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-200',
+};
+
+function pageRange(page, totalPages) {
+    const windowSize = 5;
+    if (totalPages <= windowSize) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const half = Math.floor(windowSize / 2);
+    let start = Math.max(1, page - half);
+    let end = Math.min(totalPages, start + windowSize - 1);
+    if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
+export default function CertificateReportPage() {
+    const [loading, setLoading] = useState(false);
+    const [filters, setFilters] = useState({
+        categories: [],
+        courses: [],
+        certificateStatuses: [],
+        userStatuses: [],
+    });
+    const [selected, setSelected] = useState(DEFAULT_FILTERS);
+    const [rows, setRows] = useState([]);
+    const [summary, setSummary] = useState({
+        totalRows: 0,
+        issued: 0,
+        revoked: 0,
+        expired: 0,
+        pending: 0,
+    });
+    const [entries, setEntries] = useState(10);
+    const [page, setPage] = useState(1);
+    const [actionLoadingId, setActionLoadingId] = useState('');
+    const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
+
+    const fetchReport = async (nextSelected = selected) => {
+        setLoading(true);
+        setError('');
+        try {
+            const params = new URLSearchParams();
+            if (nextSelected.categoryId) params.set('categoryId', String(nextSelected.categoryId));
+            if (nextSelected.courseId) params.set('courseId', String(nextSelected.courseId));
+            if (nextSelected.certificateStatus) params.set('certificateStatus', String(nextSelected.certificateStatus));
+            if (nextSelected.userStatus) params.set('userStatus', String(nextSelected.userStatus));
+            if (nextSelected.fromDate) params.set('fromDate', String(nextSelected.fromDate));
+            if (nextSelected.toDate) params.set('toDate', String(nextSelected.toDate));
+            if (nextSelected.q) params.set('q', String(nextSelected.q));
+
+            const res = await fetch(`/api/reports/certificate-report?${params.toString()}`, { cache: 'no-store' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || 'Failed to load certificate report');
+
+            setRows(Array.isArray(data?.rows) ? data.rows : []);
+            setSummary(data?.summary || { totalRows: 0, issued: 0, revoked: 0, expired: 0, pending: 0 });
+            setFilters({
+                categories: Array.isArray(data?.filters?.categories) ? data.filters.categories : [],
+                courses: Array.isArray(data?.filters?.courses) ? data.filters.courses : [],
+                certificateStatuses: Array.isArray(data?.filters?.certificateStatuses) ? data.filters.certificateStatuses : [],
+                userStatuses: Array.isArray(data?.filters?.userStatuses) ? data.filters.userStatuses : [],
+            });
+            setSelected((prev) => ({
+                ...prev,
+                categoryId: data?.selected?.categoryId ? String(data.selected.categoryId) : '',
+                courseId: data?.selected?.courseId ? String(data.selected.courseId) : '',
+                certificateStatus: String(data?.selected?.certificateStatus || 'ALL'),
+                userStatus: String(data?.selected?.userStatus || 'ALL'),
+                fromDate: String(data?.selected?.fromDate || ''),
+                toDate: String(data?.selected?.toDate || ''),
+                q: String(data?.selected?.q || ''),
+            }));
+        } catch (err) {
+            setError(err?.message || 'Failed to load certificate report');
+            setRows([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchReport(DEFAULT_FILTERS);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const filteredCourseOptions = useMemo(() => {
+        if (!selected.categoryId) return filters.courses;
+        return filters.courses.filter((item) => String(item.categoryId || '') === String(selected.categoryId));
+    }, [filters.courses, selected.categoryId]);
+
+    const totalPages = useMemo(() => Math.max(1, Math.ceil(rows.length / entries)), [rows.length, entries]);
+    const pagedRows = useMemo(() => {
+        const start = (page - 1) * entries;
+        return rows.slice(start, start + entries);
+    }, [rows, page, entries]);
+    const pageNumbers = useMemo(() => pageRange(page, totalPages), [page, totalPages]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [entries, rows.length]);
+
+    useEffect(() => {
+        if (page > totalPages) setPage(totalPages);
+    }, [page, totalPages]);
+
+    const handleExport = () => {
+        const csv = toCsv(rows);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `certificate-report-${Date.now()}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    };
+
+    const printRowCertificate = (row) => {
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) return;
+        const issuedAt = row?.issuedAt ? new Date(row.issuedAt) : new Date();
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html><head><title>Certificate</title>
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Outfit:wght@300;400;600&display=swap');
+                body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f0f4ff; }
+                .cert { width: 900px; min-height: 620px; background: white; position: relative; border: 3px solid #687EFF; padding: 60px; text-align: center; font-family: 'Outfit', sans-serif; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+                .cert::before { content: ''; position: absolute; inset: 10px; border: 1px solid #D1E3FB; }
+                .title { font-family: 'Playfair Display', serif; font-size: 42px; color: #687EFF; margin-bottom: 10px; }
+                .sub { font-size: 16px; color: #6B778B; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 40px; }
+                .name { font-size: 32px; font-weight: 600; color: #052143; border-bottom: 2px solid #687EFF; display: inline-block; padding-bottom: 8px; margin-bottom: 20px; }
+                .course { font-size: 20px; color: #334155; margin-bottom: 30px; }
+                .meta { font-size: 14px; color: #6B778B; }
+                .no { font-size: 12px; color: #6B778B; position: absolute; bottom: 20px; right: 30px; font-family: monospace; }
+                @media print { body { background: white; } .cert { box-shadow: none; } }
+            </style>
+            </head><body>
+              <div class="cert">
+                <div style="font-size:60px;margin-bottom:10px;">🏆</div>
+                <div class="title">Certificate</div>
+                <div class="sub">of Completion</div>
+                <p style="color:#6B778B;margin-bottom:15px;">This is to certify that</p>
+                <div class="name">${row.fullName || row.username || '-'}</div>
+                <p style="color:#6B778B;margin-bottom:5px;">has successfully completed the course</p>
+                <div class="course">${row.courseName || '-'}</div>
+                <div class="meta">Issued on: ${issuedAt.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
+                <div class="no">No. ${row.certificateNo || '-'}</div>
+              </div>
+              <script>setTimeout(() => { window.print(); }, 500);</script>
+            </body></html>
+        `);
+        printWindow.document.close();
+    };
+
+    const runAction = async (row, action) => {
+        setActionLoadingId(`${row.enrollmentId}:${action}`);
+        setError('');
+        setSuccess('');
+        try {
+            if (action === 'PRINT') {
+                printRowCertificate(row);
+                return;
+            }
+            if (action === 'VIEW_SCORE') {
+                window.location.href = '/admin-dashboard/report/examination-score';
+                return;
+            }
+
+            const res = await fetch('/api/reports/certificate-report', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    enrollmentId: row.enrollmentId,
+                    action,
+                }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data?.error || 'Action failed');
+            setSuccess(`Action ${action} completed`);
+            await fetchReport(selected);
+        } catch (err) {
+            setError(err?.message || 'Action failed');
+        } finally {
+            setActionLoadingId('');
+        }
+    };
+
+    return (
+        <AdminLmsDashboard>
+            <div className="w-full flex flex-col gap-6 font-outfit">
+                <h1 className="text-[30px] font-semibold text-[#052143]">Report: Certificate Report</h1>
+
+                <div className="bg-white border border-[#D1E3FB] rounded-[12px] overflow-hidden shadow-sm">
+                    <div className="bg-[#687EFF] text-white px-5 py-3 text-[18px] font-semibold">Certificate Report</div>
+                    <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                        <select
+                            value={selected.categoryId}
+                            onChange={(e) => setSelected((prev) => ({ ...prev, categoryId: e.target.value, courseId: '' }))}
+                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                        >
+                            <option value="">Course Category: All</option>
+                            {filters.categories.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                        </select>
+
+                        <select
+                            value={selected.courseId}
+                            onChange={(e) => setSelected((prev) => ({ ...prev, courseId: e.target.value }))}
+                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                        >
+                            <option value="">Course: All</option>
+                            {filteredCourseOptions.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                        </select>
+
+                        <select
+                            value={selected.certificateStatus}
+                            onChange={(e) => setSelected((prev) => ({ ...prev, certificateStatus: e.target.value }))}
+                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                        >
+                            {filters.certificateStatuses.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                        </select>
+
+                        <select
+                            value={selected.userStatus}
+                            onChange={(e) => setSelected((prev) => ({ ...prev, userStatus: e.target.value }))}
+                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                        >
+                            {filters.userStatuses.map((item) => (
+                                <option key={item.id} value={item.id}>{item.name}</option>
+                            ))}
+                        </select>
+
+                        <input
+                            type="date"
+                            value={selected.fromDate}
+                            onChange={(e) => setSelected((prev) => ({ ...prev, fromDate: e.target.value }))}
+                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                        />
+                        <input
+                            type="date"
+                            value={selected.toDate}
+                            onChange={(e) => setSelected((prev) => ({ ...prev, toDate: e.target.value }))}
+                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                        />
+                        <input
+                            value={selected.q}
+                            onChange={(e) => setSelected((prev) => ({ ...prev, q: e.target.value }))}
+                            placeholder="Search user / course / cert no"
+                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF] md:col-span-2"
+                        />
+                    </div>
+                    <div className="px-5 pb-5 flex flex-wrap items-center gap-2">
+                        <button
+                            onClick={() => fetchReport(selected)}
+                            className="h-[40px] px-5 rounded-[10px] bg-[#687EFF] text-white text-[14px] font-medium hover:bg-[#5A6FE0]"
+                        >
+                            {loading ? 'Loading...' : 'View'}
+                        </button>
+                        <button
+                            onClick={handleExport}
+                            className="h-[40px] px-5 rounded-[10px] border border-[#687EFF] bg-white text-[#687EFF] text-[14px] font-medium hover:bg-[#EEF1FF]"
+                        >
+                            Export
+                        </button>
+                        <button
+                            onClick={() => {
+                                setSelected(DEFAULT_FILTERS);
+                                fetchReport(DEFAULT_FILTERS);
+                            }}
+                            className="h-[40px] px-5 rounded-[10px] border border-[#D1D9EE] bg-white text-[#334155] text-[14px] font-medium hover:bg-[#F8FAFF]"
+                        >
+                            Reset
+                        </button>
+                    </div>
+                </div>
+
+                {(error || success) && (
+                    <div className="flex flex-col gap-2">
+                        {error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{error}</div>}
+                        {success && <div className="rounded-[10px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-700">{success}</div>}
+                    </div>
+                )}
+
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                    <div className="rounded-[10px] border border-[#E6ECFF] bg-white p-3"><div className="text-[11px] text-[#64748B]">Total</div><div className="text-[20px] font-semibold text-[#052143]">{summary.totalRows}</div></div>
+                    <div className="rounded-[10px] border border-emerald-200 bg-emerald-50 p-3"><div className="text-[11px] text-emerald-700">Issued</div><div className="text-[20px] font-semibold text-emerald-700">{summary.issued}</div></div>
+                    <div className="rounded-[10px] border border-rose-200 bg-rose-50 p-3"><div className="text-[11px] text-rose-700">Revoked</div><div className="text-[20px] font-semibold text-rose-700">{summary.revoked}</div></div>
+                    <div className="rounded-[10px] border border-amber-200 bg-amber-50 p-3"><div className="text-[11px] text-amber-700">Expired</div><div className="text-[20px] font-semibold text-amber-700">{summary.expired}</div></div>
+                    <div className="rounded-[10px] border border-slate-200 bg-slate-50 p-3"><div className="text-[11px] text-slate-700">Pending</div><div className="text-[20px] font-semibold text-slate-700">{summary.pending}</div></div>
+                </div>
+
+                <div className="bg-white border border-[#D1E3FB] rounded-[12px] p-5 shadow-sm">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+                        <div className="flex items-center gap-2 text-[14px] text-[#64748B]">
+                            <select
+                                value={entries}
+                                onChange={(e) => setEntries(Number(e.target.value))}
+                                className="h-[38px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                            >
+                                <option value={10}>10</option>
+                                <option value={20}>20</option>
+                                <option value={50}>50</option>
+                                <option value={100}>100</option>
+                            </select>
+                            <span>records</span>
+                        </div>
+                    </div>
+
+                    <div className="overflow-x-auto border border-[#E2E8F0] rounded-[10px]">
+                        <table className="w-full table-fixed text-left text-[12px]">
+                            <thead className="bg-[#EEF1FF] text-[#1E293B] border-b border-[#E2E8F0]">
+                                <tr>
+                                    <th className="px-2 py-2 font-semibold w-[50px]">No.</th>
+                                    <th className="px-2 py-2 font-semibold w-[16%]">Course</th>
+                                    <th className="px-2 py-2 font-semibold w-[10%]">Section</th>
+                                    <th className="px-2 py-2 font-semibold w-[14%]">Username</th>
+                                    <th className="px-2 py-2 font-semibold w-[8%]">First Name</th>
+                                    <th className="px-2 py-2 font-semibold w-[8%]">Last Name</th>
+                                    <th className="px-2 py-2 font-semibold w-[8%]">User Status</th>
+                                    <th className="px-2 py-2 font-semibold w-[8%]">Certificate</th>
+                                    <th className="px-2 py-2 font-semibold w-[10%]">Certificate No</th>
+                                    <th className="px-2 py-2 font-semibold w-[9%]">Issued At</th>
+                                    <th className="px-2 py-2 font-semibold w-[9%]">Response By</th>
+                                    <th className="px-2 py-2 font-semibold w-[12%]">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody className="text-[#334155]">
+                                {loading && (
+                                    <tr>
+                                        <td colSpan={12} className="px-3 py-8 text-center text-[#64748B]">Loading certificate report...</td>
+                                    </tr>
+                                )}
+                                {!loading && pagedRows.length === 0 && (
+                                    <tr>
+                                        <td colSpan={12} className="px-3 py-8 text-center text-[#64748B]">No data found</td>
+                                    </tr>
+                                )}
+                                {!loading && pagedRows.map((row, index) => (
+                                    <tr key={row.enrollmentId} className="border-b border-[#EEF2FF] last:border-b-0 hover:bg-[#F8FAFF]">
+                                        <td className="px-2 py-2">{(page - 1) * entries + index + 1}</td>
+                                        <td className="px-2 py-2 break-words">
+                                            <div className="font-medium">{row.courseName || '-'}</div>
+                                            <div className="text-[10px] text-[#64748B] break-words">{row.categoryName || '-'}</div>
+                                        </td>
+                                        <td className="px-2 py-2 break-words">{row.sectionName || '-'}</td>
+                                        <td className="px-2 py-2 break-all">{row.username || '-'}</td>
+                                        <td className="px-2 py-2 break-words">{row.firstName || '-'}</td>
+                                        <td className="px-2 py-2 break-words">{row.lastName || '-'}</td>
+                                        <td className="px-2 py-2">
+                                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${learnerBadgeClass(row.userStatus)}`}>
+                                                {row.userStatusLabel || '-'}
+                                            </span>
+                                        </td>
+                                        <td className="px-2 py-2">
+                                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusBadgeClass(row.certificateStatus)}`}>
+                                                {row.certificateStatusLabel || '-'}
+                                            </span>
+                                        </td>
+                                        <td className="px-2 py-2 font-mono text-[10px] break-all">{row.certificateNo || '-'}</td>
+                                        <td className="px-2 py-2 break-words">{formatDateTime(row.issuedAt)}</td>
+                                        <td className="px-2 py-2 break-words">{row.responseBy || '-'}</td>
+                                        <td className="px-2 py-2">
+                                            <div className="flex flex-col gap-1">
+                                                <button
+                                                    type="button"
+                                                    disabled={Boolean(actionLoadingId)}
+                                                    onClick={() => runAction(row, 'VIEW_SCORE')}
+                                                    className={`inline-flex items-center justify-center rounded-[8px] border px-2 py-1 text-[11px] font-medium ${ACTION_BUTTONS.VIEW_SCORE}`}
+                                                >
+                                                    View Score
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    disabled={Boolean(actionLoadingId)}
+                                                    onClick={() => runAction(row, 'APPROVE')}
+                                                    className={`inline-flex items-center justify-center rounded-[8px] border px-2 py-1 text-[11px] font-medium ${ACTION_BUTTONS.APPROVE}`}
+                                                >
+                                                    {actionLoadingId === `${row.enrollmentId}:APPROVE` ? 'Working...' : 'Approve'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    disabled={Boolean(actionLoadingId)}
+                                                    onClick={() => runAction(row, 'NOT_APPROVE')}
+                                                    className={`inline-flex items-center justify-center rounded-[8px] border px-2 py-1 text-[11px] font-medium ${ACTION_BUTTONS.NOT_APPROVE}`}
+                                                >
+                                                    {actionLoadingId === `${row.enrollmentId}:NOT_APPROVE` ? 'Working...' : 'Not Approve'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    disabled={Boolean(actionLoadingId)}
+                                                    onClick={() => runAction(row, 'REGENERATE')}
+                                                    className={`inline-flex items-center justify-center rounded-[8px] border px-2 py-1 text-[11px] font-medium ${ACTION_BUTTONS.REGENERATE}`}
+                                                >
+                                                    {actionLoadingId === `${row.enrollmentId}:REGENERATE` ? 'Working...' : 'Regenerate'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    disabled={Boolean(actionLoadingId)}
+                                                    onClick={() => runAction(row, 'PRINT')}
+                                                    className={`inline-flex items-center justify-center rounded-[8px] border px-2 py-1 text-[11px] font-medium ${ACTION_BUTTONS.PRINT}`}
+                                                >
+                                                    Print
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div className="text-[13px] text-[#64748B]">
+                            Showing {pagedRows.length} of {rows.length} entries | Page {page} of {totalPages}
+                        </div>
+                        <div className="flex items-center gap-1 flex-wrap">
+                            <button
+                                type="button"
+                                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                                disabled={page <= 1}
+                                className="h-[34px] px-3 rounded-[8px] border border-[#D1D9EE] text-[13px] text-[#334155] disabled:opacity-50"
+                            >
+                                Prev
+                            </button>
+                            {pageNumbers.map((n) => (
+                                <button
+                                    key={n}
+                                    type="button"
+                                    onClick={() => setPage(n)}
+                                    className={`h-[34px] min-w-[34px] px-2 rounded-[8px] border text-[13px] font-medium ${
+                                        n === page
+                                            ? 'border-[#687EFF] bg-[#687EFF] text-white'
+                                            : 'border-[#D1D9EE] bg-white text-[#334155] hover:bg-[#F8FAFF]'
+                                    }`}
+                                >
+                                    {n}
+                                </button>
+                            ))}
+                            <button
+                                type="button"
+                                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                                disabled={page >= totalPages}
+                                className="h-[34px] px-3 rounded-[8px] border border-[#D1D9EE] text-[13px] text-[#334155] disabled:opacity-50"
+                            >
+                                Next
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </AdminLmsDashboard>
+    );
+}

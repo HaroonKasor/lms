@@ -1,0 +1,80 @@
+var isoffline = false;/*set offline*/
+var islinear = false;/*set linear learning*/
+var completedWhenDoAllMasteryscore = false;/*set complete condition do all exam, that have masteryscore greater than 0 */
+var isResume = true;/* set resume last page when exit */
+var treeArray = [
+{ parent : "#", id : "chapter1", ispage : false, state : { opened : true }, text : "Digital_Literacy", detail : ""}
+
+
+,{ parent : "chapter1", id : "chapter1page1", ispage : true, url : "data/m01_1/index.html", text : "บทที่ 1 อุปกรณ์ <br>&nbsp;&nbsp;1.1 Devices", detail : "", activity : false, atcp : true, playicon : true, duration : "02:03"}
+,{ parent : "chapter1", id : "chapter1page2", ispage : true, url : "data/m01_2/index.html", text : "&nbsp;&nbsp;1.2 Classification of Computers ประเภทของคอมพิวเตอร์", detail : "", activity : false, atcp : true, playicon : true, duration : "00:50"}
+,{ parent : "chapter1", id : "chapter1page3", ispage : true, url : "data/m01_3/index.html", text : "&nbsp;&nbsp;1.3 Operating Systems and Software", detail : "", activity : false, atcp : true, playicon : true, duration : "01:00"}
+,{ parent : "chapter1", id : "chapter1page4", ispage : true, url : "data/m01_4/index.html", text : "&nbsp;&nbsp;1.4 Put it all together", detail : "", activity : false, atcp : true, playicon : true, duration : "01:30"}
+,{ parent : "chapter1", id : "chapter1page5", ispage : true, url : "data/m01_5/index.html", text : "&nbsp;&nbsp;1.5 ป้องกันไวรัสอย่างไรดี", detail : "", activity : false, atcp : true, playicon : true, duration : "01:20"}
+
+,{ parent : "chapter1", id : "chapter2page1", ispage : true, url : "data/m02_1/index.html", text : "บทที่ 2 รัฐบาลดิจิทัล <br>&nbsp;&nbsp;2.1 การเปลี่ยนแปลงสู่ Global Digital", detail : "", activity : false, atcp : true, playicon : true, duration : "01:14"}
+,{ parent : "chapter1", id : "chapter2page2", ispage : true, url : "data/m02_2/index.html", text : "&nbsp;&nbsp;2.2 รัฐบาลดิจิทัล", detail : "", activity : false, atcp : true, playicon : true, duration : "01:20"}
+,{ parent : "chapter1", id : "chapter2page4", ispage : true, url : "data/m02_4/index.html", text : "&nbsp;&nbsp;2.3 อุปสรรคในการขับเคลื่อนสู่การเป็นรัฐบาลดิจิทัล  ", detail : "", activity : false, atcp : true, playicon : true, duration : "01:10"}
+
+,{ parent : "chapter1", id : "chapter3page1", ispage : true, url : "data/m03_1/index.html", text : "บทที่ 3 สังคมออนไลน์  <br>&nbsp;&nbsp;3.1 เครือข่ายสังคมออนไลน์", detail : "", activity : false, atcp : true, playicon : true, duration : "03:03"}
+,{ parent : "chapter1", id : "chapter3page2", ispage : true, url : "data/m03_2/index.html", text : "&nbsp;&nbsp;3.2 การใช้เครือข่ายสังคม", detail : "", activity : false, atcp : true, playicon : true, duration : "03:00"}
+
+,{ parent : "chapter1", id : "chapter3page8", ispage : true, url : "data/m03_3/index.html", text : "&nbsp;&nbsp;3.3 Reliability of Social Media ความน่าเชื่อถือของเครือข่ายสังคมออนไลน์", detail : "", activity : false, atcp : true, playicon : true, duration : "00:50"}
+,{ parent : "chapter1", id : "chapter3page9", ispage : true, url : "data/m03_4_1/index.html", text : "&nbsp;&nbsp;3.4 การสร้างอัตลักษณ์ออนไลน์", detail : "", activity : false, atcp : true, playicon : true, duration : "01:00"}
+,{ parent : "chapter1", id : "chapter3page10", ispage : true, url : "data/m03_4_2/index.html", text : "&nbsp;&nbsp;3.5 อัตลักษณ์ที่ผู้สื่อสร้างขึ้น ", detail : "", activity : false, atcp : true, playicon : true, duration : "00:35"}
+,{ parent : "chapter1", id : "chapter3page11", ispage : true, url : "data/m03_5/index.html", text : "&nbsp;&nbsp;3.6 Digital Footprint รอยเท้าดิจิทัล", detail : "", activity : false, atcp : true, playicon : true, duration : "01:30"}
+,{ parent : "chapter1", id : "chapter3page12", ispage : true, url : "data/m03_quiz/index.html", text : "&nbsp;&nbsp;3.7 สิ่งที่ควรและไม่ควรทำเมื่อใช้เครือข่ายสังคมออนไลน์", detail : "", activity : false, atcp : true, playicon : true, duration : "01:00"}
+
+,{ parent : "chapter1", id : "chapter5page1", ispage : true, url : "data/m05_1/index.html", text : "บทที่ 4 ธุรกิจออนไลน์  <br>&nbsp;&nbsp;4.1 Amazon", detail : "", activity : false, atcp : true, playicon : true, duration : "01:55"}
+,{ parent : "chapter1", id : "chapter5page2", ispage : true, url : "data/m05_2/index.html", text : "&nbsp;&nbsp;4.2 e-Commerce", detail : "", activity : false, atcp : true, playicon : true, duration : "01:30"}
+,{ parent : "chapter1", id : "chapter5page3", ispage : true, url : "data/m05_3/index.html", text : "&nbsp;&nbsp;4.3 Becoming an Online Shop Owner", detail : "", activity : false, atcp : true, playicon : true, duration : "00:50"}
+,{ parent : "chapter1", id : "chapter5page4", ispage : true, url : "data/m05_4/index.html", text : "&nbsp;&nbsp;4.4 Market Research", detail : "", activity : false, atcp : true, playicon : true, duration : "01:10"}
+,{ parent : "chapter1", id : "chapter5page5", ispage : true, url : "data/m05_5/index.html", text : "&nbsp;&nbsp;4.5 e-Commerce Platforms", detail : "", activity : false, atcp : true, playicon : true, duration : "02:00"}
+,{ parent : "chapter1", id : "chapter5page6", ispage : true, url : "data/m05_6/index.html", text : "&nbsp;&nbsp;4.6 Branding", detail : "", activity : false, atcp : true, playicon : true, duration : "00:50"}
+,{ parent : "chapter1", id : "chapter5page7", ispage : true, url : "data/m05_7/index.html", text : "&nbsp;&nbsp;4.7 Digital Marketing", detail : "", activity : false, atcp : true, playicon : true, duration : "00:40"}
+
+
+
+,{ parent : "chapter1", id : "chapter6page7", ispage : true, url : "data/m06_7/index.html", text : "บทที่ 5 เครื่องมือออนไลน์  <br>&nbsp;&nbsp;5.1 Cloud Storage", detail : "", activity : false, atcp : true, playicon : true, duration : "00:30"}
+,{ parent : "chapter1", id : "chapter7page1", ispage : true, url : "data/m07_1/index.html", text : "&nbsp;&nbsp;5.2 Presentation Tools", detail : "", activity : false, atcp : true, playicon : true, duration : "02:33"}
+,{ parent : "chapter1", id : "chapter7page2", ispage : true, url : "data/m07_2/index.html", text : "&nbsp;&nbsp;5.3 Collaboration Tools", detail : "", activity : false, atcp : true, playicon : true, duration : "02:41"}
+
+,{ parent : "chapter1", id : "chapter8page1", ispage : true, url : "data/exam/index.html", text : "&nbsp;&nbsp;แบบทดสอบ", detail : "", activity : false, atcp : true, playicon : true}
+
+
+];/*change here*/
+
+Content = {};
+
+Content.CourseActivity = {
+    id: "http://164.115.23.150/lrs_lt/Digital_Literacy",/*change here*/
+    definition: {
+        type: "http://adlnet.gov/expapi/activities/course",
+        name: {
+            "th-TH": "Digital_Literacy"/*change here*/
+        },
+        description: {
+            "th-TH": "Digital_Literacy"/*change here*/
+        }
+    }
+};
+
+Content.getContext = function(parentActivityId) {
+var ctx = {
+contextActivities: {
+/*grouping: {
+id: Content.CourseActivity.id
+}*/
+}
+};
+/*if (parentActivityId !== undefined && parentActivityId !== null) {*/
+ctx.contextActivities.parent = {
+id: Content.CourseActivity.id,
+definition: {
+name: Content.CourseActivity.definition.name,
+description: Content.CourseActivity.definition.description
+}
+};
+/*}*/
+return ctx;
+};

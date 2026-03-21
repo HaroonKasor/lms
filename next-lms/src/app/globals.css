@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+/* Inject Thai glyphs into the existing Outfit family for all pages/components */
+@font-face {
+  font-family: "Outfit";
+  src: url("/fonts/thsarabunnew-webfont.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0E00-0E7F;
+}
+
+@font-face {
+  font-family: "Outfit";
+  src: url("/fonts/thsarabunnew_bold-webfont.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0E00-0E7F;
+}
+
+/* Root scrolling: keep only one page-level scrollbar */
+html,
+body {
+  margin: 0;
+  width: 100%;
+  max-width: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+}
+
+html {
+  overflow-y: hidden;
+}
+
+/* Reset + rendering */
+body {
+  height: 100vh;
+  overflow-y: auto;
+  font-family: var(--font-outfit), var(--font-th-sarabun), "Segoe UI", Tahoma, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Thai text fallback to TH Sarabun when available */
+:lang(th),
+[lang="th"],
+[lang^="th-"] {
+  font-family: var(--font-th-sarabun), var(--font-outfit), "Segoe UI", Tahoma, sans-serif;
+}
+
+.font-thai-sarabun {
+  font-family: var(--font-th-sarabun), var(--font-outfit), "Segoe UI", Tahoma, sans-serif !important;
+}
+
+/* Custom scrollbar only for page root (avoid nested double-scroll look) */
+body::-webkit-scrollbar {
+  width: 6px;
+}
+
+body::-webkit-scrollbar-track {
+  background: #F2F2F7;
+}
+
+body::-webkit-scrollbar-thumb {
+  background: #AEAEB2;
+  border-radius: 20px;
+}
+
+/* Custom UI Utilities */
+@layer utilities {
+  .glass-card {
+    background: rgba(255, 255, 255, 0.7);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.05);
+  }
+
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(209, 227, 251, 0.6);
+  }
+
+  .premium-shadow {
+    box-shadow: 0 10px 40px -10px rgba(5, 33, 67, 0.08);
+  }
+
+  .hover-lift {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .hover-lift:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 14px 28px rgba(0, 0, 0, 0.05), 0 10px 10px rgba(0, 0, 0, 0.02);
+  }
+
+  .text-gradient-primary {
+    background: linear-gradient(135deg, #5271FF 0%, #8C52FF 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+}

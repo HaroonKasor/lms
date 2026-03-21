@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=10,chrome=IE8"/>
+	<script src="../popupwindow.js"></script>
+	<script src="../Wrapper/APIWrapper.js"></script>
+	<script src="../Wrapper/SCOFunctions.js"></script>
+
+
+</head>
+<body style="margin:0;padding:0;" onload="loadPage();" onbeforeunload="unloadPage('completed');" onunload="unloadPage('completed');" onpagehide="unloadPage('completed');" >
+<script>
+
+          popupwindow("index_popup.html","GSB","980","670");
+          // or any type of script you want to run
+
+    </script>
+<a href="#" onclick="javascript:popupwindow('index_popup.html','GSB','980','670');" style="display:block;background-color:#EAEAEA;border:1px solid #DBDBDB;padding:5px;margin:10px;width:200px;">คลิกที่นี่ ถ้า Popup ไม่แสดง</a><BR>
+&nbsp;&nbsp;&nbsp; คลิกที่ปุ่ม <IMG SRC="./next.jpg" WIDTH="20" HEIGHT="19" BORDER="0" ALT=""> ด้านบนเมื่อต้องการเรียนในหัวข้อถัดไป<BR>
+&nbsp;&nbsp;&nbsp; คลิกที่ปุ่ม <IMG SRC="./back.jpg" WIDTH="20" HEIGHT="19" BORDER="0" ALT=""> ด้านบนเมื่อต้องการกลับไปเรียนในหัวข้อที่ผ่านมาแล้ว
+</body>
+</html>

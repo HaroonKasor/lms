@@ -1,0 +1,6 @@
+.env
+.env.*
+node_modules/
+next-lms/node_modules/
+.next/
+next-lms/.next/

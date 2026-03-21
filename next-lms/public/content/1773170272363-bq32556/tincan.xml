@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tincan xmlns="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/tincan.xsd">
+<activities>
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change" type="http://adlnet.gov/expapi/activities/course">
+		<name>ชุมชนจะอยู่อย่างไรกับ Climate Change</name>
+		<description lang="en-US">ชุมชนจะอยู่อย่างไรกับ Climate Change</description>
+		<launch lang="en-us">index.html</launch>
+	</activity>
+	
+	
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m01/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 1 การลดใช้พลังงาน เพื่อลดโลกร้อน</name>
+		<description lang="und">บทที่ 1 การลดใช้พลังงาน เพื่อลดโลกร้อน</description>		
+	</activity>
+	
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m02/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 2 การจัดการขยะอาหาร เพื่อลดโลกร้อน</name>
+		<description lang="und">บทที่ 2 การจัดการขยะอาหาร เพื่อลดโลกร้อน</description>		
+	</activity>
+	
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m03/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 3 การปลูกป่า เพื่อลดโลกร้อน</name>
+		<description lang="und">บทที่ 3 การปลูกป่า เพื่อลดโลกร้อน</description>		
+	</activity>
+	
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m04/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 4 พื้นที่เขียวกับการกักเก็บคาร์บอน เพื่อลดโลกร้อน</name>
+		<description lang="und">บทที่ 4 พื้นที่เขียวกับการกักเก็บคาร์บอน เพื่อลดโลกร้อน</description>		
+	</activity>
+	
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m05/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 5 หมอกควัน ไฟป่า กับปัญหาโลกร้อน</name>
+		<description lang="und">บทที่ 5 หมอกควัน ไฟป่า กับปัญหาโลกร้อน</description>		
+	</activity>
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m06/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 6 วิกฤติสุขภาพของชุมชนกับการปรับตัวต่อผลกระทบโลกร้อน</name>
+		<description lang="und">บทที่ 6 วิกฤติสุขภาพของชุมชนกับการปรับตัวต่อผลกระทบโลกร้อน</description>		
+	</activity>
+	
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m07/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 7 การจัดการท่องเที่ยวกับโลกร้อน</name>
+		<description lang="und">บทที่ 7 การจัดการท่องเที่ยวกับโลกร้อน</description>		
+	</activity>
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m08/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 8 การจัดการน้ำ อุทกภัย และภัยพิบัติ</name>
+		<description lang="und">บทที่ 8 การจัดการน้ำ อุทกภัย และภัยพิบัติ</description>		
+	</activity>
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m09/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 9 ภัยแล้ง กับการรับมือและปรับตัวของชุมชน</name>
+		<description lang="und">บทที่ 9 ภัยแล้ง กับการรับมือและปรับตัวของชุมชน</description>		
+	</activity>
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m10/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 10 การปรับตัวด้านการเกษตร และความมั่นคงทางอาหาร</name>
+		<description lang="und">บทที่ 10 การปรับตัวด้านการเกษตร และความมั่นคงทางอาหาร</description>		
+	</activity>
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/data/m11/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">บทที่ 11 การจัดการทรัพยากรธรรมชาติและระบบนิเวศ</name>
+		<description lang="und">บทที่ 11 การจัดการทรัพยากรธรรมชาติและระบบนิเวศ</description>		
+	</activity>
+	
+	
+	<activity id="https://e-learning.dcce.go.th/lrs_deqp/How_Communities_Can_Live_With_Climate_Change/posttest1/index.html" type="http://adlnet.gov/expapi/activities/module">
+		<name lang="und">เเบบทดสอบหลังบท</name>
+		<description lang="und">เเบบทดสอบหลังบท</description>		
+	</activity>
+
+	
+	
+	
+	
+	
+	
+   
+</activities>
+</tincan>
