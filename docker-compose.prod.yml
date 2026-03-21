@@ -1,0 +1,79 @@
+services:
+  db:
+    image: mysql:8.4
+    container_name: lms-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lms_enterprise}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  web:
+    build:
+      context: ./next-lms
+      dockerfile: Dockerfile
+    container_name: lms-web
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      SESSION_SECRET: ${SESSION_SECRET}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      NEXT_PUBLIC_APP_URL: https://${APP_DOMAIN}
+      NEXT_PUBLIC_XAPI_OBJECT_BASE_URL: https://${APP_DOMAIN}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_NAME: ${MYSQL_DATABASE:-lms_enterprise}
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD}@db:3306/${MYSQL_DATABASE:-lms_enterprise}
+    volumes:
+      - ./next-lms/data:/app/data
+      - ./next-lms/public/content:/app/public/content
+      - ./next-lms/public/uploads/courses:/app/public/uploads/courses
+
+  phpmyadmin:
+    image: phpmyadmin:5-apache
+    container_name: lms-phpmyadmin
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      PMA_AUTH_TYPE: cookie
+      PMA_ABSOLUTE_URI: https://${APP_DOMAIN}/phpmyadmin/
+      UPLOAD_LIMIT: 256M
+
+  caddy:
+    image: caddy:2.8
+    container_name: lms-caddy
+    restart: unless-stopped
+    depends_on:
+      - web
+      - phpmyadmin
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  mysql_data:
+  caddy_data:
+  caddy_config:

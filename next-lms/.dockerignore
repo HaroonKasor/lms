@@ -1,0 +1,27 @@
+node_modules
+.next
+npm-debug.log
+Dockerfile*
+.dockerignore
+.git
+.gitignore
+README.md
+.tmp
+reports
+data
+
+# Runtime-mounted content should not be baked into image
+public/content
+public/uploads
+
+# Local/dev artifacts
+*.log
+tmp_*
+.tmp_*
+.dev.log
+fetch_test.js
+temp_update.js
+
+# Prevent leaking local env files into image context
+.env
+.env.*
