@@ -176,9 +176,11 @@ export async function middleware(request) {
     }
 
     if (AUTH_PAGES.includes(pathname) && isAuthenticated) {
-        // Keep login/register accessible when a `next` target is present.
-        // This prevents redirect loops for stale/invalid server-side sessions.
-        if (request.nextUrl.searchParams.has('next')) {
+        // Keep login/register accessible when:
+        // 1) a `next` target is present (avoid stale-session redirect loops), or
+        // 2) `force=1` is present (manual QA/debug to re-open auth form).
+        const forceAuthPage = request.nextUrl.searchParams.get('force') === '1';
+        if (request.nextUrl.searchParams.has('next') || forceAuthPage) {
             return NextResponse.next();
         }
         const url = request.nextUrl.clone();
