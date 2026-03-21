@@ -1,6 +1,64 @@
+# -----------------------------
+# Secrets / credentials
+# -----------------------------
 .env
 .env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+id_rsa
+id_rsa.pub
+id_ed25519
+id_ed25519.pub
+
+# -----------------------------
+# Node / Next.js build artifacts
+# -----------------------------
 node_modules/
-next-lms/node_modules/
+**/node_modules/
 .next/
-next-lms/.next/
+**/.next/
+out/
+dist/
+coverage/
+.npm/
+.pnpm-store/
+
+# -----------------------------
+# Logs
+# -----------------------------
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# -----------------------------
+# OS / editor temporary files
+# -----------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+*.temp
+*.bak
+
+# -----------------------------
+# Runtime-generated assets (do not version)
+# -----------------------------
+next-lms/public/content/
+next-lms/public/uploads/
+next-lms/public/messageImage_*.jpg
+next-lms/public/messageImage_*.png
+
+# -----------------------------
+# Local-only Docker overrides
+# -----------------------------
+docker-compose.override.yml
