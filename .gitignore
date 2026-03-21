@@ -57,6 +57,12 @@ next-lms/public/content/
 next-lms/public/uploads/
 next-lms/public/messageImage_*.jpg
 next-lms/public/messageImage_*.png
+!next-lms/public/messageImage_1772439871651.jpg
+!next-lms/public/messageImage_1772440583769.jpg
+!next-lms/public/messageImage_1772443005375.png
+!next-lms/public/messageImage_1772443033023.png
+!next-lms/public/messageImage_1772443052524.png
+!next-lms/public/messageImage_1772596552610.jpg
 
 # -----------------------------
 # Local-only Docker overrides
