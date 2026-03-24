@@ -36,6 +36,8 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      ALLOW_AUTH_SEED: ${ALLOW_AUTH_SEED:-false}
+      AUTH_SEED_TOKEN: ${AUTH_SEED_TOKEN:-}
       NEXT_PUBLIC_APP_URL: https://${APP_DOMAIN}
       NEXT_PUBLIC_XAPI_OBJECT_BASE_URL: https://${APP_DOMAIN}
       DB_HOST: db
