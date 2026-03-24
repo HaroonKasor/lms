@@ -1,6 +1,8 @@
 import nodemailer from 'nodemailer';
 
 let cachedTransporter = null;
+const DEFAULT_RESEND_BASE_URL = 'https://api.resend.com';
+const MAIL_TIMEOUT_MS = 15000;
 
 function parseBoolean(value, fallback = false) {
     const raw = String(value ?? '').trim().toLowerCase();
@@ -26,9 +28,34 @@ function getSmtpConfig() {
     };
 }
 
-export function hasSmtpConfig() {
+function getResendConfig() {
+    const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+    const from = String(process.env.RESEND_FROM || process.env.SMTP_FROM || '').trim();
+    const baseUrl = String(process.env.RESEND_BASE_URL || DEFAULT_RESEND_BASE_URL).trim() || DEFAULT_RESEND_BASE_URL;
+    return {
+        apiKey,
+        from,
+        baseUrl,
+    };
+}
+
+function hasResendConfig() {
+    const cfg = getResendConfig();
+    return Boolean(cfg.apiKey && cfg.from);
+}
+
+function hasStrictSmtpConfig() {
     const cfg = getSmtpConfig();
     return Boolean(cfg.host && cfg.port && cfg.user && cfg.pass);
+}
+
+export function hasMailConfig() {
+    return hasResendConfig() || hasStrictSmtpConfig();
+}
+
+// Backward-compatible export name used by existing callers.
+export function hasSmtpConfig() {
+    return hasMailConfig();
 }
 
 function getTransporter() {
@@ -36,13 +63,16 @@ function getTransporter() {
     const cfg = getSmtpConfig();
 
     if (!cfg.host || !cfg.port || !cfg.user || !cfg.pass) {
-        throw new Error('SMTP is not configured. Please set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.');
+        throw new Error('Email service is not configured. Set RESEND_API_KEY/RESEND_FROM or SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS.');
     }
 
     cachedTransporter = nodemailer.createTransport({
         host: cfg.host,
         port: cfg.port,
         secure: cfg.secure,
+        connectionTimeout: MAIL_TIMEOUT_MS,
+        greetingTimeout: MAIL_TIMEOUT_MS,
+        socketTimeout: MAIL_TIMEOUT_MS,
         auth: {
             user: cfg.user,
             pass: cfg.pass,
@@ -52,16 +82,77 @@ function getTransporter() {
     return cachedTransporter;
 }
 
-export async function sendPasswordResetEmail({ to, name, resetUrl, ttlMinutes = 30 } = {}) {
+function createTimeoutSignal(timeoutMs = MAIL_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return {
+        signal: controller.signal,
+        clear: () => clearTimeout(timer),
+    };
+}
+
+async function sendViaResend({ to, subject, text, html }) {
+    const cfg = getResendConfig();
+    if (!cfg.apiKey || !cfg.from) {
+        throw new Error('Email service is not configured. Missing RESEND_API_KEY or RESEND_FROM.');
+    }
+
+    const { signal, clear } = createTimeoutSignal();
+    try {
+        const res = await fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/emails`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${cfg.apiKey}`,
+            },
+            body: JSON.stringify({
+                from: cfg.from,
+                to: [to],
+                subject,
+                text,
+                html,
+            }),
+            signal,
+        });
+
+        if (!res.ok) {
+            const payload = await res.json().catch(() => ({}));
+            const msg = String(payload?.message || payload?.error || res.statusText || 'Resend request failed');
+            throw new Error(`Resend send failed (${res.status}): ${msg}`);
+        }
+    } finally {
+        clear();
+    }
+}
+
+async function sendViaSmtp({ to, subject, text, html }) {
     const cfg = getSmtpConfig();
     const transporter = getTransporter();
+    const fromAddress = cfg.from || cfg.user;
+    await transporter.sendMail({
+        from: fromAddress,
+        to,
+        subject,
+        text,
+        html,
+    });
+}
+
+async function sendEmail({ to, subject, text, html }) {
+    if (hasResendConfig()) {
+        await sendViaResend({ to, subject, text, html });
+        return;
+    }
+    await sendViaSmtp({ to, subject, text, html });
+}
+
+export async function sendPasswordResetEmail({ to, name, resetUrl, ttlMinutes = 30 } = {}) {
     const safeTo = String(to || '').trim();
     if (!safeTo) {
         throw new Error('Missing recipient email');
     }
 
     const appName = String(process.env.APP_NAME || 'SkillUp').trim();
-    const fromAddress = cfg.from || cfg.user;
     const displayName = String(name || '').trim() || 'Learner';
 
     const subject = `[${appName}] Password reset request`;
@@ -91,8 +182,7 @@ export async function sendPasswordResetEmail({ to, name, resetUrl, ttlMinutes = 
         </div>
     `;
 
-    await transporter.sendMail({
-        from: fromAddress,
+    await sendEmail({
         to: safeTo,
         subject,
         text,
@@ -101,15 +191,12 @@ export async function sendPasswordResetEmail({ to, name, resetUrl, ttlMinutes = 
 }
 
 export async function sendRegistrationSuccessEmail({ to, name } = {}) {
-    const cfg = getSmtpConfig();
-    const transporter = getTransporter();
     const safeTo = String(to || '').trim();
     if (!safeTo) {
         throw new Error('Missing recipient email');
     }
 
     const appName = String(process.env.APP_NAME || 'SkillUp').trim();
-    const fromAddress = cfg.from || cfg.user;
     const displayName = String(name || '').trim() || 'Learner';
     const appUrl = String(process.env.NEXT_PUBLIC_APP_URL || '').trim() || 'http://localhost:8080';
 
@@ -136,8 +223,7 @@ export async function sendRegistrationSuccessEmail({ to, name } = {}) {
         </div>
     `;
 
-    await transporter.sendMail({
-        from: fromAddress,
+    await sendEmail({
         to: safeTo,
         subject,
         text,

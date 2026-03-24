@@ -36,6 +36,9 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-}
+      RESEND_BASE_URL: ${RESEND_BASE_URL:-https://api.resend.com}
       ALLOW_AUTH_SEED: ${ALLOW_AUTH_SEED:-false}
       AUTH_SEED_TOKEN: ${AUTH_SEED_TOKEN:-}
       NEXT_PUBLIC_APP_URL: https://${APP_DOMAIN}

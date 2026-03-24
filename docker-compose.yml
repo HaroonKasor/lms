@@ -41,6 +41,9 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM: ${RESEND_FROM:-}
+      RESEND_BASE_URL: ${RESEND_BASE_URL:-https://api.resend.com}
       DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-root}@db:3306/${MYSQL_DATABASE:-lms_enterprise}
     volumes:
       - ./next-lms/data:/app/data

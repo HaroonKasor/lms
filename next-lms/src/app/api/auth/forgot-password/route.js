@@ -101,10 +101,16 @@ export async function POST(request) {
     } catch (err) {
         console.error('[auth/forgot-password] failed', err);
         const message = String(err?.message || '');
-        if (message.includes('SMTP is not configured')) {
+        if (message.includes('Email service is not configured')) {
             return NextResponse.json(
                 { error: 'Email service is not configured yet. Please contact administrator.' },
                 { status: 503 }
+            );
+        }
+        if (String(err?.code || '').toUpperCase() === 'ETIMEDOUT' || message.toLowerCase().includes('timeout')) {
+            return NextResponse.json(
+                { error: 'Email service timeout. Please try again in a moment.' },
+                { status: 504 }
             );
         }
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
