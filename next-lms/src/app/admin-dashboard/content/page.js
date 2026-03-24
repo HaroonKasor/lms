@@ -19,6 +19,24 @@ export default function ContentManagementPage() {
     const dragCounterRef = useRef(0);
 
     const headerClass = "bg-[#687EFF] px-4 py-3 flex items-center justify-between text-white font-medium text-[15px]";
+    const appOrigin = React.useMemo(() => {
+        const candidates = [
+            process.env.NEXT_PUBLIC_XAPI_OBJECT_BASE_URL,
+            process.env.NEXT_PUBLIC_APP_URL,
+            typeof window !== 'undefined' ? window.location.origin : '',
+        ];
+        for (const candidate of candidates) {
+            const raw = String(candidate || '').trim();
+            if (!raw) continue;
+            const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+            try {
+                return new URL(withProtocol).origin;
+            } catch {
+                // Try next candidate.
+            }
+        }
+        return 'https://example.invalid';
+    }, []);
 
     const getContentRootLaunchUrl = (content) => {
         const contentId = String(content?.id || '').trim();
@@ -38,7 +56,7 @@ export default function ContentManagementPage() {
             return `/${normalizedContentPath}`;
         }
         try {
-            const joined = new URL(normalizedLaunch.replace(/^\//, ''), `https://lms.local/${baseDir}/`);
+            const joined = new URL(normalizedLaunch.replace(/^\//, ''), `${appOrigin}/${baseDir}/`);
             return `${joined.pathname}${joined.search}${joined.hash}`;
         } catch {
             return getContentRootLaunchUrl(content);

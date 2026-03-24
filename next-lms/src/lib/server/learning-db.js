@@ -589,7 +589,25 @@ async function createXapiStatement({
 
 function normalizeStatementFromRow(row) {
     const payload = row?.statement_json && typeof row.statement_json === 'object' ? row.statement_json : {};
-    const actorEmail = row?.actor?.email ? `mailto:${row.actor.email}` : 'mailto:anonymous@lms.local';
+    const appHost = (() => {
+        const candidates = [
+            process.env.NEXT_PUBLIC_XAPI_OBJECT_BASE_URL,
+            process.env.NEXT_PUBLIC_APP_URL,
+            process.env.APP_URL,
+        ];
+        for (const candidate of candidates) {
+            const raw = String(candidate || '').trim();
+            if (!raw) continue;
+            const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+            try {
+                return new URL(withProtocol).hostname || 'example.invalid';
+            } catch {
+                // Try next candidate.
+            }
+        }
+        return 'example.invalid';
+    })();
+    const actorEmail = row?.actor?.email ? `mailto:${row.actor.email}` : `mailto:anonymous@${appHost}`;
     const actorName = row?.actor?.username || row?.actor?.email || 'Anonymous Learner';
 
     const fallbackVerbId = row?.verbId || '';

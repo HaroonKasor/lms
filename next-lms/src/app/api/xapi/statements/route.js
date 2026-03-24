@@ -19,6 +19,37 @@ const VERB_ID_MAP = {
     experienced: 'http://adlnet.gov/expapi/verbs/experienced',
 };
 
+function resolveAppOrigin() {
+    const candidates = [
+        process.env.NEXT_PUBLIC_XAPI_OBJECT_BASE_URL,
+        process.env.NEXT_PUBLIC_APP_URL,
+        process.env.APP_URL,
+    ];
+    for (const candidate of candidates) {
+        const raw = String(candidate || '').trim();
+        if (!raw) continue;
+        const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+        try {
+            return new URL(withProtocol).origin;
+        } catch {
+            // Try next candidate.
+        }
+    }
+    return 'https://example.invalid';
+}
+
+const APP_ORIGIN = resolveAppOrigin();
+const APP_HOSTNAME = (() => {
+    try {
+        return new URL(APP_ORIGIN).hostname || 'example.invalid';
+    } catch {
+        return 'example.invalid';
+    }
+})();
+const XAPI_EXTENSION_NAMESPACE = `${APP_ORIGIN}/extensions`;
+const XAPI_SKIP_PROGRESS_SYNC_KEY = `${XAPI_EXTENSION_NAMESPACE}/skip-progress-sync`;
+const LEGACY_SKIP_PROGRESS_SYNC_KEY = 'https://lms.local/extensions/skip-progress-sync';
+
 function inferVerbKey(verbIdOrLabel = '') {
     const value = String(verbIdOrLabel).toLowerCase();
     if (value.includes('initial')) return 'initialized';
@@ -54,7 +85,7 @@ function normalizeVerb(verb = {}) {
 }
 
 function normalizeStatement(statement) {
-    const actorMbox = statement?.actor?.mbox || 'mailto:anonymous@lms.local';
+    const actorMbox = statement?.actor?.mbox || `mailto:anonymous@${APP_HOSTNAME}`;
     const actorName = statement?.actor?.name || 'Anonymous Learner';
     const verb = normalizeVerb(statement?.verb || {});
 
@@ -117,7 +148,7 @@ function readProgressExtensions(result = {}) {
 
 function shouldSkipProgressSync(statement = {}) {
     const extensions = statement?.context?.extensions || {};
-    const marker = extensions['https://lms.local/extensions/skip-progress-sync'];
+    const marker = extensions[XAPI_SKIP_PROGRESS_SYNC_KEY] ?? extensions[LEGACY_SKIP_PROGRESS_SYNC_KEY];
     if (marker === true) return true;
     if (typeof marker === 'number') return marker === 1;
     if (typeof marker === 'string') {
@@ -212,7 +243,7 @@ export async function POST(request) {
 
         const { data: statement, response: invalidBodyResponse } = await readJsonBody(request);
         if (invalidBodyResponse) return invalidBodyResponse;
-        const actorEmail = session.user.email || `${session.user.username || 'user'}@lms.local`;
+        const actorEmail = session.user.email || `${session.user.username || 'user'}@${APP_HOSTNAME}`;
         const actorName = session.user.username || 'Learner';
         statement.actor = {
             mbox: `mailto:${actorEmail}`,

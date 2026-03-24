@@ -183,6 +183,27 @@ function sanitizeStorageScope(value) {
         .replace(/[^a-z0-9._-]+/g, '_');
 }
 
+function resolvePublicAppOrigin() {
+    const candidates = [
+        process.env.NEXT_PUBLIC_XAPI_OBJECT_BASE_URL,
+        process.env.NEXT_PUBLIC_APP_URL,
+        typeof window !== 'undefined' ? window.location.origin : '',
+    ];
+
+    for (const candidate of candidates) {
+        const raw = String(candidate || '').trim();
+        if (!raw) continue;
+        const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+        try {
+            return new URL(withProtocol).origin;
+        } catch {
+            // Try next candidate.
+        }
+    }
+
+    return 'https://example.invalid';
+}
+
 export default function LearnPage() {
     const params = useParams();
     const searchParams = useSearchParams();
@@ -299,6 +320,18 @@ export default function LearnPage() {
         setUserResolved(true);
     }, []);
 
+    const appOrigin = useMemo(() => resolvePublicAppOrigin(), []);
+    const actorEmailDomain = useMemo(() => {
+        try {
+            return new URL(appOrigin).hostname || 'example.invalid';
+        } catch {
+            return 'example.invalid';
+        }
+    }, [appOrigin]);
+    const xapiContentBase = useMemo(() => `${appOrigin}/content`, [appOrigin]);
+    const xapiExtensionNamespace = useMemo(() => `${appOrigin}/extensions`, [appOrigin]);
+    const xapiSkipProgressSyncKey = useMemo(() => `${xapiExtensionNamespace}/skip-progress-sync`, [xapiExtensionNamespace]);
+
     useEffect(() => {
         const completed = String(status || '').toUpperCase() === 'COMPLETED';
         if (completed) {
@@ -317,12 +350,12 @@ export default function LearnPage() {
     }, [status]);
 
     const actor = useMemo(() => {
-        const email = currentUser?.email || `${currentUser?.username || 'anonymous'}@lms.local`;
+        const email = currentUser?.email || `${currentUser?.username || 'anonymous'}@${actorEmailDomain}`;
         return {
             name: currentUser?.fullName || currentUser?.username || 'Anonymous Learner',
             email,
         };
-    }, [currentUser]);
+    }, [currentUser, actorEmailDomain]);
 
     const canonicalProgressUserId = useMemo(
         () => (currentUser?.username || 'anonymous').trim() || 'anonymous',
@@ -333,13 +366,13 @@ export default function LearnPage() {
         if (!userResolved) return [];
         const username = (currentUser?.username || '').trim();
         const email = (currentUser?.email || '').trim();
-        const fallbackEmail = username ? `${username}@lms.local` : '';
+        const fallbackEmail = username ? `${username}@${actorEmailDomain}` : '';
         if (username) {
             // Logged-in users should not fallback to anonymous progress.
             return [username, email, fallbackEmail].filter(Boolean);
         }
         return ['anonymous'];
-    }, [currentUser, userResolved]);
+    }, [currentUser, userResolved, actorEmailDomain]);
 
     const learningUserId = actor.email;
     const resolvedContentId = content?.id || routeId;
@@ -841,13 +874,13 @@ export default function LearnPage() {
         }
 
         try {
-            const joined = new URL(normalizedLaunch.replace(/^\//, ''), `https://lms.local/${baseDir}/`);
+            const joined = new URL(normalizedLaunch.replace(/^\//, ''), `${appOrigin}/${baseDir}/`);
             return `${joined.pathname}${joined.search}${joined.hash}`;
         } catch {
             const value = String(entryPoint || '');
             return value.startsWith('/') ? value : `/${value}`;
         }
-    }, []);
+    }, [appOrigin]);
 
     const resolvePlayerSrc = useCallback((entryPoint) => {
         const value = String(entryPoint || '').trim();
@@ -2618,7 +2651,7 @@ export default function LearnPage() {
                 },
                 object: {
                     ...(incoming.object || {}),
-                    id: `http://lms.local/content/${content.id}`,
+                    id: `${xapiContentBase}/${content.id}`,
                     objectType: incoming.object?.objectType || 'Activity',
                     definition: {
                         ...(incoming.object?.definition || {}),
@@ -2632,10 +2665,10 @@ export default function LearnPage() {
                     ...(incoming.context || {}),
                     extensions: {
                         ...(incoming.context?.extensions || {}),
-                        'https://lms.local/extensions/original-actor-mbox': incoming.actor?.mbox || '',
-                        'https://lms.local/extensions/original-object-id': incoming.object?.id || '',
+                        [`${xapiExtensionNamespace}/original-actor-mbox`]: incoming.actor?.mbox || '',
+                        [`${xapiExtensionNamespace}/original-object-id`]: incoming.object?.id || '',
                         // Chapter resume is synced by LearnPage logic; don't let nested media overwrite it.
-                        'https://lms.local/extensions/skip-progress-sync': true,
+                        [xapiSkipProgressSyncKey]: true,
                     },
                 },
             };

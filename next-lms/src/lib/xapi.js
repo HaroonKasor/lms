@@ -4,16 +4,33 @@
  */
 
 const XAPI_ENDPOINT = '/api/xapi/statements';
-const OBJECT_BASE_URL =
-    process.env.NEXT_PUBLIC_XAPI_OBJECT_BASE_URL ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    'http://lms.local';
+function resolveObjectBaseUrl() {
+    const candidates = [
+        process.env.NEXT_PUBLIC_XAPI_OBJECT_BASE_URL,
+        process.env.NEXT_PUBLIC_APP_URL,
+        typeof window !== 'undefined' ? window.location.origin : '',
+    ];
+
+    for (const candidate of candidates) {
+        const raw = String(candidate || '').trim();
+        if (!raw) continue;
+        const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+        try {
+            return new URL(withProtocol).origin;
+        } catch {
+            // Try next candidate.
+        }
+    }
+    return 'https://example.invalid';
+}
+
+const OBJECT_BASE_URL = resolveObjectBaseUrl();
 const ACTOR_EMAIL_DOMAIN = (() => {
     try {
         const host = new URL(OBJECT_BASE_URL).hostname;
-        return host || 'lms.local';
+        return host || 'example.invalid';
     } catch {
-        return 'lms.local';
+        return 'example.invalid';
     }
 })();
 
