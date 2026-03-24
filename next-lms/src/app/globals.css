@@ -1,24 +1,5 @@
 @import "tailwindcss";
 
-/* Inject Thai glyphs into the existing Outfit family for all pages/components */
-@font-face {
-  font-family: "Outfit";
-  src: url("/fonts/thsarabunnew-webfont.ttf") format("truetype");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-  unicode-range: U+0E00-0E7F;
-}
-
-@font-face {
-  font-family: "Outfit";
-  src: url("/fonts/thsarabunnew_bold-webfont.ttf") format("truetype");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-  unicode-range: U+0E00-0E7F;
-}
-
 /* Root scrolling: keep only one page-level scrollbar */
 html,
 body {
@@ -37,20 +18,20 @@ html {
 body {
   height: 100vh;
   overflow-y: auto;
-  font-family: var(--font-outfit), var(--font-th-sarabun), "Segoe UI", Tahoma, sans-serif;
+  font-family: var(--font-noto-sans-thai), var(--font-outfit), "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Thai text fallback to TH Sarabun when available */
+/* Keep legacy selectors working, but unify on Noto Sans Thai stack */
 :lang(th),
 [lang="th"],
 [lang^="th-"] {
-  font-family: var(--font-th-sarabun), var(--font-outfit), "Segoe UI", Tahoma, sans-serif;
+  font-family: var(--font-noto-sans-thai), var(--font-outfit), "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif;
 }
 
 .font-thai-sarabun {
-  font-family: var(--font-th-sarabun), var(--font-outfit), "Segoe UI", Tahoma, sans-serif !important;
+  font-family: var(--font-noto-sans-thai), var(--font-outfit), "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif !important;
 }
 
 /* Custom scrollbar only for page root (avoid nested double-scroll look) */

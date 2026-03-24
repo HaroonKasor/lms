@@ -18,6 +18,8 @@ function getMariaDbConfig() {
             user: explicitUser || 'root',
             password: explicitPassword || '',
             database: explicitDbName || 'lms_enterprise',
+            // Needed for MySQL 8+ auth (caching_sha2_password) when using mariadb connector.
+            allowPublicKeyRetrieval: true,
             connectionLimit: 10,
             connectTimeout: 10000,
             acquireTimeout: 30000,
@@ -34,6 +36,8 @@ function getMariaDbConfig() {
                 user: decodeURIComponent(url.username || 'root'),
                 password: decodeURIComponent(url.password || ''),
                 database: url.pathname.replace(/^\//, '') || 'lms_enterprise',
+                // Needed for MySQL 8+ auth (caching_sha2_password) when using mariadb connector.
+                allowPublicKeyRetrieval: true,
                 connectionLimit: 10,
                 connectTimeout: 10000,
                 acquireTimeout: 30000,
@@ -49,6 +53,7 @@ function getMariaDbConfig() {
         user: 'root',
         password: '',
         database: 'lms_enterprise',
+        allowPublicKeyRetrieval: true,
         connectionLimit: 10,
         connectTimeout: 10000,
         acquireTimeout: 30000,

@@ -1,5 +1,4 @@
-import { Outfit } from "next/font/google";
-import localFont from "next/font/local";
+import { Noto_Sans_Thai, Outfit } from "next/font/google";
 import "./globals.css";
 import IdleSessionGuard from "@/components/layout/IdleSessionGuard";
 
@@ -8,20 +7,10 @@ const outfit = Outfit({
     variable: "--font-outfit",
 });
 
-const thSarabun = localFont({
-    src: [
-        {
-            path: "./fonts/thsarabunnew-webfont.ttf",
-            weight: "400",
-            style: "normal",
-        },
-        {
-            path: "./fonts/thsarabunnew_bold-webfont.ttf",
-            weight: "700",
-            style: "normal",
-        },
-    ],
-    variable: "--font-th-sarabun",
+const notoSansThai = Noto_Sans_Thai({
+    subsets: ["thai", "latin"],
+    weight: ["300", "400", "500", "600", "700", "800"],
+    variable: "--font-noto-sans-thai",
     display: "swap",
 });
 
@@ -38,7 +27,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
     return (
         <html lang="en">
-            <body className={`${outfit.variable} ${thSarabun.variable} bg-gradient-to-b from-[#FFFFFF] to-[#F6F8FF] min-h-screen text-gray-800`}>
+            <body className={`${outfit.variable} ${notoSansThai.variable} bg-gradient-to-b from-[#FFFFFF] to-[#F6F8FF] min-h-screen text-gray-800`}>
                 <IdleSessionGuard />
                 {children}
             </body>
