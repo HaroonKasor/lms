@@ -437,19 +437,19 @@ export default function AdminLmsDashboard({ children }) {
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 w-full">
                                     <StatCard
                                         gradient="linear-gradient(180deg, rgba(94, 94, 239, 0.24) 0%, rgba(94, 94, 239, 0) 100%)"
-                                        icon="🎓"
+                                        icon={<svg width="24" height="24" fill="none" stroke="#5E5EEF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>}
                                         value={Number(stats?.totals?.users || 0).toLocaleString()}
                                         label="Total Users"
                                     />
                                     <StatCard
                                         gradient="linear-gradient(180deg, rgba(251, 17, 255, 0.24) 0%, rgba(251, 17, 255, 0) 100%)"
-                                        icon="📱"
+                                        icon={<svg width="24" height="24" fill="none" stroke="#CC11CC" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>}
                                         value={Number(stats?.totals?.activeUsers || 0).toLocaleString()}
                                         label="Active Sessions"
                                     />
                                     <StatCard
                                         gradient="linear-gradient(180deg, rgba(233, 184, 73, 0.17) 0%, rgba(233, 184, 73, 0) 100%)"
-                                        icon="📜"
+                                        icon={<svg width="24" height="24" fill="none" stroke="#B87D20" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/></svg>}
                                         value={Number(stats?.totals?.completedEnrollments || 0).toLocaleString()}
                                         label="Graduated the course"
                                     />

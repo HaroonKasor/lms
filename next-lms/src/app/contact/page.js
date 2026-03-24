@@ -70,22 +70,22 @@ export default function ContactPage() {
 
     const contactInfo = [
         {
-            icon: "🏠", // Placeholder for address icon
+            icon: <svg width="28" height="28" fill="none" stroke="#B87D20" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>,
             title: "Our Address",
             details: ["3149 New Creek Road,", "Huntsville,", "Alabama, USA"]
         },
         {
-            icon: "📱", // Placeholder for phone icon
+            icon: <svg width="28" height="28" fill="none" stroke="#B87D20" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>,
             title: "Contact Number",
             details: ["+12001234567", "+9100012345896"]
         },
         {
-            icon: "✉️", // Placeholder for email icon
+            icon: <svg width="28" height="28" fill="none" stroke="#B87D20" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>,
             title: "Email Address",
             details: ["info@domain.com", "support@domain.com"]
         },
         {
-            icon: "⏰", // Placeholder for schedule icon
+            icon: <svg width="28" height="28" fill="none" stroke="#B87D20" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
             title: "Class Schedule",
             details: ["10:00 AM - 6:00 PM", "Monday - Friday"]
         }
@@ -100,9 +100,18 @@ export default function ContactPage() {
                 <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#687EFF 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
                 <div className="absolute inset-0 opacity-20" style={{ background: 'linear-gradient(90deg, transparent, rgba(104, 126, 255, 0.2))' }}></div>
 
-                {/* Decorative Elements */}
-                <div className="absolute right-[5%] bottom-[10%] opacity-80">
-                    <span className="text-3xl filter brightness-110">🌸</span>
+                <div className="absolute right-[5%] bottom-[10%] opacity-60">
+                    <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="18" cy="18" r="5" fill="#687EFF"/>
+                        <circle cx="18" cy="7" r="4" fill="#C4B5FD"/>
+                        <circle cx="18" cy="29" r="4" fill="#C4B5FD"/>
+                        <circle cx="7" cy="18" r="4" fill="#C4B5FD"/>
+                        <circle cx="29" cy="18" r="4" fill="#C4B5FD"/>
+                        <circle cx="10" cy="10" r="3" fill="#DDD6FE"/>
+                        <circle cx="26" cy="10" r="3" fill="#DDD6FE"/>
+                        <circle cx="10" cy="26" r="3" fill="#DDD6FE"/>
+                        <circle cx="26" cy="26" r="3" fill="#DDD6FE"/>
+                    </svg>
                 </div>
 
                 <FadeIn direction="up" className="w-full max-w-[1290px] mx-auto px-6 relative z-10">
@@ -129,7 +138,7 @@ export default function ContactPage() {
                 <FadeIn direction="up" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-2">
                     {contactInfo.map((info, idx) => (
                         <div key={idx} className="bg-white rounded-2xl p-8 flex flex-col items-center text-center shadow-[0_10px_40px_rgba(0,0,0,0.04)] border border-[#eaedf5] hover:-translate-y-2 transition-transform duration-300">
-                            <div className="w-16 h-16 rounded-full bg-[#fdf8dd] border-4 border-[#fffcef] flex items-center justify-center text-2xl mb-6 shadow-sm">
+                            <div className="w-16 h-16 rounded-full bg-[#fdf8dd] border-4 border-[#fffcef] flex items-center justify-center mb-6 shadow-sm">
                                 {info.icon}
                             </div>
                             <h3 className="text-[#052143] font-bold text-[20px] mb-4">{info.title}</h3>

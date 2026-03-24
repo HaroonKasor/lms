@@ -153,7 +153,17 @@ export default function AboutPage() {
 
                 {/* Decorative Elements */}
                 <div className="absolute right-[5%] bottom-[10%] opacity-80">
-                    <span className="text-3xl filter brightness-110">🌸</span>
+                    <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" className="opacity-60">
+                        <circle cx="18" cy="18" r="5" fill="#687EFF"/>
+                        <circle cx="18" cy="7" r="4" fill="#C4B5FD"/>
+                        <circle cx="18" cy="29" r="4" fill="#C4B5FD"/>
+                        <circle cx="7" cy="18" r="4" fill="#C4B5FD"/>
+                        <circle cx="29" cy="18" r="4" fill="#C4B5FD"/>
+                        <circle cx="10" cy="10" r="3" fill="#DDD6FE"/>
+                        <circle cx="26" cy="10" r="3" fill="#DDD6FE"/>
+                        <circle cx="10" cy="26" r="3" fill="#DDD6FE"/>
+                        <circle cx="26" cy="26" r="3" fill="#DDD6FE"/>
+                    </svg>
                 </div>
 
                 <FadeIn direction="up" className="w-full max-w-[1290px] mx-auto px-6 relative z-10">

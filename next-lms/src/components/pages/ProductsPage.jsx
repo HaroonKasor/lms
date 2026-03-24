@@ -10,49 +10,49 @@ export default function ProductsPage() {
         {
             title: "SkillUp LMS",
             desc: "All-in-One Platform for Smarter Digital Learning",
-            icon: "📈",
+            icon: <svg width="26" height="26" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
             variant: "open"
         },
         {
             title: "SkillUp DTS",
             desc: "Accelerate your journey through professional digital testbank",
-            icon: "📝",
+            icon: <svg width="26" height="26" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>,
             variant: "open"
         },
         {
             title: "SkillUp AMS",
             desc: "Integrated system for managing academic assets and resources.",
-            icon: "💰",
+            icon: <svg width="26" height="26" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
             variant: "try"
         },
         {
             title: "SkillUp KSM",
             desc: "Smart solutions for efficient knowledge sharing management.",
-            icon: "👑",
+            icon: <svg width="26" height="26" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>,
             variant: "try"
         },
         {
             title: "SkillUp Academy",
             desc: "Advanced courses designed to level up your career skills.",
-            icon: "🎓",
+            icon: <svg width="26" height="26" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
             variant: "try"
         },
         {
             title: "SkillUp JMS",
             desc: "Optimized framework for managing complex job-related workflows.",
-            icon: "📊",
+            icon: <svg width="26" height="26" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>,
             variant: "try"
         },
         {
             title: "Special Function",
             desc: "Custom-built features tailored to your specific educational requirements.",
-            icon: "⭐",
+            icon: <svg width="26" height="26" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>,
             variant: "try"
         },
         {
             title: "Math Singapore",
             desc: "Mathematics curriculum based on Singapore's proven pedagogy.",
-            icon: "🔢",
+            icon: <svg width="26" height="26" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>,
             variant: "try"
         }
     ];
@@ -130,7 +130,7 @@ export default function ProductsPage() {
                     <div className="text-center mb-16 relative">
                         {/* Badge */}
                         <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white shadow-sm border border-blue-50 mb-6">
-                            <span className="text-lg">🎓</span>
+                            <svg width="18" height="18" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                             <span className="text-[#687EFF] font-semibold text-[15px] italic">Products</span>
                         </div>
 

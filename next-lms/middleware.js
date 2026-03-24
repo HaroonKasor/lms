@@ -8,6 +8,8 @@ const PUBLIC_API_PATHS = new Set([
     '/api/auth/register',
     '/api/auth/seed',
     '/api/auth/logout',
+    '/api/auth/forgot-password',
+    '/api/auth/reset-password',
 ]);
 const USER_PROTECTED_PREFIXES = [
     '/dashboard',
@@ -51,6 +53,8 @@ function getApiRateLimitConfig(pathname) {
         pathname === '/api/auth/login'
         || pathname === '/api/auth/register'
         || pathname === '/api/auth/seed'
+        || pathname === '/api/auth/forgot-password'
+        || pathname === '/api/auth/reset-password'
     ) {
         return API_RATE_LIMIT_AUTH;
     }

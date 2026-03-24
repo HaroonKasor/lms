@@ -13,6 +13,7 @@ import {
     ensureUserRole,
     getUserDisplayName,
 } from '@/lib/server/enterprise-context';
+import { hasSmtpConfig, sendRegistrationSuccessEmail } from '@/lib/server/mailer';
 
 function splitName(fullName) {
     const value = String(fullName || '').trim();
@@ -92,6 +93,20 @@ export async function POST(request) {
             { ttlSeconds: SESSION_TTL_SECONDS }
         );
         response.cookies.set(SESSION_COOKIE_NAME, sessionToken, getSessionCookieOptions());
+
+        // Best-effort email notification for successful registration.
+        // Registration should still succeed even if SMTP is not configured or temporarily fails.
+        if (hasSmtpConfig()) {
+            sendRegistrationSuccessEmail({
+                to: user.email,
+                name: getUserDisplayName(user) || user.username || user.email,
+            }).catch((mailErr) => {
+                console.error('[auth/register] registration email failed', mailErr);
+            });
+        } else {
+            console.warn('[auth/register] SMTP not configured, skip registration email');
+        }
+
         return response;
     } catch (err) {
         console.error('[auth/register] failed', err);

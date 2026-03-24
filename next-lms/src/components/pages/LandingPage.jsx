@@ -107,12 +107,12 @@ export default function LandingPage() {
                                 </Link>
 
                                 <button className="flex items-center gap-2 px-5 py-3.5 bg-white border border-[#D1E3FB] rounded-full text-[#052143] text-[16px] font-medium hover:border-[#687EFF] transition-colors shadow-sm">
-                                    <span className="text-[#FFC224]">🌟</span>
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="#FFC224"><path d="M12 2l2.09 6.26L20.5 9.27l-4.91 3.82L17.18 20 12 16.77 6.82 20l1.59-6.91L3.5 9.27l6.41-1.01L12 2z"/></svg>
                                     <span className="font-semibold italic">Quality Course</span>
                                 </button>
 
                                 <button className="flex items-center gap-2 px-5 py-3.5 bg-white border border-[#D1E3FB] rounded-full text-[#052143] text-[16px] font-medium hover:border-[#687EFF] transition-colors shadow-sm">
-                                    <span className="text-[#F87A53]">🔥</span>
+                                    <svg width="18" height="18" fill="none" stroke="#F87A53" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
                                     <span className="font-semibold italic">Suitable Price</span>
                                 </button>
                             </div>
@@ -255,11 +255,17 @@ export default function LandingPage() {
 
                                 <div className="grid grid-cols-2 gap-6 mb-8">
                                     <div>
-                                        <h4 className="text-[#052143] font-medium text-[16px] mb-2">🎯 Our Mission</h4>
+                                        <h4 className="text-[#052143] font-medium text-[16px] mb-2 flex items-center gap-1.5">
+                                            <svg width="15" height="15" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                            Our Mission
+                                        </h4>
                                         <p className="text-[#6B778B] text-[14px] leading-[160%]">To make high-quality education accessible to everyone through innovative technology.</p>
                                     </div>
                                     <div>
-                                        <h4 className="text-[#052143] font-medium text-[16px] mb-2">👁️ Our Vision</h4>
+                                        <h4 className="text-[#052143] font-medium text-[16px] mb-2 flex items-center gap-1.5">
+                                            <svg width="15" height="15" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="10" r="3"/><path d="M7 20.662V19a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v1.662"/></svg>
+                                            Our Vision
+                                        </h4>
                                         <p className="text-[#6B778B] text-[14px] leading-[160%]">A world where learning knows no boundaries and every learner reaches their potential.</p>
                                     </div>
                                 </div>
