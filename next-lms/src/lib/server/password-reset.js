@@ -4,7 +4,7 @@ import prisma from '@/lib/prisma';
 const DEFAULT_TTL_MINUTES = 30;
 
 export async function ensurePasswordResetTable() {
-    await prisma.$executeRawUnsafe(`
+    await prisma.$executeRaw`
         CREATE TABLE IF NOT EXISTS password_reset_tokens (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
             user_id BIGINT UNSIGNED NOT NULL,
@@ -16,7 +16,7 @@ export async function ensurePasswordResetTable() {
             INDEX idx_password_reset_tokens_user_id (user_id),
             INDEX idx_password_reset_tokens_expires_at (expires_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-    `);
+    `;
 }
 
 function hashToken(rawToken) {
@@ -35,14 +35,10 @@ export async function createPasswordResetToken({ userId, requestedIp, ttlMinutes
     const tokenHash = hashToken(token);
     const expiresAt = new Date(Date.now() + Math.max(1, Number(ttlMinutes || DEFAULT_TTL_MINUTES)) * 60 * 1000);
 
-    await prisma.$executeRawUnsafe(
-        `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, requested_ip)
-         VALUES (?, ?, ?, ?)`,
-        safeUserId,
-        tokenHash,
-        expiresAt,
-        String(requestedIp || '').slice(0, 64) || null
-    );
+    await prisma.$executeRaw`
+        INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, requested_ip)
+        VALUES (${safeUserId}, ${tokenHash}, ${expiresAt}, ${String(requestedIp || '').slice(0, 64) || null})
+    `;
 
     return { token, expiresAt };
 }
@@ -51,13 +47,12 @@ export async function consumePasswordResetToken(rawToken) {
     const tokenHash = hashToken(rawToken);
     await ensurePasswordResetTable();
 
-    const rows = await prisma.$queryRawUnsafe(
-        `SELECT id, user_id AS userId, expires_at AS expiresAt, used_at AS usedAt
-         FROM password_reset_tokens
-         WHERE token_hash = ?
-         LIMIT 1`,
-        tokenHash
-    );
+    const rows = await prisma.$queryRaw`
+        SELECT id, user_id AS userId, expires_at AS expiresAt, used_at AS usedAt
+        FROM password_reset_tokens
+        WHERE token_hash = ${tokenHash}
+        LIMIT 1
+    `;
 
     const record = Array.isArray(rows) ? rows[0] : null;
     if (!record) return null;
@@ -68,12 +63,11 @@ export async function consumePasswordResetToken(rawToken) {
         return null;
     }
 
-    await prisma.$executeRawUnsafe(
-        `UPDATE password_reset_tokens
-         SET used_at = NOW()
-         WHERE id = ?`,
-        Number(record.id)
-    );
+    await prisma.$executeRaw`
+        UPDATE password_reset_tokens
+        SET used_at = NOW()
+        WHERE id = ${Number(record.id)}
+    `;
 
     return {
         id: Number(record.id),
@@ -86,10 +80,8 @@ export async function cleanupPasswordResetTokens(userId) {
     if (!Number.isFinite(safeUserId) || safeUserId <= 0) return;
 
     await ensurePasswordResetTable();
-    await prisma.$executeRawUnsafe(
-        `DELETE FROM password_reset_tokens
-         WHERE user_id = ? OR expires_at < NOW()`,
-        safeUserId
-    );
+    await prisma.$executeRaw`
+        DELETE FROM password_reset_tokens
+        WHERE user_id = ${safeUserId} OR expires_at < NOW()
+    `;
 }
-

@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { saveUser, setRememberMePreference } from '@/lib/auth';
+import { sanitizeRegisterInput, validateRegisterInput } from '@/lib/validation/register';
 
 export default function Register() {
     const router = useRouter();
@@ -19,16 +20,26 @@ export default function Register() {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
-        if (!username || !email || !password) {
-            setError('กรุณากรอกข้อมูลให้ครบ (Username, Email, Password)');
+
+        const payload = sanitizeRegisterInput({
+            username,
+            email,
+            password,
+            fullName,
+            phone,
+        });
+        const validation = validateRegisterInput(payload);
+        if (!validation.valid) {
+            setError(validation.error);
             return;
         }
+
         setLoading(true);
         try {
             const res = await fetch('/api/auth/register', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, email, password, fullName, phone }),
+                body: JSON.stringify(payload),
             });
             const data = await res.json();
             if (res.ok && data.success) {
@@ -82,21 +93,37 @@ export default function Register() {
                         {/* Username */}
                         <div className="flex flex-col gap-3">
                             <label className="text-[#052143] font-medium text-xl leading-[120%]">Username</label>
-                            <input type="text" placeholder="Choose a username" value={username} onChange={(e) => setUsername(e.target.value)}
+                            <input
+                                type="text"
+                                placeholder="Choose a username"
+                                value={username}
+                                onChange={(e) => setUsername(e.target.value)}
+                                required
+                                minLength={3}
+                                maxLength={30}
+                                pattern="[A-Za-z0-9._-]{3,30}"
+                                title="3-30 characters: letters, numbers, ., _, -"
                                 className="w-full h-[50px] bg-white border border-[#D1E3FB] rounded-full px-[22px] py-[6px] text-[16px] text-[#052143] outline-none focus:border-[#687EFF] transition-colors placeholder:text-[#6B778B]" />
                         </div>
 
                         {/* Email */}
                         <div className="flex flex-col gap-3">
                             <label className="text-[#052143] font-medium text-xl leading-[120%]">Email</label>
-                            <input type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)}
+                            <input type="email" placeholder="Enter your email" value={email} onChange={(e) => setEmail(e.target.value)} required
                                 className="w-full h-[50px] bg-white border border-[#D1E3FB] rounded-full px-[22px] py-[6px] text-[16px] text-[#052143] outline-none focus:border-[#687EFF] transition-colors placeholder:text-[#6B778B]" />
                         </div>
 
                         {/* Phone */}
                         <div className="flex flex-col gap-3">
                             <label className="text-[#052143] font-medium text-xl leading-[120%]">Phone Number</label>
-                            <input type="tel" placeholder="Enter your phone number" value={phone} onChange={(e) => setPhone(e.target.value)}
+                            <input
+                                type="tel"
+                                placeholder="Enter your phone number"
+                                value={phone}
+                                onChange={(e) => setPhone(e.target.value)}
+                                maxLength={20}
+                                pattern="[0-9+\-()\s]{8,20}"
+                                title="Use digits and + - ( ) only"
                                 className="w-full h-[50px] bg-white border border-[#D1E3FB] rounded-full px-[22px] py-[6px] text-[16px] text-[#052143] outline-none focus:border-[#687EFF] transition-colors placeholder:text-[#6B778B]" />
                         </div>
 
@@ -105,6 +132,7 @@ export default function Register() {
                             <label className="text-[#052143] font-medium text-xl leading-[120%]">Password</label>
                             <div className="relative">
                                 <input type={showPassword ? 'text' : 'password'} placeholder="Enter Password" value={password} onChange={(e) => setPassword(e.target.value)}
+                                    required minLength={8} maxLength={72}
                                     className="password-input w-full h-[50px] bg-white border border-[#D1E3FB] rounded-full px-[22px] py-[6px] pr-14 text-[16px] text-[#052143] outline-none focus:border-[#687EFF] transition-colors placeholder:text-[#6B778B]" />
                                 <button type="button" onClick={() => setShowPassword(!showPassword)}
                                     className="absolute right-5 top-1/2 -translate-y-1/2 text-[#6B778B] hover:text-[#052143] transition-colors">
@@ -114,6 +142,9 @@ export default function Register() {
                                     </svg>
                                 </button>
                             </div>
+                            <p className="text-[12px] text-[#6B778B] leading-[130%]">
+                                Use 8-72 characters with letters and numbers, and no spaces.
+                            </p>
                         </div>
 
                         {/* Sign Up Button */}

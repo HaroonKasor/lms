@@ -16,6 +16,7 @@ import {
     getUserDisplayName,
 } from '@/lib/server/enterprise-context';
 import { hasMailConfig, sendRegistrationSuccessEmail } from '@/lib/server/mailer';
+import { sanitizeRegisterInput, validateRegisterInput } from '@/lib/validation/register';
 
 function getCandidateCookieDomains(request) {
     const host = String(request?.headers?.get('host') || '')
@@ -72,10 +73,11 @@ export async function POST(request) {
     try {
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);
         if (invalidBodyResponse) return invalidBodyResponse;
-        const { username, email, password, fullName, phone } = body;
+        const { username, email, password, fullName, phone } = sanitizeRegisterInput(body);
 
-        if (!username || !email || !password) {
-            return NextResponse.json({ error: 'Username, email, and password are required' }, { status: 400 });
+        const validation = validateRegisterInput({ username, email, password, fullName, phone });
+        if (!validation.valid) {
+            return NextResponse.json({ error: validation.error }, { status: 400 });
         }
 
         // Check if username or email already exists
