@@ -3,8 +3,10 @@ const decoder = new TextDecoder();
 const DEFAULT_SESSION_SECRET = 'change-this-session-secret';
 
 export const SESSION_COOKIE_NAME = 'lms_session';
+export const LOGOUT_MARKER_COOKIE_NAME = 'lms_logged_out';
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 export const SESSION_NON_REMEMBER_TTL_SECONDS = 60 * 60 * 12; // 12 hours
+export const LOGOUT_MARKER_TTL_SECONDS = 60 * 10; // 10 minutes
 
 function parsePositiveInt(raw, fallback) {
     const value = Number(raw);
@@ -97,6 +99,19 @@ function shouldUseSecureCookie() {
 }
 
 export function getSessionCookieOptions(maxAge = SESSION_TTL_SECONDS) {
+    const options = {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: shouldUseSecureCookie(),
+        path: '/',
+    };
+    if (Number.isFinite(maxAge) && maxAge >= 0) {
+        options.maxAge = maxAge;
+    }
+    return options;
+}
+
+export function getLogoutMarkerCookieOptions(maxAge = LOGOUT_MARKER_TTL_SECONDS) {
     const options = {
         httpOnly: true,
         sameSite: 'lax',

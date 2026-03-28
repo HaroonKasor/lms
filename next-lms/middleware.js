@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
-import { SESSION_COOKIE_NAME, verifySessionToken } from './src/lib/session';
+import {
+    LOGOUT_MARKER_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+    verifySessionToken,
+} from './src/lib/session';
 import { takeRateLimitToken } from './src/lib/server/rate-limit';
 
 const AUTH_PAGES = ['/login', '/register'];
@@ -77,6 +81,14 @@ function dashboardByRole(role) {
     return role === 'admin' ? '/admin-dashboard' : '/dashboard';
 }
 
+function noStoreResponse() {
+    const response = NextResponse.next();
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+    return response;
+}
+
 function resolveLegacyPhpRoute(request) {
     if (request.nextUrl.pathname !== '/index.php') return null;
 
@@ -147,8 +159,9 @@ export async function middleware(request) {
         return NextResponse.redirect(destination, 307);
     }
 
+    const logoutMarker = request.cookies.get(LOGOUT_MARKER_COOKIE_NAME)?.value === '1';
     const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-    const session = token ? await verifySessionToken(token) : null;
+    const session = (!logoutMarker && token) ? await verifySessionToken(token) : null;
     const isAuthenticated = Boolean(session);
     const isAdmin = session?.role === 'admin';
 
@@ -187,7 +200,7 @@ export async function middleware(request) {
         const forceAuthPage = request.nextUrl.searchParams.get('force') === '1';
         const isLoggedOutLanding = request.nextUrl.searchParams.get('loggedOut') === '1';
         if (request.nextUrl.searchParams.has('next') || forceAuthPage || isLoggedOutLanding) {
-            return NextResponse.next();
+            return noStoreResponse();
         }
         const url = request.nextUrl.clone();
         url.pathname = dashboardByRole(session.role);
@@ -210,6 +223,10 @@ export async function middleware(request) {
 
     if (isProtectedUserPath(pathname) && !isAuthenticated) {
         return loginRedirect(request);
+    }
+
+    if (AUTH_PAGES.includes(pathname)) {
+        return noStoreResponse();
     }
 
     return NextResponse.next();

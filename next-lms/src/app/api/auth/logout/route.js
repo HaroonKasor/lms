@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
-import { getSessionCookieOptions, SESSION_COOKIE_NAME } from '@/lib/session';
+import {
+    getLogoutMarkerCookieOptions,
+    getSessionCookieOptions,
+    LOGOUT_MARKER_COOKIE_NAME,
+    LOGOUT_MARKER_TTL_SECONDS,
+    SESSION_COOKIE_NAME,
+} from '@/lib/session';
 
 function getCandidateCookieDomains(request) {
     const host = String(request?.headers?.get('host') || '')
@@ -43,9 +49,30 @@ function clearSessionCookie(response, request) {
     }
 }
 
+function setLogoutMarkerCookie(response, request) {
+    const base = {
+        ...getLogoutMarkerCookieOptions(LOGOUT_MARKER_TTL_SECONDS),
+    };
+
+    response.cookies.set(LOGOUT_MARKER_COOKIE_NAME, '1', {
+        ...base,
+        domain: undefined,
+    });
+
+    const domains = getCandidateCookieDomains(request);
+    for (const domain of domains) {
+        response.cookies.set(LOGOUT_MARKER_COOKIE_NAME, '1', {
+            ...base,
+            domain,
+        });
+    }
+}
+
 async function handleLogout(request) {
     const response = NextResponse.json({ success: true });
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     clearSessionCookie(response, request);
+    setLogoutMarkerCookie(response, request);
     return response;
 }
 

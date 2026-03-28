@@ -3,7 +3,9 @@ import prisma from '@/lib/prisma';
 import { hashPassword } from '@/lib/password';
 import {
     createSessionToken,
+    getLogoutMarkerCookieOptions,
     getSessionCookieOptions,
+    LOGOUT_MARKER_COOKIE_NAME,
     SESSION_COOKIE_NAME,
     SESSION_TTL_SECONDS,
 } from '@/lib/session';
@@ -14,6 +16,45 @@ import {
     getUserDisplayName,
 } from '@/lib/server/enterprise-context';
 import { hasMailConfig, sendRegistrationSuccessEmail } from '@/lib/server/mailer';
+
+function getCandidateCookieDomains(request) {
+    const host = String(request?.headers?.get('host') || '')
+        .trim()
+        .toLowerCase()
+        .replace(/:\d+$/, '');
+    if (!host) return [];
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return [];
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return [];
+
+    const labels = host.split('.').filter(Boolean);
+    const rootDomain = labels.length >= 2 ? labels.slice(-2).join('.') : host;
+    const values = [host, `.${host}`];
+    if (rootDomain && rootDomain !== host) {
+        values.push(rootDomain, `.${rootDomain}`);
+    }
+    return Array.from(new Set(values));
+}
+
+function clearLogoutMarkerCookie(response, request) {
+    const base = {
+        ...getLogoutMarkerCookieOptions(0),
+        maxAge: 0,
+        expires: new Date(0),
+    };
+
+    response.cookies.set(LOGOUT_MARKER_COOKIE_NAME, '', {
+        ...base,
+        domain: undefined,
+    });
+
+    const domains = getCandidateCookieDomains(request);
+    for (const domain of domains) {
+        response.cookies.set(LOGOUT_MARKER_COOKIE_NAME, '', {
+            ...base,
+            domain,
+        });
+    }
+}
 
 function splitName(fullName) {
     const value = String(fullName || '').trim();
@@ -93,6 +134,7 @@ export async function POST(request) {
             { ttlSeconds: SESSION_TTL_SECONDS }
         );
         response.cookies.set(SESSION_COOKIE_NAME, sessionToken, getSessionCookieOptions());
+        clearLogoutMarkerCookie(response, request);
 
         // Best-effort email notification for successful registration.
         // Registration should still succeed even if SMTP is not configured or temporarily fails.
