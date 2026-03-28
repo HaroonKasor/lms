@@ -14,6 +14,8 @@ const PUBLIC_API_PATHS = new Set([
     '/api/auth/logout',
     '/api/auth/forgot-password',
     '/api/auth/reset-password',
+    '/api/contact',
+    '/api/newsletter/subscribe',
 ]);
 const USER_PROTECTED_PREFIXES = [
     '/dashboard',
