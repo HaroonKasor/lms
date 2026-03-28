@@ -120,10 +120,11 @@ export default function Register() {
                                 type="tel"
                                 placeholder="Enter your phone number"
                                 value={phone}
-                                onChange={(e) => setPhone(e.target.value)}
+                                onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
                                 maxLength={20}
-                                pattern="[0-9+\-()\s]{8,20}"
-                                title="Use digits and + - ( ) only"
+                                pattern="[0-9]{8,20}"
+                                title="Use digits only (8-20 digits)"
+                                inputMode="numeric"
                                 className="w-full h-[50px] bg-white border border-[#D1E3FB] rounded-full px-[22px] py-[6px] text-[16px] text-[#052143] outline-none focus:border-[#687EFF] transition-colors placeholder:text-[#6B778B]" />
                         </div>
 
@@ -134,12 +135,26 @@ export default function Register() {
                                 <input type={showPassword ? 'text' : 'password'} placeholder="Enter Password" value={password} onChange={(e) => setPassword(e.target.value)}
                                     required minLength={8} maxLength={72}
                                     className="password-input w-full h-[50px] bg-white border border-[#D1E3FB] rounded-full px-[22px] py-[6px] pr-14 text-[16px] text-[#052143] outline-none focus:border-[#687EFF] transition-colors placeholder:text-[#6B778B]" />
-                                <button type="button" onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-5 top-1/2 -translate-y-1/2 text-[#6B778B] hover:text-[#052143] transition-colors">
-                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={showPassword ? '#687EFF' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
-                                        <circle cx="12" cy="12" r="3" />
-                                    </svg>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowPassword(!showPassword)}
+                                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                    title={showPassword ? 'Hide password' : 'Show password'}
+                                    className="absolute right-5 top-1/2 -translate-y-1/2 text-[#6B778B] hover:text-[#052143] transition-colors"
+                                >
+                                    {showPassword ? (
+                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M17.94 17.94C16.18 19.16 14.16 20 12 20c-6.5 0-10-6-10-6 1.06-1.82 2.46-3.42 4.09-4.67" />
+                                            <path d="M9.9 4.24A10.7 10.7 0 0 1 12 4c6.5 0 10 6 10 6a16.9 16.9 0 0 1-2.16 2.89" />
+                                            <path d="M14.12 14.12a3 3 0 0 1-4.24-4.24" />
+                                            <path d="M2 2l20 20" />
+                                        </svg>
+                                    ) : (
+                                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
+                                            <circle cx="12" cy="12" r="3" />
+                                        </svg>
+                                    )}
                                 </button>
                             </div>
                             <p className="text-[12px] text-[#6B778B] leading-[130%]">

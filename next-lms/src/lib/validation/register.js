@@ -1,6 +1,6 @@
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const USERNAME_REGEX = /^[A-Za-z0-9._-]{3,30}$/;
-const PHONE_REGEX = /^[0-9+\-()\s]{8,20}$/;
+const PHONE_REGEX = /^\d{8,20}$/;
 
 const PASSWORD_MIN_LENGTH = 8;
 const PASSWORD_MAX_LENGTH = 72;
@@ -57,9 +57,8 @@ export function validateRegisterInput(input = {}) {
     }
 
     if (data.phone && !PHONE_REGEX.test(data.phone)) {
-        return { valid: false, error: 'Invalid phone number format' };
+        return { valid: false, error: 'Phone number must contain digits only (8-20 digits)' };
     }
 
     return { valid: true, error: '' };
 }
-

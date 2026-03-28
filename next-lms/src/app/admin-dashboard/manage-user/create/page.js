@@ -39,6 +39,8 @@ export default function CreateUserPage() {
         setFormData((prev) => ({ ...prev, [field]: value }));
     };
 
+    const normalizePhoneInput = (value) => String(value || '').replace(/\D/g, '').slice(0, 20);
+
     const handleToggleGroup = (group) => {
         setFormData((prev) => {
             const exists = prev.selectedGroups.includes(group);
@@ -57,6 +59,10 @@ export default function CreateUserPage() {
 
         if (!formData.username.trim() || !formData.email.trim() || !formData.password) {
             setError('กรุณากรอก Username, Email และ Password');
+            return;
+        }
+        if (formData.phoneNumber && !/^\d{8,20}$/.test(formData.phoneNumber)) {
+            setError('Phone Number ต้องเป็นตัวเลข 8-20 หลัก');
             return;
         }
         if (formData.password.length < 6) {
@@ -163,12 +169,22 @@ export default function CreateUserPage() {
                                     type="button"
                                     onClick={() => setShowPassword((prev) => !prev)}
                                     className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#687EFF]"
-                                    aria-label="Toggle password visibility"
+                                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                    title={showPassword ? 'Hide password' : 'Show password'}
                                 >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
-                                        <circle cx="12" cy="12" r="3" />
-                                    </svg>
+                                    {showPassword ? (
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-6.5 0-10-8-10-8a21.77 21.77 0 0 1 5.06-5.94" />
+                                            <path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c6.5 0 10 8 10 8a21.67 21.67 0 0 1-2.16 3.19" />
+                                            <path d="M14.12 14.12a3 3 0 0 1-4.24-4.24" />
+                                            <path d="M1 1l22 22" />
+                                        </svg>
+                                    ) : (
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
+                                            <circle cx="12" cy="12" r="3" />
+                                        </svg>
+                                    )}
                                 </button>
                             </div>
                         </div>
@@ -188,12 +204,22 @@ export default function CreateUserPage() {
                                     type="button"
                                     onClick={() => setShowConfirmPassword((prev) => !prev)}
                                     className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#687EFF]"
-                                    aria-label="Toggle confirm password visibility"
+                                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                                    title={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
                                 >
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
-                                        <circle cx="12" cy="12" r="3" />
-                                    </svg>
+                                    {showConfirmPassword ? (
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-6.5 0-10-8-10-8a21.77 21.77 0 0 1 5.06-5.94" />
+                                            <path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c6.5 0 10 8 10 8a21.67 21.67 0 0 1-2.16 3.19" />
+                                            <path d="M14.12 14.12a3 3 0 0 1-4.24-4.24" />
+                                            <path d="M1 1l22 22" />
+                                        </svg>
+                                    ) : (
+                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z" />
+                                            <circle cx="12" cy="12" r="3" />
+                                        </svg>
+                                    )}
                                 </button>
                             </div>
                         </div>
@@ -227,8 +253,11 @@ export default function CreateUserPage() {
                                 type="tel"
                                 placeholder="Phone Number"
                                 value={formData.phoneNumber}
-                                onChange={(e) => handleChange('phoneNumber', e.target.value)}
+                                onChange={(e) => handleChange('phoneNumber', normalizePhoneInput(e.target.value))}
                                 className={inputClass}
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                maxLength={20}
                             />
                         </div>
 

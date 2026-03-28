@@ -31,6 +31,7 @@ export default function UserManagementPage() {
     const [passwordUserId, setPasswordUserId] = useState(null);
     const [newPassword, setNewPassword] = useState('');
     const [savingPassword, setSavingPassword] = useState(false);
+    const normalizePhoneInput = (value) => String(value || '').replace(/\D/g, '').slice(0, 20);
 
     const fetchUsers = async () => {
         try {
@@ -323,7 +324,15 @@ export default function UserManagementPage() {
                                 <input value={editForm.username} onChange={(e) => setEditForm({ ...editForm, username: e.target.value })} className="border border-gray-300 rounded px-3 py-2 text-[14px]" placeholder="Username" />
                                 <input value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} className="border border-gray-300 rounded px-3 py-2 text-[14px]" placeholder="Email" />
                                 <input value={editForm.fullName} onChange={(e) => setEditForm({ ...editForm, fullName: e.target.value })} className="border border-gray-300 rounded px-3 py-2 text-[14px]" placeholder="Full Name" />
-                                <input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} className="border border-gray-300 rounded px-3 py-2 text-[14px]" placeholder="Phone" />
+                                <input
+                                    value={editForm.phone}
+                                    onChange={(e) => setEditForm({ ...editForm, phone: normalizePhoneInput(e.target.value) })}
+                                    className="border border-gray-300 rounded px-3 py-2 text-[14px]"
+                                    placeholder="Phone"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    maxLength={20}
+                                />
                                 <select value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} className="border border-gray-300 rounded px-3 py-2 text-[14px]">
                                     <option value="user">user</option>
                                     <option value="admin">admin</option>

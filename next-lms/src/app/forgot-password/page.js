@@ -16,13 +16,13 @@ export default function ForgotPasswordPage() {
 
         const normalized = String(email || '').trim();
         if (!normalized) {
-            setError('กรุณากรอกอีเมล');
+            setError('Please enter your email.');
             return;
         }
 
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(normalized)) {
-            setError('รูปแบบอีเมลไม่ถูกต้อง');
+            setError('Invalid email format.');
             return;
         }
 
@@ -35,12 +35,12 @@ export default function ForgotPasswordPage() {
             });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
-                setError(data.error || 'ไม่สามารถส่งคำขอได้ กรุณาลองใหม่อีกครั้ง');
+                setError(data.error || 'Unable to send request. Please try again.');
                 return;
             }
             setSent(true);
         } catch {
-            setError('ไม่สามารถส่งคำขอได้ กรุณาลองใหม่อีกครั้ง');
+            setError('Unable to send request. Please try again.');
         } finally {
             setLoading(false);
         }
@@ -75,7 +75,7 @@ export default function ForgotPasswordPage() {
 
                         {sent && (
                             <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-2xl text-sm">
-                                ส่งลิงก์รีเซ็ตรหัสผ่านไปที่อีเมลเรียบร้อยแล้ว
+                                Password reset link has been sent to your email.
                             </div>
                         )}
 

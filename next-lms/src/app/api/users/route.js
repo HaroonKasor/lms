@@ -13,6 +13,8 @@ import {
     parseUserStatus,
 } from '@/lib/server/enterprise-context';
 
+const PHONE_REGEX = /^\d{8,20}$/;
+
 function splitName(fullName) {
     const value = String(fullName || '').trim();
     if (!value) return { firstName: null, lastName: null };
@@ -104,7 +106,8 @@ export async function POST(request) {
         const email = (body.email || '').trim();
         const password = String(body.password || '');
         const fullName = String(body.fullName || '').trim();
-        const phone = String(body.phone || '').trim();
+        const rawPhone = String(body.phone || '').trim();
+        const phone = rawPhone.replace(/\D/g, '');
         const avatar = String(body.avatar || '').trim();
         const roleCode = normalizeRoleCode(body.role);
         const isActive = body.isActive ?? true;
@@ -114,6 +117,9 @@ export async function POST(request) {
         }
         if (password.length < 6) {
             return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 });
+        }
+        if (phone && !PHONE_REGEX.test(phone)) {
+            return NextResponse.json({ error: 'Phone number must be 8-20 digits' }, { status: 400 });
         }
 
         const existing = await prisma.user.findFirst({
@@ -184,13 +190,17 @@ export async function PUT(request) {
         const username = (body.username || '').trim();
         const email = (body.email || '').trim();
         const fullName = String(body.fullName || '').trim();
-        const phone = String(body.phone || '').trim();
+        const rawPhone = String(body.phone || '').trim();
+        const phone = rawPhone.replace(/\D/g, '');
         const avatar = String(body.avatar || '').trim();
         const roleCode = normalizeRoleCode(body.role);
         const isActive = body.isActive ?? true;
 
         if (!username || !email) {
             return NextResponse.json({ error: 'Username and email are required' }, { status: 400 });
+        }
+        if (phone && !PHONE_REGEX.test(phone)) {
+            return NextResponse.json({ error: 'Phone number must be 8-20 digits' }, { status: 400 });
         }
 
         const { firstName, lastName } = splitName(fullName || username);
