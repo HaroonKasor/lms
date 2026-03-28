@@ -54,7 +54,7 @@ const NumberCounter = ({ end, duration = 2000, suffix = '', prefix = '', decimal
 
 export default function LandingPage() {
     return (
-        <div className="min-h-screen font-['Outfit',sans-serif] bg-white text-[#052143] relative overflow-x-hidden">
+        <div className="min-h-screen font-['Outfit',sans-serif] bg-white text-[#052143] relative">
             <Header />
 
             {/* 02. Hero Section */}

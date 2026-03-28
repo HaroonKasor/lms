@@ -1,23 +1,14 @@
 @import "tailwindcss";
 
-/* Root scrolling: keep only one page-level scrollbar */
-html,
-body {
-  margin: 0;
-  width: 100%;
-  max-width: 100%;
-  min-height: 100%;
+/* Root scrolling */
+html {
+  scroll-behavior: smooth;
   overflow-x: hidden;
 }
 
-html {
-  overflow-y: hidden;
-}
-
-/* Reset + rendering */
 body {
-  height: 100vh;
-  overflow-y: auto;
+  margin: 0;
+  padding: 0;
   font-family: var(--font-noto-sans-thai), var(--font-outfit), "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -34,16 +25,22 @@ body {
   font-family: var(--font-noto-sans-thai), var(--font-outfit), "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif !important;
 }
 
-/* Custom scrollbar only for page root (avoid nested double-scroll look) */
-body::-webkit-scrollbar {
-  width: 6px;
+/* Custom scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #AEAEB2 #F2F2F7;
 }
 
-body::-webkit-scrollbar-track {
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
   background: #F2F2F7;
 }
 
-body::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: #AEAEB2;
   border-radius: 20px;
 }
