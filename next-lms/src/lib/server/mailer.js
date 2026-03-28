@@ -230,3 +230,92 @@ export async function sendRegistrationSuccessEmail({ to, name } = {}) {
         html,
     });
 }
+
+export async function sendContactFormEmail({
+    to,
+    fullName,
+    email,
+    subject,
+    message,
+} = {}) {
+    const safeTo = String(to || '').trim();
+    if (!safeTo) {
+        throw new Error('Missing recipient email');
+    }
+
+    const safeName = String(fullName || '').trim() || 'Anonymous';
+    const safeFromEmail = String(email || '').trim();
+    const safeSubject = String(subject || '').trim() || 'Contact form message';
+    const safeMessage = String(message || '').trim();
+    if (!safeMessage) {
+        throw new Error('Missing message');
+    }
+
+    const appName = String(process.env.APP_NAME || 'SkillUp').trim();
+    const mailSubject = `[${appName}] Contact: ${safeSubject}`;
+
+    const text = [
+        `Name: ${safeName}`,
+        `Email: ${safeFromEmail || '-'}`,
+        `Subject: ${safeSubject}`,
+        '',
+        safeMessage,
+    ].join('\n');
+
+    const html = `
+        <div style="font-family: 'Noto Sans Thai', 'Segoe UI', Tahoma, Arial, sans-serif; color: #1f2937; line-height: 1.6;">
+          <h2 style="margin: 0 0 10px 0;">New contact form message</h2>
+          <p style="margin: 0 0 8px 0;"><strong>Name:</strong> ${safeName}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Email:</strong> ${safeFromEmail || '-'}</p>
+          <p style="margin: 0 0 14px 0;"><strong>Subject:</strong> ${safeSubject}</p>
+          <div style="padding: 12px; border-radius: 8px; background: #f8fafc; border: 1px solid #e5e7eb; white-space: pre-wrap;">${safeMessage}</div>
+        </div>
+    `;
+
+    await sendEmail({
+        to: safeTo,
+        subject: mailSubject,
+        text,
+        html,
+    });
+}
+
+export async function sendNewsletterSubscriptionNotification({
+    notifyTo,
+    subscriberEmail,
+    source = 'footer',
+} = {}) {
+    const safeTo = String(notifyTo || '').trim();
+    const safeSubscriberEmail = String(subscriberEmail || '').trim();
+    if (!safeTo) {
+        throw new Error('Missing newsletter notification recipient');
+    }
+    if (!safeSubscriberEmail) {
+        throw new Error('Missing subscriber email');
+    }
+
+    const appName = String(process.env.APP_NAME || 'SkillUp').trim();
+    const safeSource = String(source || '').trim() || 'footer';
+    const subject = `[${appName}] New newsletter subscriber`;
+    const text = [
+        `A new newsletter subscription was received.`,
+        '',
+        `Email: ${safeSubscriberEmail}`,
+        `Source: ${safeSource}`,
+    ].join('\n');
+
+    const html = `
+        <div style="font-family: 'Noto Sans Thai', 'Segoe UI', Tahoma, Arial, sans-serif; color: #1f2937; line-height: 1.6;">
+          <h2 style="margin: 0 0 10px 0;">New newsletter subscription</h2>
+          <p style="margin: 0 0 8px 0;"><strong>Email:</strong> ${safeSubscriberEmail}</p>
+          <p style="margin: 0;"><strong>Source:</strong> ${safeSource}</p>
+        </div>
+    `;
+
+    await sendEmail({
+        to: safeTo,
+        subject,
+        text,
+        html,
+    });
+}

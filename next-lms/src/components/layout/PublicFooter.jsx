@@ -1,7 +1,60 @@
+ 'use client';
+
 import Link from 'next/link';
 import FadeIn from '@/components/ui/FadeIn';
+import { useState } from 'react';
 
 export default function PublicFooter({ className = '' }) {
+    const [email, setEmail] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
+
+    const handleSubscribe = async (event) => {
+        event.preventDefault();
+        setError('');
+        setSuccess('');
+
+        const normalized = String(email || '').trim().toLowerCase();
+        if (!normalized) {
+            setError('Please enter your email.');
+            return;
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+            setError('Invalid email format.');
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const response = await fetch('/api/newsletter/subscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    email: normalized,
+                    source: 'footer',
+                }),
+            });
+            const data = await response.json().catch(() => ({}));
+
+            if (!response.ok) {
+                setError(data.error || 'Unable to subscribe right now.');
+                return;
+            }
+
+            if (data.state === 'already_subscribed') {
+                setSuccess('This email is already subscribed.');
+            } else {
+                setSuccess('Thanks for subscribing!');
+            }
+            setEmail('');
+        } catch {
+            setError('Unable to subscribe right now.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <footer className={`w-full bg-[#052143] text-white relative z-20 ${className}`.trim()}>
             <div className="max-w-[1290px] mx-auto px-6 pt-16 pb-8">
@@ -53,16 +106,26 @@ export default function PublicFooter({ className = '' }) {
                         <div>
                             <h4 className="text-white font-semibold text-[16px] mb-5">Newsletter</h4>
                             <p className="text-white/60 text-[14px] leading-[170%] mb-4">Subscribe to get updates on new courses and features.</p>
-                            <div className="flex gap-2">
-                                <input
-                                    type="email"
-                                    placeholder="Your email"
-                                    className="flex-1 h-[42px] bg-white/10 border border-white/20 rounded-full px-4 text-[14px] text-white placeholder:text-white/40 outline-none focus:border-[#687EFF] transition-colors"
-                                />
-                                <button className="h-[42px] px-5 bg-[#F87A53] text-white rounded-full text-[14px] font-medium hover:opacity-90 transition-opacity">
-                                    Subscribe
-                                </button>
-                            </div>
+                            <form className="flex flex-col gap-3" onSubmit={handleSubscribe}>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="email"
+                                        placeholder="Your email"
+                                        value={email}
+                                        onChange={(event) => setEmail(event.target.value)}
+                                        className="flex-1 h-[42px] bg-white/10 border border-white/20 rounded-full px-4 text-[14px] text-white placeholder:text-white/40 outline-none focus:border-[#687EFF] transition-colors"
+                                    />
+                                    <button
+                                        type="submit"
+                                        disabled={loading}
+                                        className="h-[42px] px-5 bg-[#F87A53] text-white rounded-full text-[14px] font-medium hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
+                                    >
+                                        {loading ? 'Sending...' : 'Subscribe'}
+                                    </button>
+                                </div>
+                                {error && <p className="text-red-300 text-[13px]">{error}</p>}
+                                {success && <p className="text-emerald-300 text-[13px]">{success}</p>}
+                            </form>
                         </div>
                     </div>
                 </FadeIn>

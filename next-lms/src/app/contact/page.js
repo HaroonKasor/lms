@@ -61,6 +61,14 @@ function ContactHeader() {
 }
 
 export default function ContactPage() {
+    const [fullName, setFullName] = React.useState('');
+    const [email, setEmail] = React.useState('');
+    const [subject, setSubject] = React.useState('');
+    const [message, setMessage] = React.useState('');
+    const [loading, setLoading] = React.useState(false);
+    const [error, setError] = React.useState('');
+    const [success, setSuccess] = React.useState('');
+
     const officeMap = {
         label: 'SkillUp Office',
         address: 'Bangkok, Thailand',
@@ -90,6 +98,51 @@ export default function ContactPage() {
             details: ["10:00 AM - 6:00 PM", "Monday - Friday"]
         }
     ];
+
+    const handleSubmit = async (event) => {
+        event.preventDefault();
+        setError('');
+        setSuccess('');
+
+        const payload = {
+            fullName: String(fullName || '').trim(),
+            email: String(email || '').trim().toLowerCase(),
+            subject: String(subject || '').trim(),
+            message: String(message || '').trim(),
+        };
+
+        if (!payload.fullName || !payload.email || !payload.subject || !payload.message) {
+            setError('Please fill in all required fields.');
+            return;
+        }
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) {
+            setError('Invalid email format.');
+            return;
+        }
+
+        setLoading(true);
+        try {
+            const response = await fetch('/api/contact', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                setError(data.error || 'Unable to send message. Please try again.');
+                return;
+            }
+            setSuccess('Your message has been sent successfully.');
+            setFullName('');
+            setEmail('');
+            setSubject('');
+            setMessage('');
+        } catch {
+            setError('Unable to send message. Please try again.');
+        } finally {
+            setLoading(false);
+        }
+    };
 
     return (
         <div className="min-h-screen font-['Outfit',sans-serif] bg-[#f8f9ff] text-[#052143] flex flex-col">
@@ -210,13 +263,28 @@ export default function ContactPage() {
                             Our Office
                         </h2>
 
-                        <form className="flex flex-col gap-6">
+                        <form className="flex flex-col gap-6" onSubmit={handleSubmit}>
+                            {error && (
+                                <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm">
+                                    {error}
+                                </div>
+                            )}
+                            {success && (
+                                <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-xl text-sm">
+                                    {success}
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div className="flex flex-col gap-2">
                                     <label className="text-[#052143] font-bold text-[15px]">Full Name <span className="text-[#F87A53]">*</span></label>
                                     <input
                                         type="text"
                                         placeholder="John Doe"
+                                        value={fullName}
+                                        onChange={(event) => setFullName(event.target.value)}
+                                        required
+                                        maxLength={100}
                                         className="w-full bg-[#fdfdfd] border border-[#eaedf5] rounded-lg px-4 py-3 text-[15px] outline-none placeholder:text-[#9BA5B7] focus:border-[#687EFF] transition-colors"
                                     />
                                 </div>
@@ -225,6 +293,9 @@ export default function ContactPage() {
                                     <input
                                         type="email"
                                         placeholder="johndomain.com"
+                                        value={email}
+                                        onChange={(event) => setEmail(event.target.value)}
+                                        required
                                         className="w-full bg-[#fdfdfd] border border-[#eaedf5] rounded-lg px-4 py-3 text-[15px] outline-none placeholder:text-[#9BA5B7] focus:border-[#687EFF] transition-colors"
                                     />
                                 </div>
@@ -235,6 +306,10 @@ export default function ContactPage() {
                                 <input
                                     type="text"
                                     placeholder="Write about your enquiry"
+                                    value={subject}
+                                    onChange={(event) => setSubject(event.target.value)}
+                                    required
+                                    maxLength={200}
                                     className="w-full bg-[#fdfdfd] border border-[#eaedf5] rounded-lg px-4 py-3 text-[15px] outline-none placeholder:text-[#9BA5B7] focus:border-[#687EFF] transition-colors"
                                 />
                             </div>
@@ -244,12 +319,17 @@ export default function ContactPage() {
                                 <textarea
                                     rows="5"
                                     placeholder="Write Your Message"
+                                    value={message}
+                                    onChange={(event) => setMessage(event.target.value)}
+                                    required
+                                    minLength={5}
+                                    maxLength={5000}
                                     className="w-full bg-[#fdfdfd] border border-[#eaedf5] rounded-lg px-4 py-3 text-[15px] outline-none placeholder:text-[#9BA5B7] focus:border-[#687EFF] transition-colors resize-none"
                                 ></textarea>
                             </div>
 
-                            <button type="button" className="bg-[#F87A53] text-white px-8 py-3.5 rounded-md font-bold text-[15px] self-start flex items-center gap-2 hover:bg-[#e66c45] transition-colors shadow-md shadow-[#F87A53]/20 mt-2">
-                                Submit Message
+                            <button type="submit" disabled={loading} className="bg-[#F87A53] text-white px-8 py-3.5 rounded-md font-bold text-[15px] self-start flex items-center gap-2 hover:bg-[#e66c45] transition-colors shadow-md shadow-[#F87A53]/20 mt-2 disabled:opacity-60 disabled:cursor-not-allowed">
+                                {loading ? 'Sending...' : 'Submit Message'}
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
                             </button>
                         </form>
