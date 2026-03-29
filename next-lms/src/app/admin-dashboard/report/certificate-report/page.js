@@ -2,6 +2,14 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+import {
+    CERTIFICATE_ASPECT_RATIO,
+    CERTIFICATE_HOLDER_RATIO,
+    CERTIFICATE_LAYOUT,
+    CERTIFICATE_SIGNATURE_IMAGE,
+    CERTIFICATE_TEMPLATE_IMAGE,
+    formatCertificateDate,
+} from '@/lib/certificate-layout';
 
 const DEFAULT_FILTERS = {
     categoryId: '',
@@ -205,35 +213,165 @@ export default function CertificateReportPage() {
         const printWindow = window.open('', '_blank');
         if (!printWindow) return;
         const issuedAt = row?.issuedAt ? new Date(row.issuedAt) : new Date();
+        const templateUrl = `${window.location.origin}${CERTIFICATE_TEMPLATE_IMAGE}`;
+        const signatureUrl = `${window.location.origin}${CERTIFICATE_SIGNATURE_IMAGE}`;
+        const recipient = toSafeText(row.fullName || row.username || '-')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;') || '-';
+        const courseName = toSafeText(row.courseName || '-')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;') || '-';
+        const certNo = toSafeText(row.certificateNo || '-')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;') || '-';
         printWindow.document.write(`
             <!DOCTYPE html>
             <html><head><title>Certificate</title>
             <style>
-                @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Outfit:wght@300;400;600&display=swap');
-                body { margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f0f4ff; }
-                .cert { width: 900px; min-height: 620px; background: white; position: relative; border: 3px solid #687EFF; padding: 60px; text-align: center; font-family: 'Outfit', sans-serif; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
-                .cert::before { content: ''; position: absolute; inset: 10px; border: 1px solid #D1E3FB; }
-                .title { font-family: 'Playfair Display', serif; font-size: 42px; color: #687EFF; margin-bottom: 10px; }
-                .sub { font-size: 16px; color: #6B778B; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 40px; }
-                .name { font-size: 32px; font-weight: 600; color: #052143; border-bottom: 2px solid #687EFF; display: inline-block; padding-bottom: 8px; margin-bottom: 20px; }
-                .course { font-size: 20px; color: #334155; margin-bottom: 30px; }
-                .meta { font-size: 14px; color: #6B778B; }
-                .no { font-size: 12px; color: #6B778B; position: absolute; bottom: 20px; right: 30px; font-family: monospace; }
-                @media print { body { background: white; } .cert { box-shadow: none; } }
+                @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Noto+Serif+Thai:wght@500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+                @page { size: A4 landscape; margin: 0; }
+                html, body { margin: 0; padding: 0; background: #eef2ff; }
+                body {
+                    min-height: 100vh;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    font-family: 'Noto Sans Thai', 'Outfit', sans-serif;
+                    overflow: hidden;
+                }
+                .viewer {
+                    width: 100vw;
+                    height: 100vh;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    padding: 10px;
+                    box-sizing: border-box;
+                    overflow: hidden;
+                }
+                .holder {
+                    position: relative;
+                    width: min(96vw, calc(96vh * ${CERTIFICATE_HOLDER_RATIO}));
+                    aspect-ratio: ${CERTIFICATE_ASPECT_RATIO};
+                }
+                .cert {
+                    width: 100%;
+                    height: 100%;
+                    position: relative;
+                    container-type: inline-size;
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+                }
+                .template {
+                    position: absolute;
+                    inset: 0;
+                    width: 100%;
+                    height: 100%;
+                    object-fit: fill;
+                }
+                .field {
+                    position: absolute;
+                    transform: translate(-50%, -50%);
+                    text-align: center;
+                    color: #22304a;
+                    text-rendering: optimizeLegibility;
+                    -webkit-font-smoothing: antialiased;
+                }
+                .name {
+                    left: ${CERTIFICATE_LAYOUT.recipient.left};
+                    top: ${CERTIFICATE_LAYOUT.recipient.top};
+                    width: ${CERTIFICATE_LAYOUT.recipient.width};
+                    min-height: 132px;
+                    font-family: 'Noto Serif Thai', 'Noto Sans Thai', serif;
+                    font-size: ${CERTIFICATE_LAYOUT.recipient.fontSizePrint};
+                    line-height: 1.12;
+                    font-weight: 600;
+                    color: #2e3e76;
+                    letter-spacing: 0.2px;
+                    word-break: break-word;
+                }
+                .course {
+                    left: ${CERTIFICATE_LAYOUT.course.left};
+                    top: ${CERTIFICATE_LAYOUT.course.top};
+                    width: ${CERTIFICATE_LAYOUT.course.width};
+                    min-height: 120px;
+                    font-family: 'Noto Serif Thai', 'Noto Sans Thai', serif;
+                    font-size: ${CERTIFICATE_LAYOUT.course.fontSizePrint};
+                    line-height: 1.18;
+                    font-weight: 600;
+                    color: #2e3e76;
+                    word-break: break-word;
+                }
+                .date {
+                    left: ${CERTIFICATE_LAYOUT.date.left};
+                    top: ${CERTIFICATE_LAYOUT.date.top};
+                    width: ${CERTIFICATE_LAYOUT.date.width};
+                    font-size: ${CERTIFICATE_LAYOUT.date.fontSizePrint};
+                    line-height: 1.18;
+                    font-weight: 500;
+                    color: #5a6781;
+                }
+                .signature {
+                    position: absolute;
+                    left: ${CERTIFICATE_LAYOUT.signature.left};
+                    top: ${CERTIFICATE_LAYOUT.signature.top};
+                    transform: translate(-50%, -50%);
+                    width: ${CERTIFICATE_LAYOUT.signature.width};
+                    max-height: ${CERTIFICATE_LAYOUT.signature.maxHeight};
+                    object-fit: contain;
+                }
+                .no {
+                    position: absolute;
+                    left: ${CERTIFICATE_LAYOUT.certificateNo.left};
+                    bottom: ${CERTIFICATE_LAYOUT.certificateNo.bottom};
+                    font-size: ${CERTIFICATE_LAYOUT.certificateNo.fontSizePrint};
+                    letter-spacing: 0.6px;
+                    color: #5a6781;
+                    font-family: 'Noto Sans Thai', 'Outfit', sans-serif;
+                }
+                @media print {
+                    html, body { background: white; overflow: visible; }
+                    .viewer { width: auto; height: auto; overflow: visible; padding: 0; }
+                    .holder {
+                        width: 297mm !important;
+                        height: 210mm !important;
+                        aspect-ratio: auto;
+                    }
+                    .cert { box-shadow: none; }
+                }
             </style>
             </head><body>
-              <div class="cert">
-                <div style="font-size:60px;margin-bottom:10px;">🏆</div>
-                <div class="title">Certificate</div>
-                <div class="sub">of Completion</div>
-                <p style="color:#6B778B;margin-bottom:15px;">This is to certify that</p>
-                <div class="name">${row.fullName || row.username || '-'}</div>
-                <p style="color:#6B778B;margin-bottom:5px;">has successfully completed the course</p>
-                <div class="course">${row.courseName || '-'}</div>
-                <div class="meta">Issued on: ${issuedAt.toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })}</div>
-                <div class="no">No. ${row.certificateNo || '-'}</div>
+              <div class="viewer">
+                <div class="holder">
+                  <div class="cert">
+                    <img class="template" src="${templateUrl}" alt="Certificate template" />
+                    <div class="field name">${recipient}</div>
+                    <div class="field course">${courseName}</div>
+                    <div class="field date">${formatCertificateDate(issuedAt)}</div>
+                    <img class="signature" src="${signatureUrl}" alt="Signature" />
+                    <div class="no">No. ${certNo}</div>
+                  </div>
+                </div>
               </div>
-              <script>setTimeout(() => { window.print(); }, 500);</script>
+              <script>
+                (function () {
+                  if (document.fonts && document.fonts.ready) {
+                    document.fonts.ready.then(function () {
+                      setTimeout(function () { window.print(); }, 350);
+                    });
+                  } else {
+                    setTimeout(function () { window.print(); }, 350);
+                  }
+                })();
+              </script>
             </body></html>
         `);
         printWindow.document.close();

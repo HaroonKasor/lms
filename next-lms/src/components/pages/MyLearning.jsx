@@ -7,9 +7,26 @@ import Navbar from '@/components/layout/Navbar';
 import FadeIn from '@/components/ui/FadeIn';
 import LoadScreen from '@/components/ui/LoadScreen';
 import { getUser } from '@/lib/auth';
+import {
+    CERTIFICATE_ASPECT_RATIO,
+    CERTIFICATE_HOLDER_RATIO,
+    CERTIFICATE_LAYOUT,
+    CERTIFICATE_SIGNATURE_IMAGE,
+    CERTIFICATE_TEMPLATE_IMAGE,
+    formatCertificateDate,
+} from '@/lib/certificate-layout';
 
 function containsThai(value) {
     return /[\u0E00-\u0E7F]/.test(String(value || ''));
+}
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function formatDate(value) {
@@ -408,7 +425,12 @@ export default function MyLearning() {
                             {/* Course Cards */}
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                                 {filteredCourses.map((enrollment) => (
-                                    <CourseCard key={enrollment.id} enrollment={enrollment} formatDuration={formatDuration} />
+                                    <CourseCard
+                                        key={enrollment.id}
+                                        enrollment={enrollment}
+                                        formatDuration={formatDuration}
+                                        currentUser={user}
+                                    />
                                 ))}
                             </div>
 
@@ -584,7 +606,7 @@ export default function MyLearning() {
 }
 
 // --- Course Card ---
-function CourseCard({ enrollment, formatDuration }) {
+function CourseCard({ enrollment, formatDuration, currentUser }) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [showCertificateModal, setShowCertificateModal] = useState(false);
     const course = enrollment.course;
@@ -592,7 +614,8 @@ function CourseCard({ enrollment, formatDuration }) {
     const isCompleted = normalizedStatus === 'COMPLETED';
     const isLearning = normalizedStatus === 'LEARNING';
     const isPending = normalizedStatus === 'PENDING';
-    const certificateImage = '/images/certificate-placeholder.jpg';
+    const certificateImage = CERTIFICATE_TEMPLATE_IMAGE;
+    const signatureImage = CERTIFICATE_SIGNATURE_IMAGE;
     const thumbnail = course?.thumbnail || '/course.png';
     const tabStatus = isCompleted ? 'Completed' : isLearning ? 'Learning' : isPending ? 'Pending Approval' : 'Enrolled';
     const statusColorClass = isCompleted ? 'text-[#1DBA9F]' : isLearning ? 'text-[#687EFF]' : isPending ? 'text-[#F59E0B]' : 'text-[#8E8E93]';
@@ -615,6 +638,82 @@ function CourseCard({ enrollment, formatDuration }) {
     const learnHref = learnSectionId > 0
         ? `/courses/${course?.id}/learn?launch=1&sectionId=${learnSectionId}`
         : `/courses/${course?.id}/learn?launch=1`;
+    const certificateRecipient =
+        enrollment?.certificate?.recipientName ||
+        currentUser?.fullName ||
+        currentUser?.name ||
+        enrollment?.learner?.fullName ||
+        enrollment?.learner?.username ||
+        currentUser?.username ||
+        'Learner';
+    const certificateCourseName = course?.name || course?.title || 'Course';
+    const certificateIssuedDateValue = enrollment?.certificate?.issuedAt || enrollment?.updatedAt || enrollment?.createdAt || new Date();
+    const certificateIssuedDate = formatCertificateDate(certificateIssuedDateValue);
+    const certificateNo = enrollment?.certificate?.verifyCode || `CERT-${course?.id || 'N/A'}`;
+
+    const openCertificatePrint = useCallback(() => {
+        const templateUrl = `${window.location.origin}${certificateImage}`;
+        const signatureUrl = `${window.location.origin}${signatureImage}`;
+        const recipient = escapeHtml(certificateRecipient);
+        const courseName = escapeHtml(certificateCourseName);
+        const certNoText = escapeHtml(certificateNo);
+        const issuedDate = formatCertificateDate(certificateIssuedDateValue);
+
+        const printWindow = window.open('', '_blank');
+        if (!printWindow) return;
+        printWindow.document.write(`
+            <!DOCTYPE html>
+            <html><head><title>Certificate</title>
+            <style>
+                @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&family=Noto+Serif+Thai:wght@500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+                @page { size: A4 landscape; margin: 0; }
+                html, body { margin: 0; padding: 0; background: #eef2ff; }
+                body { min-height: 100vh; display: flex; justify-content: center; align-items: center; font-family: 'Noto Sans Thai', 'Outfit', sans-serif; overflow: hidden; }
+                .viewer { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; padding: 10px; box-sizing: border-box; overflow: hidden; }
+                .holder { position: relative; width: min(96vw, calc(96vh * ${CERTIFICATE_HOLDER_RATIO})); aspect-ratio: ${CERTIFICATE_ASPECT_RATIO}; }
+                .cert { width: 100%; height: 100%; position: relative; container-type: inline-size; background: url('${templateUrl}') center/100% 100% no-repeat; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+                .field { position: absolute; transform: translate(-50%, -50%); text-align: center; color: #22304a; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; }
+                .template { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+                .name { left: ${CERTIFICATE_LAYOUT.recipient.left}; top: ${CERTIFICATE_LAYOUT.recipient.top}; width: ${CERTIFICATE_LAYOUT.recipient.width}; min-height: 132px; font-family: 'Noto Serif Thai', 'Noto Sans Thai', serif; font-size: ${CERTIFICATE_LAYOUT.recipient.fontSizePrint}; line-height: 1.12; font-weight: 600; color: #2e3e76; letter-spacing: 0.2px; word-break: break-word; }
+                .course { left: ${CERTIFICATE_LAYOUT.course.left}; top: ${CERTIFICATE_LAYOUT.course.top}; width: ${CERTIFICATE_LAYOUT.course.width}; min-height: 120px; font-family: 'Noto Serif Thai', 'Noto Sans Thai', serif; font-size: ${CERTIFICATE_LAYOUT.course.fontSizePrint}; line-height: 1.18; font-weight: 600; color: #2e3e76; word-break: break-word; }
+                .date { left: ${CERTIFICATE_LAYOUT.date.left}; top: ${CERTIFICATE_LAYOUT.date.top}; width: ${CERTIFICATE_LAYOUT.date.width}; font-size: ${CERTIFICATE_LAYOUT.date.fontSizePrint}; line-height: 1.18; font-weight: 500; color: #5a6781; }
+                .signature { position: absolute; left: ${CERTIFICATE_LAYOUT.signature.left}; top: ${CERTIFICATE_LAYOUT.signature.top}; transform: translate(-50%, -50%); width: ${CERTIFICATE_LAYOUT.signature.width}; max-height: ${CERTIFICATE_LAYOUT.signature.maxHeight}; object-fit: contain; }
+                .cert-no { position: absolute; left: ${CERTIFICATE_LAYOUT.certificateNo.left}; bottom: ${CERTIFICATE_LAYOUT.certificateNo.bottom}; font-size: ${CERTIFICATE_LAYOUT.certificateNo.fontSizePrint}; letter-spacing: 0.6px; color: #5a6781; font-family: 'Noto Sans Thai', 'Outfit', sans-serif; }
+                @media print {
+                    html, body { background: white; overflow: visible; }
+                    .viewer { width: auto; height: auto; overflow: visible; padding: 0; }
+                    .holder { width: 297mm !important; height: 210mm !important; aspect-ratio: auto; }
+                    .cert { box-shadow: none; }
+                }
+            </style>
+            </head><body>
+            <div class="viewer">
+              <div class="holder">
+                <div class="cert">
+                    <img class="template" src="${templateUrl}" alt="Certificate template" />
+                    <div class="field name">${recipient}</div>
+                    <div class="field course">${courseName}</div>
+                    <div class="field date">${issuedDate}</div>
+                    <img class="signature" src="${signatureUrl}" alt="Signature" />
+                    <div class="cert-no">No. ${certNoText}</div>
+                </div>
+              </div>
+            </div>
+            <script>
+              (function () {
+                if (document.fonts && document.fonts.ready) {
+                  document.fonts.ready.then(function () {
+                    setTimeout(function () { window.print(); }, 350);
+                  });
+                } else {
+                  setTimeout(function () { window.print(); }, 350);
+                }
+              })();
+            </script>
+            </body></html>
+        `);
+        printWindow.document.close();
+    }, [certificateCourseName, certificateImage, certificateIssuedDateValue, certificateNo, certificateRecipient, signatureImage]);
 
     useEffect(() => {
         if (!showCertificateModal) return undefined;
@@ -822,21 +921,95 @@ function CourseCard({ enrollment, formatDuration }) {
                         </button>
 
                         <div className="h-[62vh] min-h-[420px] max-h-[620px] flex items-center justify-center">
-                            <img
-                                src={certificateImage}
-                                alt="Certificate mockup"
-                                className="max-w-full max-h-full w-auto h-auto object-contain mx-auto border border-[#E5EAF8]"
-                            />
+                            <div
+                                className="relative w-full max-w-[980px] border border-[#E5EAF8] overflow-hidden rounded-[8px] bg-[#f4f7ff]"
+                                style={{ aspectRatio: CERTIFICATE_ASPECT_RATIO }}
+                            >
+                                <img
+                                    src={certificateImage}
+                                    alt="Certificate preview"
+                                    className="absolute inset-0 w-full h-full object-cover"
+                                />
+
+                                <div
+                                    className="absolute -translate-x-1/2 -translate-y-1/2 text-center text-[#2e3e76] font-semibold leading-[1.12] px-2"
+                                    style={{
+                                        left: CERTIFICATE_LAYOUT.recipient.left,
+                                        top: CERTIFICATE_LAYOUT.recipient.top,
+                                        width: CERTIFICATE_LAYOUT.recipient.width,
+                                        fontFamily: "'Noto Serif Thai', 'Noto Sans Thai', serif",
+                                        fontSize: CERTIFICATE_LAYOUT.recipient.fontSizePreview,
+                                        letterSpacing: '0.2px',
+                                    }}
+                                >
+                                    {certificateRecipient}
+                                </div>
+
+                                <div
+                                    className="absolute -translate-x-1/2 -translate-y-1/2 text-center text-[#2e3e76] font-semibold leading-[1.12] px-2"
+                                    style={{
+                                        left: CERTIFICATE_LAYOUT.course.left,
+                                        top: CERTIFICATE_LAYOUT.course.top,
+                                        width: CERTIFICATE_LAYOUT.course.width,
+                                        fontFamily: "'Noto Serif Thai', 'Noto Sans Thai', serif",
+                                        fontSize: CERTIFICATE_LAYOUT.course.fontSizePreview,
+                                        display: '-webkit-box',
+                                        WebkitLineClamp: 2,
+                                        WebkitBoxOrient: 'vertical',
+                                        overflow: 'hidden',
+                                    }}
+                                >
+                                    {certificateCourseName}
+                                </div>
+
+                                <div
+                                    className="absolute -translate-x-1/2 -translate-y-1/2 text-center text-[#5a6781] font-medium px-2"
+                                    style={{
+                                        left: CERTIFICATE_LAYOUT.date.left,
+                                        top: CERTIFICATE_LAYOUT.date.top,
+                                        width: CERTIFICATE_LAYOUT.date.width,
+                                        fontFamily: "'Noto Sans Thai', 'Outfit', sans-serif",
+                                        fontSize: CERTIFICATE_LAYOUT.date.fontSizePreview,
+                                    }}
+                                >
+                                    {certificateIssuedDate}
+                                </div>
+
+                                <img
+                                    src={signatureImage}
+                                    alt="Signature"
+                                    className="absolute -translate-x-1/2 -translate-y-1/2 object-contain"
+                                    style={{
+                                        left: CERTIFICATE_LAYOUT.signature.left,
+                                        top: CERTIFICATE_LAYOUT.signature.top,
+                                        width: CERTIFICATE_LAYOUT.signature.width,
+                                        maxHeight: CERTIFICATE_LAYOUT.signature.maxHeight,
+                                    }}
+                                />
+
+                                <div
+                                    className="absolute text-[#5a6781]"
+                                    style={{
+                                        left: CERTIFICATE_LAYOUT.certificateNo.left,
+                                        bottom: CERTIFICATE_LAYOUT.certificateNo.bottom,
+                                        fontFamily: "'Noto Sans Thai', 'Outfit', sans-serif",
+                                        fontSize: CERTIFICATE_LAYOUT.certificateNo.fontSizePreview,
+                                        letterSpacing: '0.4px',
+                                    }}
+                                >
+                                    No. {certificateNo}
+                                </div>
+                            </div>
                         </div>
 
                         <div className="flex justify-end mt-6">
-                            <a
-                                href={certificateImage}
-                                download={`certificate-${course?.id || 'mockup'}.jpg`}
+                            <button
+                                type="button"
+                                onClick={openCertificatePrint}
                                 className="inline-flex items-center justify-center h-12 px-8 rounded-full bg-[#F87A53] text-white text-[20px] font-medium hover:bg-[#E96E48] transition-colors"
                             >
                                 Download Certificate
-                            </a>
+                            </button>
                         </div>
                     </div>
                 </div>,

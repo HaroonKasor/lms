@@ -327,6 +327,7 @@ function normalizeEnrollmentCourse(
             ? {
                 id: Number(enrollment.certificates.id || 0),
                 verifyCode: String(enrollment.certificates.verifyCode || '').trim(),
+                recipientName: String(enrollment.certificates.recipientName || '').trim(),
                 status: String(enrollment.certificates.status || '').toUpperCase(),
                 certificateUrl: String(enrollment.certificates.certificateUrl || '').trim(),
                 issuedAt: enrollment.certificates.issuedAt || null,
