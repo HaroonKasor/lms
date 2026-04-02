@@ -363,7 +363,7 @@ export default function AdminLmsDashboard({ children }) {
     );
 
     return (
-        <div className="w-full h-screen font-outfit overflow-hidden relative flex flex-col bg-[#F6F8FF]">
+        <div data-admin-shell="true" className="w-full min-h-screen font-outfit overflow-x-hidden relative flex flex-col bg-[#F6F8FF]">
 
             {/* Global Navbar */}
             <Navbar />
@@ -385,7 +385,7 @@ export default function AdminLmsDashboard({ children }) {
             </div>
 
             {/* Center Layout for Content */}
-            <div className="w-full max-w-[1760px] mx-auto flex flex-1 min-h-0 flex-col md:flex-row relative z-10 px-6 xl:px-20">
+            <div className="w-full max-w-[1760px] mx-auto flex flex-1 flex-col md:flex-row relative z-10 px-4 sm:px-6 xl:px-20">
 
                 {/* Mobile Header (Shows only on small screens) */}
                 <div className="md:hidden flex items-center justify-between py-4 w-full shrink-0">
@@ -409,7 +409,7 @@ export default function AdminLmsDashboard({ children }) {
                 </div>
 
                 {/* Main Content Area */}
-                <main className="admin-dashboard-main flex-1 min-h-0 md:pl-6 xl:pl-8 pt-6 pb-12 w-full max-w-full overflow-x-hidden overflow-y-auto">
+                <main className="admin-dashboard-main flex-1 md:pl-6 xl:pl-8 pt-4 sm:pt-6 pb-8 sm:pb-12 w-full max-w-full overflow-x-hidden">
                     {children ? children : (
                         <div className="w-full">
                             <h1 className="hidden md:block text-[32px] font-medium text-[#052143] leading-[150%] mb-8">Dashboard</h1>
@@ -572,17 +572,18 @@ export default function AdminLmsDashboard({ children }) {
             <style jsx global>{`
                 .admin-dashboard-main {
                     overflow-x: hidden;
+                    min-width: 0;
                 }
 
                 .admin-dashboard-main .overflow-x-auto {
                     max-width: 100%;
                     overflow-x: auto;
                     overscroll-behavior-x: contain;
-                    scrollbar-width: none;
+                    -webkit-overflow-scrolling: touch;
                 }
 
                 .admin-dashboard-main .overflow-x-auto::-webkit-scrollbar {
-                    height: 0;
+                    height: 6px;
                 }
 
                 .admin-dashboard-main .overflow-x-auto > table {
@@ -596,6 +597,17 @@ export default function AdminLmsDashboard({ children }) {
                     white-space: normal !important;
                     overflow-wrap: anywhere;
                     word-break: break-word;
+                }
+
+                @media (max-width: 767px) {
+                    .admin-dashboard-main {
+                        padding-top: 10px !important;
+                        padding-bottom: 20px !important;
+                    }
+
+                    .admin-dashboard-main .overflow-x-auto > table {
+                        min-width: 680px !important;
+                    }
                 }
             `}</style>
         </div>

@@ -27,6 +27,7 @@
     "prisma": "^7.4.2",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-toastify": "^10.0.6",
     "recharts": "^3.7.0",
     "xlsx": "^0.18.5"
   },

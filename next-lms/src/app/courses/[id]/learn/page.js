@@ -16,6 +16,9 @@ import {
     getProgress,
 } from '@/lib/xapi';
 import { getUser } from '@/lib/auth';
+import { toast } from 'react-toastify';
+
+const LEARNER_TOAST = { containerId: 'global-toast' };
 
 function normalizeTinCanActivities(content) {
     if (!content || content.type !== 'tincan' || !Array.isArray(content.activities)) {
@@ -3532,7 +3535,7 @@ export default function LearnPage() {
         const safeIndex = Math.max(0, Math.min(activities.length - 1, Number(idx) || 0));
         const maxUnlocked = getMaxUnlockedActivityIndex();
         if (safeIndex > maxUnlocked) {
-            window.alert('กรุณาเรียนบทก่อนหน้าให้ผ่านก่อน จึงจะไปบทถัดไปได้');
+            toast.warning('กรุณาเรียนบทก่อนหน้าให้ผ่านก่อน จึงจะไปบทถัดไปได้', LEARNER_TOAST);
             return;
         }
 

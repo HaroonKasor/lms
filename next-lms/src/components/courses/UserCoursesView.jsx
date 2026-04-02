@@ -6,8 +6,10 @@ import { useRouter } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import Navbar from '@/components/layout/Navbar';
 import LoadScreen from '@/components/ui/LoadScreen';
+import { toast } from 'react-toastify';
 
 const PAGE_SIZE = 6;
+const LEARNER_TOAST = { containerId: 'global-toast' };
 const CAN_LEARN_STATUSES = new Set(['APPROVED', 'LEARNING', 'COMPLETED']);
 const ENROLLED_DISPLAY_STATUSES = new Set(['APPROVED', 'LEARNING', 'COMPLETED', 'PENDING']);
 const ENROLLMENT_STATUS_RANK = {
@@ -337,7 +339,7 @@ export default function UserCoursesView() {
                 isPending: enrolledStatus === 'PENDING',
             });
         } catch (e) {
-            alert(e.message || 'Enroll failed');
+            toast.error(e.message || 'Enroll failed', LEARNER_TOAST);
         } finally {
             setEnrollingId(null);
         }

@@ -1,6 +1,9 @@
 'use client';
 
 import React from 'react';
+import { BadgeCheck, CircleAlert, Info, TriangleAlert } from 'lucide-react';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 
 function cn(...values) {
     return values.filter(Boolean).join(' ');
@@ -20,7 +23,7 @@ export function AdminPageHeader({ title, description, action }) {
                 <h1 className="text-[24px] font-semibold leading-tight text-[#0F2243] sm:text-[28px] lg:text-[30px]">{title}</h1>
                 {description ? <p className="mt-1 text-[14px] text-[#64748B]">{description}</p> : null}
             </div>
-            {action ? <div className="shrink-0">{action}</div> : null}
+            {action ? <div className="w-full md:w-auto shrink-0">{action}</div> : null}
         </div>
     );
 }
@@ -84,11 +87,11 @@ export function AdminSearchInput({ value, onChange, placeholder, className = '' 
 }
 
 export function AdminTableWrap({ children }) {
-    return <div className="overflow-x-auto rounded-[16px] border border-[#E8EEFF]">{children}</div>;
+    return <div className="w-full overflow-x-auto rounded-[16px] border border-[#E8EEFF] [scrollbar-gutter:stable_both-edges]">{children}</div>;
 }
 
 export function AdminTable({ children, className = '' }) {
-    return <table className={cn('w-full min-w-[880px] text-left text-[13px]', className)}>{children}</table>;
+    return <table className={cn('w-full min-w-[680px] md:min-w-[880px] text-left text-[13px]', className)}>{children}</table>;
 }
 
 export function AdminTableHead({ children }) {
@@ -96,11 +99,11 @@ export function AdminTableHead({ children }) {
 }
 
 export function AdminTh({ children, className = '' }) {
-    return <th className={cn('px-4 py-3 font-semibold', className)}>{children}</th>;
+    return <th className={cn('px-3 py-2.5 text-[12px] font-semibold sm:px-4 sm:py-3 sm:text-[13px]', className)}>{children}</th>;
 }
 
 export function AdminTd({ children, className = '' }) {
-    return <td className={cn('px-4 py-3 align-top text-[#475569]', className)}>{children}</td>;
+    return <td className={cn('px-3 py-2.5 text-[12px] align-top text-[#475569] sm:px-4 sm:py-3 sm:text-[13px]', className)}>{children}</td>;
 }
 
 export function AdminBodyStateRow({ colSpan, children, tone = 'muted' }) {
@@ -182,54 +185,189 @@ export function AdminInlineAlert({ tone = 'error', children }) {
     return <div className={cn('rounded-xl border px-4 py-3 text-[13px]', toneClass)}>{children}</div>;
 }
 
+function normalizeToastTone(value) {
+    const tone = String(value || '').trim().toLowerCase();
+    if (tone === 'success' || tone === 'warning' || tone === 'error') return tone;
+    return 'info';
+}
+
+function getToastClassName(tone) {
+    const normalized = normalizeToastTone(tone);
+    if (normalized === 'success') return 'admin-toast admin-toast--success';
+    if (normalized === 'warning') return 'admin-toast admin-toast--warning';
+    if (normalized === 'error') return 'admin-toast admin-toast--error';
+    return 'admin-toast admin-toast--info';
+}
+
+function getToastProgressClassName(tone) {
+    const normalized = normalizeToastTone(tone);
+    if (normalized === 'success') return 'admin-toast-progress admin-toast-progress--success';
+    if (normalized === 'warning') return 'admin-toast-progress admin-toast-progress--warning';
+    if (normalized === 'error') return 'admin-toast-progress admin-toast-progress--error';
+    return 'admin-toast-progress admin-toast-progress--info';
+}
+
+function getToastIcon(type) {
+    if (type === 'success') return <BadgeCheck className="h-[18px] w-[18px] stroke-emerald-500" />;
+    if (type === 'warning') return <TriangleAlert className="h-[18px] w-[18px] stroke-amber-500" />;
+    if (type === 'error') return <CircleAlert className="h-[18px] w-[18px] stroke-rose-500" />;
+    return <Info className="h-[18px] w-[18px] stroke-indigo-500" />;
+}
+
 export function AdminToastStack({ toasts = [], onDismiss }) {
-    if (!Array.isArray(toasts) || toasts.length === 0) return null;
+    const toastIdMapRef = React.useRef(new Map());
+
+    React.useEffect(() => {
+        const items = Array.isArray(toasts) ? toasts : [];
+        const nextKeys = new Set();
+
+        for (const item of items) {
+            const key = String(item?.id ?? '').trim();
+            if (!key) continue;
+            nextKeys.add(key);
+            if (toastIdMapRef.current.has(key)) continue;
+
+            const tone = normalizeToastTone(item?.tone);
+            const content = (
+                <div className="min-w-0 py-0.5">
+                    {item?.title ? <div className="text-[12px] font-semibold text-[#475569]">{item.title}</div> : null}
+                    <div className="text-[13px] text-[#6B7280]">{item?.message || ''}</div>
+                </div>
+            );
+
+            const toastifyId = toast(content, {
+                containerId: 'admin-toast-stack',
+                toastId: `admin-toast-${key}`,
+                type: tone,
+                autoClose: 3200,
+                closeOnClick: true,
+                pauseOnHover: true,
+                draggable: true,
+                className: getToastClassName(tone),
+                progressClassName: getToastProgressClassName(tone),
+                bodyClassName: 'admin-toast-body',
+                onClose: () => {
+                    onDismiss?.(item?.id);
+                },
+            });
+
+            toastIdMapRef.current.set(key, toastifyId);
+        }
+
+        for (const [key, toastifyId] of toastIdMapRef.current.entries()) {
+            if (nextKeys.has(key)) continue;
+            toast.dismiss(toastifyId);
+            toastIdMapRef.current.delete(key);
+        }
+    }, [toasts, onDismiss]);
+
+    React.useEffect(() => () => {
+        for (const toastifyId of toastIdMapRef.current.values()) {
+            toast.dismiss(toastifyId);
+        }
+        toastIdMapRef.current.clear();
+    }, []);
 
     return (
-        <div className="fixed right-5 top-[92px] z-[70] flex w-[min(360px,calc(100vw-32px))] flex-col gap-3">
-            {toasts.map((toast) => {
-                const tone = toast?.tone === 'success'
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : toast?.tone === 'warning'
-                        ? 'border-amber-200 bg-amber-50 text-amber-700'
-                        : 'border-rose-200 bg-rose-50 text-rose-700';
+        <>
+            <ToastContainer
+                containerId="admin-toast-stack"
+                position="top-right"
+                newestOnTop
+                hideProgressBar={false}
+                closeButton
+                icon={({ type }) => getToastIcon(type)}
+                className="admin-toast-container"
+            />
+            <style jsx global>{`
+                .admin-toast-container.Toastify__toast-container--top-right {
+                    top: 92px;
+                    right: 20px;
+                    width: min(360px, calc(100vw - 32px));
+                    z-index: 70;
+                }
 
-                return (
-                    <div
-                        key={toast.id}
-                        className={cn(
-                            'rounded-2xl border px-4 py-3 shadow-[0_18px_38px_rgba(15,23,42,0.16)] backdrop-blur',
-                            tone
-                        )}
-                    >
-                        <div className="flex items-start gap-3">
-                            <div className="pt-0.5 text-[16px] leading-none">
-                                {toast?.tone === 'success' ? '✓' : toast?.tone === 'warning' ? '!' : '×'}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                                {toast?.title ? <div className="text-[13px] font-semibold">{toast.title}</div> : null}
-                                <div className="text-[13px]">{toast?.message || ''}</div>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => onDismiss?.(toast.id)}
-                                className="text-[14px] font-semibold opacity-70 transition hover:opacity-100"
-                                aria-label="Dismiss notification"
-                            >
-                                ×
-                            </button>
-                        </div>
-                    </div>
-                );
-            })}
-        </div>
+                .admin-toast {
+                    min-height: 0;
+                    margin-bottom: 12px;
+                    border-radius: 12px;
+                    border: 1px solid #e2e8f0;
+                    background: #ffffff;
+                    color: #6b7280;
+                    box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
+                    padding: 0;
+                }
+
+                .admin-toast-body {
+                    margin: 0;
+                    padding: 14px 14px 14px 12px;
+                }
+
+                .admin-toast .Toastify__close-button {
+                    align-self: flex-start;
+                    color: #9ca3af;
+                    opacity: 0.9;
+                    margin-top: 6px;
+                    margin-right: 4px;
+                }
+
+                .admin-toast .Toastify__close-button:hover {
+                    color: #6b7280;
+                    opacity: 1;
+                }
+
+                .admin-toast-progress {
+                    height: 4px;
+                }
+
+                .admin-toast--info {
+                    border-color: #dbeafe;
+                }
+
+                .admin-toast--error {
+                    border-color: #fecdd3;
+                }
+
+                .admin-toast--success {
+                    border-color: #bbf7d0;
+                }
+
+                .admin-toast--warning {
+                    border-color: #fde68a;
+                }
+
+                .admin-toast-progress--info {
+                    background: #60a5fa;
+                }
+
+                .admin-toast-progress--error {
+                    background: #f87171;
+                }
+
+                .admin-toast-progress--success {
+                    background: #4ade80;
+                }
+
+                .admin-toast-progress--warning {
+                    background: #facc15;
+                }
+
+                @media (max-width: 640px) {
+                    .admin-toast-container.Toastify__toast-container--top-right {
+                        top: 82px;
+                        right: 12px;
+                        width: min(360px, calc(100vw - 24px));
+                    }
+                }
+            `}</style>
+        </>
     );
 }
 
 export function AdminModal({ open, title, children, footer, width = 'max-w-[560px]' }) {
     if (!open) return null;
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/45 p-3 sm:p-4">
             <div className={cn('w-full overflow-hidden rounded-[20px] border border-[#DDE4FF] bg-white shadow-[0_24px_80px_rgba(15,23,42,0.22)]', width)}>
                 <div className="border-b border-[#EEF2FF] px-5 py-4">
                     <h2 className="text-[18px] font-semibold text-[#0F2243]">{title}</h2>

@@ -8,8 +8,10 @@ import Header from '@/components/layout/Header';
 import FadeIn from '@/components/ui/FadeIn';
 import LoadScreen from '@/components/ui/LoadScreen';
 import { getUser } from '@/lib/auth';
+import { toast } from 'react-toastify';
 
 const DEFAULT_AVATAR_URL = '/images/default-avatar.svg';
+const LEARNER_TOAST = { containerId: 'global-toast' };
 
 function formatReviewDate(value) {
     if (!value) return '-';
@@ -123,14 +125,16 @@ export default function CourseDetailPage() {
 
     const handleEnroll = async () => {
         if (!getUser()) {
-            alert('Please login first to enroll');
-            window.location.href = '/login';
+            toast.info('Please login first to enroll', LEARNER_TOAST);
+            setTimeout(() => {
+                window.location.href = '/login';
+            }, 450);
             return;
         }
 
         const defaultSection = pickDefaultSection(course);
         if (!defaultSection?.id) {
-            alert('คอร์สนี้ยังไม่มี Section สำหรับลงทะเบียน กรุณาติดต่อผู้ดูแลระบบ');
+            toast.warning('คอร์สนี้ยังไม่มี Section สำหรับลงทะเบียน กรุณาติดต่อผู้ดูแลระบบ', LEARNER_TOAST);
             return;
         }
 
@@ -149,9 +153,9 @@ export default function CourseDetailPage() {
                 setEnrollment(payload?.enrollment || null);
             } else {
                 const err = await res.json();
-                alert(err.error || 'Enrollment failed');
+                toast.error(err.error || 'Enrollment failed', LEARNER_TOAST);
             }
-        } catch (e) { alert(e.message); }
+        } catch (e) { toast.error(e.message || 'Enrollment failed', LEARNER_TOAST); }
         setEnrolling(false);
     };
 
@@ -596,7 +600,7 @@ export default function CourseDetailPage() {
                                                 return;
                                             }
                                             if (isPendingApproval) {
-                                                alert('คำขอลงทะเบียนของคุณกำลังรอแอดมินอนุมัติ');
+                                                toast.info('คำขอลงทะเบียนของคุณกำลังรอแอดมินอนุมัติ', LEARNER_TOAST);
                                                 return;
                                             }
                                             handleEnroll();

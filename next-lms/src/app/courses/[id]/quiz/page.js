@@ -6,6 +6,9 @@ import { useParams } from 'next/navigation';
 import Navbar from '@/components/layout/Navbar';
 import FadeIn from '@/components/ui/FadeIn';
 import LoadScreen from '@/components/ui/LoadScreen';
+import { toast } from 'react-toastify';
+
+const LEARNER_TOAST = { containerId: 'global-toast' };
 
 export default function QuizPage() {
     const params = useParams();
@@ -56,7 +59,7 @@ export default function QuizPage() {
 
     const handleSubmit = async () => {
         if (Object.keys(answers).length < questions.length) {
-            alert('กรุณาตอบคำถามให้ครบทุกข้อ');
+            toast.warning('กรุณาตอบคำถามให้ครบทุกข้อ', LEARNER_TOAST);
             return;
         }
         setSubmitting(true);
@@ -73,7 +76,7 @@ export default function QuizPage() {
                 const data = await res.json();
                 setResult(data.attempt);
             }
-        } catch (e) { alert(e.message); }
+        } catch (e) { toast.error(e.message || 'Submit quiz failed', LEARNER_TOAST); }
         setSubmitting(false);
     };
 
