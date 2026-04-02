@@ -29,6 +29,8 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       APP_NAME: ${APP_NAME:-SkillUp}
+      APP_URL: ${APP_URL:-https://${APP_DOMAIN}}
+      CRON_SECRET: ${CRON_SECRET:-}
       PASSWORD_RESET_BASE_URL: ${PASSWORD_RESET_BASE_URL:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -53,6 +55,23 @@ services:
       - ./next-lms/data:/app/data
       - ./next-lms/public/content:/app/public/content
       - ./next-lms/public/uploads/courses:/app/public/uploads/courses
+
+  cron-reminder:
+    image: curlimages/curl:8.8.0
+    container_name: lms-cron-reminder
+    restart: unless-stopped
+    depends_on:
+      - web
+    environment:
+      CRON_SECRET: ${CRON_SECRET:-}
+      ENROLLMENT_REMINDER_CRON_INTERVAL_SECONDS: ${ENROLLMENT_REMINDER_CRON_INTERVAL_SECONDS:-3600}
+    command: >
+      sh -c 'while true; do
+        if [ -n "$$CRON_SECRET" ]; then
+          curl -fsS -H "Authorization: Bearer $$CRON_SECRET" "http://web:3000/api/cron/enrollment-expiry-reminders" || true;
+        fi;
+        sleep "$${ENROLLMENT_REMINDER_CRON_INTERVAL_SECONDS:-3600}";
+      done'
 
   phpmyadmin:
     image: phpmyadmin:5-apache
