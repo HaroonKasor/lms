@@ -1,0 +1,57 @@
+export const GROUP_ROLE_CATEGORIES = [
+    {
+        label: 'Core Access',
+        roles: [
+            'Administrator',
+            'DASHBOARD',
+            'View User',
+            'Create User',
+            'Edit User',
+            'Delete User',
+            'Manage User',
+            'View Group',
+            'Create Group',
+            'Edit Group',
+            'Delete Group',
+            'Manage Group',
+            'View Role',
+            'Edit Role',
+            'Manage Role',
+        ],
+    },
+    {
+        label: 'Learning',
+        roles: [
+            'Learner',
+            'XAPI',
+            'Manage Category',
+            'Manage Banner',
+            'Manage Sub Banner',
+            'Manage Course',
+            'Manage Enrollment',
+            'Manage Batch Enrollment',
+            'Manage Learner Status',
+            'Manage Questionnaire',
+        ],
+    },
+    {
+        label: 'Content And Report',
+        roles: [
+            'Manage Content',
+            'e-Publication',
+            'View Statement',
+            'View Report',
+            'Manage Application',
+            'Collaboration',
+            'Social',
+        ],
+    },
+    {
+        label: 'Integration',
+        roles: [
+            'TestBank Admin',
+            'TestBank Teacher',
+            'AD Sync',
+        ],
+    },
+];

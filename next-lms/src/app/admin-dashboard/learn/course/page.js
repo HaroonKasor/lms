@@ -2,7 +2,25 @@
 
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
-import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+import AdminShell from '@/components/admin/layout/AdminShell';
+import {
+    AdminBodyStateRow,
+    AdminCard,
+    AdminEntriesControl,
+    AdminPageHeader,
+    AdminPagination,
+    AdminSearchInput,
+    AdminStatusPill,
+    AdminTable,
+    AdminTableHead,
+    AdminTableWrap,
+    AdminTd,
+    AdminTh,
+    AdminToastStack,
+    AdminToolbar,
+    adminPrimaryButtonClass,
+    adminSecondaryButtonClass,
+} from '@/components/admin/ui/AdminPrimitives';
 
 function toEffectiveLearnerStatus(row) {
     const normalizedStatus = String(row?.status || '').toUpperCase();
@@ -89,9 +107,30 @@ function resolveQrEnrollmentUrl(payload = {}) {
     return candidates[0] || path || '';
 }
 
+function normalizeSectionGroupCode(value = '') {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (!normalized) return '';
+    if (normalized === 'ADMIN' || normalized === 'ADMINISTRATOR') return 'ADMIN';
+    if (normalized === 'INSTRUCTOR' || normalized === 'INSTRUCTURE' || normalized === 'TEACHER') return 'INSTRUCTOR';
+    if (normalized === 'LEARNER' || normalized === 'USER' || normalized === 'STUDENT') return 'LEARNER';
+    return '';
+}
+
+function normalizeSectionGroupsValue(value = '') {
+    const selected = Array.from(new Set(
+        String(value || '')
+            .split(',')
+            .map((item) => normalizeSectionGroupCode(item))
+            .filter(Boolean)
+    ));
+    if (selected.length > 0) return selected.join(',');
+    return 'LEARNER';
+}
+
 export default function CourseManagementPage() {
     const searchParams = useSearchParams();
     const thumbnailInputRef = useRef(null);
+    const toastTimersRef = useRef(new Map());
     const getDefaultCourseForm = () => ({
         courseCode: '', name: '', nameEn: '', thumbnail: '', detail: '',
         registerDateFrom: '', registerDateTo: '', registerUnlimit: false,
@@ -111,7 +150,7 @@ export default function CourseManagementPage() {
         maxLearner: 0, maxLearnerUnlimit: true,
         status: '', isPublic: null, autoApprove: null,
         certificate: null, autoCert: null, printCert: null,
-        cohortModule: false, groups: '',
+        cohortModule: false, groups: 'LEARNER',
     });
 
     const [view, setView] = useState('COURSE_LIST');
@@ -120,6 +159,17 @@ export default function CourseManagementPage() {
     const [editingSectionId, setEditingSectionId] = useState(null);
     const [selectedSection, setSelectedSection] = useState(null);
     const [loading, setLoading] = useState(false);
+    const [toasts, setToasts] = useState([]);
+    const [courseSearch, setCourseSearch] = useState('');
+    const [courseStatusFilter, setCourseStatusFilter] = useState('ALL');
+    const [courseEntries, setCourseEntries] = useState(10);
+    const [coursePage, setCoursePage] = useState(1);
+    const [sectionSearch, setSectionSearch] = useState('');
+    const [sectionEntries, setSectionEntries] = useState(10);
+    const [sectionPage, setSectionPage] = useState(1);
+    const [learnerSearch, setLearnerSearch] = useState('');
+    const [learnerEntries, setLearnerEntries] = useState(10);
+    const [learnerPage, setLearnerPage] = useState(1);
 
     // Data from DB
     const [courses, setCourses] = useState([]);
@@ -162,6 +212,29 @@ export default function CourseManagementPage() {
         const value = Number(raw);
         return Number.isInteger(value) && value > 0 ? value : null;
     }, [searchParams]);
+
+    useEffect(() => {
+        return () => {
+            for (const timer of toastTimersRef.current.values()) clearTimeout(timer);
+            toastTimersRef.current.clear();
+        };
+    }, []);
+
+    const dismissToast = useCallback((id) => {
+        const timer = toastTimersRef.current.get(id);
+        if (timer) {
+            clearTimeout(timer);
+            toastTimersRef.current.delete(id);
+        }
+        setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, []);
+
+    const pushToast = useCallback((tone, message, title = '') => {
+        const id = Date.now() + Math.random();
+        setToasts((prev) => [...prev, { id, tone, message, title }]);
+        const timer = setTimeout(() => dismissToast(id), 3200);
+        toastTimersRef.current.set(id, timer);
+    }, [dismissToast]);
 
     // Load courses from API
     const loadCourses = async () => {
@@ -311,6 +384,81 @@ export default function CourseManagementPage() {
         setView('SECTION_LIST');
     }, [requestedCourseId, courses, selectedCourse]);
 
+    const filteredCourses = useMemo(() => {
+        const keyword = courseSearch.trim().toLowerCase();
+        return courses.filter((course) => {
+            const matchesStatus = courseStatusFilter === 'ALL' || String(course?.status || '').toLowerCase() === courseStatusFilter.toLowerCase();
+            if (!matchesStatus) return false;
+            if (!keyword) return true;
+            return [course?.name, course?.courseCode, course?.category]
+                .filter(Boolean)
+                .some((value) => String(value).toLowerCase().includes(keyword));
+        });
+    }, [courses, courseSearch, courseStatusFilter]);
+
+    const totalCoursePages = useMemo(() => Math.max(1, Math.ceil(filteredCourses.length / courseEntries)), [filteredCourses.length, courseEntries]);
+    const pagedCourses = useMemo(() => {
+        const start = (coursePage - 1) * courseEntries;
+        return filteredCourses.slice(start, start + courseEntries);
+    }, [filteredCourses, coursePage, courseEntries]);
+
+    useEffect(() => {
+        setCoursePage(1);
+    }, [courseEntries, courseSearch, courseStatusFilter, filteredCourses.length]);
+
+    useEffect(() => {
+        if (coursePage > totalCoursePages) setCoursePage(totalCoursePages);
+    }, [coursePage, totalCoursePages]);
+
+    const courseSections = useMemo(() => sections.filter((section) => section.courseId === selectedCourse?.id), [sections, selectedCourse?.id]);
+    const filteredSections = useMemo(() => {
+        const keyword = sectionSearch.trim().toLowerCase();
+        return courseSections.filter((section) => {
+            if (!keyword) return true;
+            return [section?.name, section?.sessionCode, section?.detail]
+                .filter(Boolean)
+                .some((value) => String(value).toLowerCase().includes(keyword));
+        });
+    }, [courseSections, sectionSearch]);
+
+    const totalSectionPages = useMemo(() => Math.max(1, Math.ceil(filteredSections.length / sectionEntries)), [filteredSections.length, sectionEntries]);
+    const pagedSections = useMemo(() => {
+        const start = (sectionPage - 1) * sectionEntries;
+        return filteredSections.slice(start, start + sectionEntries);
+    }, [filteredSections, sectionPage, sectionEntries]);
+
+    useEffect(() => {
+        setSectionPage(1);
+    }, [sectionEntries, sectionSearch, filteredSections.length, selectedCourse?.id]);
+
+    useEffect(() => {
+        if (sectionPage > totalSectionPages) setSectionPage(totalSectionPages);
+    }, [sectionPage, totalSectionPages]);
+
+    const filteredLearners = useMemo(() => {
+        const keyword = learnerSearch.trim().toLowerCase();
+        return learners.filter((learner) => {
+            if (!keyword) return true;
+            return [learner?.username, learner?.name, learner?.status]
+                .filter(Boolean)
+                .some((value) => String(value).toLowerCase().includes(keyword));
+        });
+    }, [learners, learnerSearch]);
+
+    const totalLearnerPages = useMemo(() => Math.max(1, Math.ceil(filteredLearners.length / learnerEntries)), [filteredLearners.length, learnerEntries]);
+    const pagedLearners = useMemo(() => {
+        const start = (learnerPage - 1) * learnerEntries;
+        return filteredLearners.slice(start, start + learnerEntries);
+    }, [filteredLearners, learnerPage, learnerEntries]);
+
+    useEffect(() => {
+        setLearnerPage(1);
+    }, [learnerEntries, learnerSearch, filteredLearners.length, selectedSection?.id, selectedCourse?.id]);
+
+    useEffect(() => {
+        if (learnerPage > totalLearnerPages) setLearnerPage(totalLearnerPages);
+    }, [learnerPage, totalLearnerPages]);
+
     const openCourseCreate = () => {
         setEditingCourseId(null);
         setCourseForm(getDefaultCourseForm());
@@ -332,6 +480,7 @@ export default function CourseManagementPage() {
         setSectionForm({
             ...getDefaultSectionForm(),
             ...section,
+            groups: normalizeSectionGroupsValue(section?.groups || ''),
             maxLearner: Number(section?.maxLearner ?? 0),
             maxLearnerUnlimit: section?.maxLearnerUnlimit ?? section?.maxLearner == null,
             status: section?.status || (section?.isActive ? 'active' : 'inactive'),
@@ -361,11 +510,11 @@ export default function CourseManagementPage() {
     // Submit course
     const handleCourseSubmit = async () => {
         if (!courseForm.name?.trim()) {
-            alert('กรุณากรอกชื่อหลักสูตร');
+            pushToast('error', 'Please enter a course name.', 'Missing field');
             return;
         }
         if (!courseForm.categoryId) {
-            alert('กรุณาเลือก Category ก่อนสร้างหลักสูตร');
+            pushToast('error', 'Please select a category before creating the course.', 'Missing field');
             return;
         }
         const normalizedCourseCode = String(courseForm.courseCode || '').trim();
@@ -375,7 +524,7 @@ export default function CourseManagementPage() {
                 return String(course.courseCode || '').trim().toLowerCase() === normalizedCourseCode.toLowerCase();
             });
             if (duplicateExists) {
-                alert('Course Code นี้ถูกใช้งานแล้ว กรุณาใช้รหัสอื่น');
+                pushToast('error', 'This course code is already in use. Please choose another one.', 'Duplicate course code');
                 return;
             }
         }
@@ -397,17 +546,19 @@ export default function CourseManagementPage() {
                 if (isEditMode) {
                     setEditingCourseId(null);
                     setView('COURSE_LIST');
-                    alert('อัปเดตหลักสูตรสำเร็จ');
+                    pushToast('success', 'Course updated successfully.', 'Updated');
                 } else {
                     setSelectedCourse(course);
                     setView('SECTION_LIST');
-                    alert('สร้างหลักสูตรสำเร็จ');
+                    pushToast('success', 'Course created successfully.', 'Created');
                 }
             } else {
                 const data = await res.json().catch(() => ({}));
-                alert(data.error || (editingCourseId ? 'Error updating course' : 'Error creating course'));
+                pushToast('error', data.error || (editingCourseId ? 'Error updating course' : 'Error creating course'), 'Save failed');
             }
-        } catch (e) { alert('Error: ' + e.message); }
+        } catch (e) {
+            pushToast('error', e.message || 'Error saving course', 'Save failed');
+        }
         setLoading(false);
     };
 
@@ -415,7 +566,7 @@ export default function CourseManagementPage() {
     const handleSectionSubmit = async () => {
         if (!selectedCourse) return;
         if (!String(sectionForm.name || '').trim()) {
-            alert('กรุณากรอกชื่อ Section');
+            pushToast('error', 'Please enter a section name.', 'Missing field');
             return;
         }
 
@@ -427,6 +578,7 @@ export default function CourseManagementPage() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     ...sectionForm,
+                    groups: normalizeSectionGroupsValue(sectionForm.groups),
                     courseId: selectedCourse.id,
                     ...(isEditMode ? { id: editingSectionId } : {}),
                 }),
@@ -437,38 +589,42 @@ export default function CourseManagementPage() {
                 setView('SECTION_LIST');
                 setEditingSectionId(null);
                 setSectionForm(getDefaultSectionForm());
-                alert(isEditMode ? 'อัปเดต Section สำเร็จ!' : 'สร้าง Section สำเร็จ!');
+                pushToast('success', isEditMode ? 'Section updated successfully.' : 'Section created successfully.', isEditMode ? 'Updated' : 'Created');
             } else {
                 const data = await res.json().catch(() => ({}));
-                alert(data.error || (isEditMode ? 'Error updating section' : 'Error creating section'));
+                pushToast('error', data.error || (isEditMode ? 'Error updating section' : 'Error creating section'), 'Save failed');
             }
-        } catch (e) { alert('Error: ' + e.message); }
+        } catch (e) {
+            pushToast('error', e.message || 'Error saving section', 'Save failed');
+        }
         setLoading(false);
     };
 
     // Delete course
     const handleDeleteCourse = async (id) => {
-        if (!confirm('ลบหลักสูตรนี้?')) return;
+        if (!window.confirm('Delete this course?')) return;
         const res = await fetch(`/api/courses?id=${id}`, { method: 'DELETE' });
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            alert(data.error || 'ไม่สามารถลบหลักสูตรได้');
+            pushToast('error', data.error || 'Unable to delete course', 'Delete failed');
             return;
         }
         await loadCourses();
+        pushToast('success', 'Course deleted successfully.', 'Deleted');
     };
 
     // Delete section
     const handleDeleteSection = async (id) => {
-        if (!confirm('ลบ Section นี้?')) return;
+        if (!window.confirm('Delete this section?')) return;
         const res = await fetch(`/api/courses/sections?id=${id}`, { method: 'DELETE' });
         if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            alert(data.error || 'ไม่สามารถลบ Section ได้');
+            pushToast('error', data.error || 'Unable to delete section', 'Delete failed');
             return;
         }
         if (selectedCourse) await loadSections(selectedCourse.id);
         await loadCourses();
+        pushToast('success', 'Section deleted successfully.', 'Deleted');
     };
 
     const handleThumbnailSelect = () => {
@@ -480,7 +636,7 @@ export default function CourseManagementPage() {
         if (!file) return;
 
         if (!file.type.startsWith('image/')) {
-            alert('กรุณาเลือกไฟล์รูปภาพเท่านั้น');
+            pushToast('error', 'Please choose an image file only.', 'Invalid file');
             e.target.value = '';
             return;
         }
@@ -497,78 +653,118 @@ export default function CourseManagementPage() {
                 throw new Error(data?.error || 'อัปโหลดรูปไม่สำเร็จ');
             }
             setCourseForm((prev) => ({ ...prev, thumbnail: data.url }));
+            pushToast('success', 'Thumbnail uploaded successfully.', 'Upload complete');
         } catch (err) {
-            alert(err.message || 'อัปโหลดรูปไม่สำเร็จ');
+            pushToast('error', err.message || 'Thumbnail upload failed', 'Upload failed');
         } finally {
             e.target.value = '';
         }
     };
 
-    // Theme color (Purplish-blue #687EFF based on user request)
-    const themeColor = '#687EFF';
-    const headerClass = "bg-[#687EFF] px-4 py-3 flex items-center justify-between text-white font-medium text-[15px]";
-
     // --- RENDER COURSE LIST ---
     const renderCourseList = () => (
-        <div className="bg-white border border-[#D1E3FB] rounded-[8px] flex flex-col w-full overflow-hidden shadow-sm">
-            <div className={headerClass}>
-                <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 3L1 9l4 2.18v6L12 21l7-3.82v-6l2-1.09V17h2V9L12 3zm6.82 6L12 12.72 5.18 9 12 5.28 18.82 9zM17 15.99l-5 2.73-5-2.73v-3.72L12 15l5-2.73v3.72z" /></svg>
-                    Course
-                </div>
-                <button onClick={openCourseCreate} className="text-white hover:bg-white/20 w-7 h-7 rounded flex items-center justify-center transition-colors text-xl leading-none font-bold">
-                    +
+        <AdminCard
+            title="Course Library"
+            action={(
+                <button onClick={openCourseCreate} className="inline-flex h-9 items-center justify-center rounded-xl bg-white/15 px-3 text-[13px] font-semibold text-white transition hover:bg-white/25">
+                    Create course
                 </button>
-            </div>
-            <div className="p-4 overflow-x-auto">
-                <table className="w-full text-left text-[14px]">
-                    <thead className="bg-[#F8FAFC] border-b border-gray-200 text-[#334155]">
+            )}
+        >
+            <AdminToolbar
+                left={(
+                    <>
+                        <AdminEntriesControl value={courseEntries} onChange={setCourseEntries} label="items" />
+                        <select
+                            value={courseStatusFilter}
+                            onChange={(event) => setCourseStatusFilter(event.target.value)}
+                            className="h-[38px] rounded-xl border border-[#DDE4FF] bg-white px-3 text-[13px] text-[#334155] outline-none focus:border-[#687EFF]"
+                        >
+                            <option value="ALL">All status</option>
+                            <option value="active">Active</option>
+                            <option value="inactive">Inactive</option>
+                        </select>
+                    </>
+                )}
+                right={<AdminSearchInput value={courseSearch} onChange={(event) => setCourseSearch(event.target.value)} placeholder="Search course, code, or category" />}
+            />
+            <AdminTableWrap>
+                <AdminTable>
+                    <AdminTableHead>
                         <tr>
-                            <th className="p-2 font-semibold">#</th>
-                            <th className="p-2 font-semibold">Category</th>
-                            <th className="p-2 font-semibold">Course name</th>
-                            <th className="p-2 font-semibold">Start-End date</th>
-                            <th className="p-2 font-semibold">Max learners</th>
-                            <th className="p-2 font-semibold text-center">Status</th>
-                            <th className="p-2 font-semibold text-center">Actions</th>
+                            <AdminTh className="w-[72px]">No.</AdminTh>
+                            <AdminTh className="w-[180px]">Category</AdminTh>
+                            <AdminTh className="min-w-[220px]">Course</AdminTh>
+                            <AdminTh className="min-w-[220px]">Registration</AdminTh>
+                            <AdminTh className="w-[140px]">Max learners</AdminTh>
+                            <AdminTh className="w-[120px] text-center">Status</AdminTh>
+                            <AdminTh className="w-[160px] text-center">Tools</AdminTh>
                         </tr>
-                    </thead>
+                    </AdminTableHead>
                     <tbody>
-                        {courses.map((course, idx) => (
-                            <tr key={course.id} className="border-b border-gray-100 hover:bg-gray-50 text-[#475569]">
-                                <td className="p-2">{idx + 1}</td>
-                                <td className="p-2">{course.category}</td>
-                                <td className="p-2 font-medium text-[#052143]">{course.name}</td>
-                                <td className="p-2">{course.registerUnlimit ? 'Unlimited' : `${course.registerDateFrom || '-'} to ${course.registerDateTo || '-'}`}</td>
-                                <td className="p-2">{course.maxLearnerUnlimit ? 'Unlimited' : course.maxLearner}</td>
-                                <td className="p-2 text-center">
-                                    {course.status === 'active' && <div className="inline-block w-4 h-4 bg-green-500 rounded-full border-2 border-white shadow-sm"></div>}
-                                    {course.status !== 'active' && <div className="inline-block w-4 h-4 bg-gray-400 rounded-full border-2 border-white shadow-sm"></div>}
-                                </td>
-                                <td className="p-2 text-center">
+                        {pagedCourses.length === 0 ? (
+                            <AdminBodyStateRow colSpan={7}>
+                                {courseSearch || courseStatusFilter !== 'ALL' ? 'No courses matched the current filters.' : 'No courses yet. Create your first course to get started.'}
+                            </AdminBodyStateRow>
+                        ) : pagedCourses.map((course, idx) => (
+                            <tr key={course.id} className="border-b border-[#EEF2FF] last:border-none hover:bg-[#FBFCFF]">
+                                <AdminTd className="font-medium text-[#1E293B]">{(coursePage - 1) * courseEntries + idx + 1}</AdminTd>
+                                <AdminTd>{course.category}</AdminTd>
+                                <AdminTd>
+                                    <div className="font-semibold text-[#1E293B]">{course.name}</div>
+                                    <div className="mt-1 text-[12px] text-[#94A3B8]">{course.courseCode || '-'}</div>
+                                </AdminTd>
+                                <AdminTd>{course.registerUnlimit ? 'Unlimited' : `${course.registerDateFrom || '-'} to ${course.registerDateTo || '-'}`}</AdminTd>
+                                <AdminTd>{course.maxLearnerUnlimit ? 'Unlimited' : course.maxLearner}</AdminTd>
+                                <AdminTd className="text-center">
+                                    <AdminStatusPill active={course.status === 'active'} activeLabel="Active" inactiveLabel="Inactive" />
+                                </AdminTd>
+                                <AdminTd className="text-center">
                                     <div className="flex items-center justify-center gap-2">
-                                        <button onClick={() => { setSelectedCourse(course); setView('SECTION_LIST'); }} className="text-[#687EFF] hover:text-blue-800" title="Manage Sections">
+                                        <button onClick={() => { setSelectedCourse(course); setView('SECTION_LIST'); }} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#DDE4FF] bg-white text-[#687EFF] transition hover:bg-[#F8FAFF]" title="Manage sections">
                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
                                         </button>
-                                        <button onClick={() => handleEditCourse(course)} className="text-gray-500 hover:text-gray-800" title="Edit"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
-                                        <button onClick={() => handleDeleteCourse(course.id)} className="text-red-500 hover:text-red-700" title="Delete"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path></svg></button>
+                                        <button onClick={() => handleEditCourse(course)} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#DDE4FF] bg-white text-[#475569] transition hover:bg-[#F8FAFF]" title="Edit">
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                                        </button>
+                                        <button onClick={() => handleDeleteCourse(course.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50" title="Delete">
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path></svg>
+                                        </button>
                                     </div>
-                                </td>
+                                </AdminTd>
                             </tr>
                         ))}
                     </tbody>
-                </table>
-            </div>
-        </div>
+                </AdminTable>
+            </AdminTableWrap>
+            <AdminPagination
+                currentPage={coursePage}
+                totalPages={totalCoursePages}
+                onPageChange={setCoursePage}
+                totalItems={filteredCourses.length}
+                startRow={filteredCourses.length === 0 ? 0 : (coursePage - 1) * courseEntries + 1}
+                endRow={Math.min(coursePage * courseEntries, filteredCourses.length)}
+            />
+        </AdminCard>
     );
 
     // --- RENDER COURSE CREATE ---
     const renderCourseCreate = () => (
-        <div className="bg-white flex flex-col w-full h-full min-h-[calc(100vh-200px)]">
-            <div className="bg-white px-6 py-4 flex items-center justify-between border-b border-gray-100 mb-4 pb-4">
-                <span className="text-[#A2A4A8] text-[24px] font-light">{editingCourseId ? 'Course Edit' : 'Course Create'}</span>
-            </div>
-            <form className="px-6 pb-6 flex flex-col gap-[14px] text-[#334155] text-[13px] font-medium w-full">
+        <AdminCard
+            title={editingCourseId ? 'Edit Course' : 'Create Course'}
+            headerTone="secondary"
+            action={(
+                <button onClick={() => setView('COURSE_LIST')} className="text-sm font-medium text-[#687EFF] hover:underline">
+                    &larr; Back to Courses
+                </button>
+            )}
+        >
+            <form className="flex w-full flex-col gap-[14px] text-[13px] font-medium text-[#334155]
+                [&_input[type='text']]:rounded-xl [&_input[type='text']]:border [&_input[type='text']]:border-[#DDE4FF] [&_input[type='text']]:bg-white [&_input[type='text']]:px-3 [&_input[type='text']]:py-[9px] [&_input[type='text']]:outline-none [&_input[type='text']]:transition [&_input[type='text']]:focus:border-[#687EFF] [&_input[type='text']]:focus:ring-2 [&_input[type='text']]:focus:ring-[#687EFF]/20
+                [&_input[type='number']]:rounded-xl [&_input[type='number']]:border [&_input[type='number']]:border-[#DDE4FF] [&_input[type='number']]:bg-white [&_input[type='number']]:px-3 [&_input[type='number']]:py-[9px] [&_input[type='number']]:outline-none [&_input[type='number']]:transition [&_input[type='number']]:focus:border-[#687EFF] [&_input[type='number']]:focus:ring-2 [&_input[type='number']]:focus:ring-[#687EFF]/20
+                [&_input[type='date']]:rounded-xl [&_input[type='date']]:border [&_input[type='date']]:border-[#DDE4FF] [&_input[type='date']]:bg-white [&_input[type='date']]:px-3 [&_input[type='date']]:py-[9px] [&_input[type='date']]:outline-none [&_input[type='date']]:transition [&_input[type='date']]:focus:border-[#687EFF] [&_input[type='date']]:focus:ring-2 [&_input[type='date']]:focus:ring-[#687EFF]/20
+                [&_select]:rounded-xl [&_select]:border [&_select]:border-[#DDE4FF] [&_select]:bg-white [&_select]:px-3 [&_select]:py-[9px] [&_select]:outline-none [&_select]:transition [&_select]:focus:border-[#687EFF] [&_select]:focus:ring-2 [&_select]:focus:ring-[#687EFF]/20
+                [&_textarea]:rounded-xl [&_textarea]:border [&_textarea]:border-[#DDE4FF] [&_textarea]:bg-white [&_textarea]:px-3 [&_textarea]:py-3 [&_textarea]:outline-none [&_textarea]:transition [&_textarea]:focus:border-[#687EFF] [&_textarea]:focus:ring-2 [&_textarea]:focus:ring-[#687EFF]/20">
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
                     <label className="sm:w-[220px] text-right shrink-0">Course Code</label>
@@ -983,87 +1179,115 @@ export default function CourseManagementPage() {
                     </div>
                 </div>
 
-                <div className="flex w-full justify-center gap-2 mt-4 pb-12 shadow-sm pt-4 border-t border-gray-200">
-                    <button type="button" onClick={handleCourseSubmit} disabled={loading} className="bg-[#337AB7] text-white px-[14px] py-[4px] rounded-[15px] font-medium text-[12px] hover:bg-blue-600 outline-none w-[70px] disabled:opacity-50">{loading ? '...' : (editingCourseId ? 'Update' : 'Submit')}</button>
-                    <button type="button" onClick={() => { setEditingCourseId(null); setCourseForm(getDefaultCourseForm()); setView('COURSE_LIST'); }} className="bg-[#EAEAEA] text-[#333] px-[14px] py-[4px] border border-gray-300 rounded-[15px] font-medium text-[12px] hover:bg-gray-300 outline-none w-[70px]">Cancel</button>
+                <div className="mt-6 flex w-full justify-center gap-3 border-t border-[#E8EEFF] pt-5">
+                    <button type="button" onClick={handleCourseSubmit} disabled={loading} className={adminPrimaryButtonClass}>
+                        {loading ? 'Working...' : (editingCourseId ? 'Update course' : 'Create course')}
+                    </button>
+                    <button type="button" onClick={() => { setEditingCourseId(null); setCourseForm(getDefaultCourseForm()); setView('COURSE_LIST'); }} className={adminSecondaryButtonClass}>
+                        Cancel
+                    </button>
                 </div>
             </form>
-        </div>
+        </AdminCard>
     );
 
     // --- RENDER SECTION LIST ---
     const renderSectionList = () => {
-        const courseSections = sections.filter(s => s.courseId === selectedCourse?.id);
         return (
-            <div className="bg-white border border-[#D1E3FB] rounded-[8px] flex flex-col w-full overflow-hidden shadow-sm">
-                <div className={headerClass + " flex-col items-start gap-1 py-4"}>
-                    <div className="flex items-center justify-between w-full">
-                        <div className="font-semibold text-[16px]">Category: {selectedCourse?.category}</div>
-                        <button onClick={openSectionCreate} className="text-white hover:bg-white/20 w-7 h-7 rounded flex items-center justify-center transition-colors text-xl leading-none font-bold">
-                            +
-                        </button>
+            <AdminCard
+                title={`Sections · ${selectedCourse?.name || '-'}`}
+                action={(
+                    <button onClick={openSectionCreate} className="inline-flex h-9 items-center justify-center rounded-xl bg-white/15 px-3 text-[13px] font-semibold text-white transition hover:bg-white/25">
+                        Create section
+                    </button>
+                )}
+            >
+                <div className="mb-4 flex items-center justify-between gap-3">
+                    <div className="text-[13px] text-[#64748B]">
+                        <span className="font-semibold text-[#1E293B]">Category:</span> {selectedCourse?.category || '-'}
                     </div>
-                    <div className="text-[14px] opacity-90">Course: {selectedCourse?.name}</div>
+                    <button onClick={() => setView('COURSE_LIST')} className="text-sm font-medium text-[#687EFF] hover:underline">
+                        &larr; Back to Courses
+                    </button>
                 </div>
-                <div className="p-4 overflow-x-auto">
-                    <div className="mb-4">
-                        <button onClick={() => setView('COURSE_LIST')} className="text-sm text-[#687EFF] hover:underline flex items-center gap-1">
-                            &larr; Back to Courses
-                        </button>
-                    </div>
-                    <table className="w-full text-left text-[14px]">
-                        <thead className="bg-[#F8FAFC] border-b border-gray-200 text-[#334155]">
+                <AdminToolbar
+                    left={<AdminEntriesControl value={sectionEntries} onChange={setSectionEntries} label="items" />}
+                    right={<AdminSearchInput value={sectionSearch} onChange={(event) => setSectionSearch(event.target.value)} placeholder="Search section name or code" />}
+                />
+                <AdminTableWrap>
+                    <AdminTable>
+                        <AdminTableHead>
                             <tr>
-                                <th className="p-2 font-semibold">#</th>
-                                <th className="p-2 font-semibold">Section name</th>
-                                <th className="p-2 font-semibold">Registration</th>
-                                <th className="p-2 font-semibold">Learning</th>
-                                <th className="p-2 font-semibold">Max learners</th>
-                                <th className="p-2 font-semibold text-center">Actions</th>
+                                <AdminTh className="w-[72px]">No.</AdminTh>
+                                <AdminTh className="min-w-[220px]">Section</AdminTh>
+                                <AdminTh className="min-w-[200px]">Registration</AdminTh>
+                                <AdminTh className="w-[160px]">Learning</AdminTh>
+                                <AdminTh className="w-[140px]">Max learners</AdminTh>
+                                <AdminTh className="w-[160px] text-center">Tools</AdminTh>
                             </tr>
-                        </thead>
+                        </AdminTableHead>
                         <tbody>
-                            {courseSections.map((sec, idx) => (
-                                <tr key={sec.id} className="border-b border-gray-100 hover:bg-gray-50 text-[#475569]">
-                                    <td className="p-2">{idx + 1}</td>
-                                    <td className="p-2 font-medium text-[#052143]">{sec.name}</td>
-                                    <td className="p-2">{sec.registerUnlimit ? 'Unlimited' : `${sec.registerDateFrom || '-'} to ${sec.registerDateTo || '-'}`}</td>
-                                    <td className="p-2">{sec.learnDateUnlimit ? 'Unlimited' : (sec.learnDateTo || '-')}</td>
-                                    <td className="p-2">{sec.maxLearnerUnlimit ? 'Unlimited' : sec.maxLearner}</td>
-                                    <td className="p-2 text-center">
+                            {pagedSections.length === 0 ? (
+                                <AdminBodyStateRow colSpan={6}>
+                                    {sectionSearch ? 'No sections matched the current search.' : 'No sections found. Create one to get started.'}
+                                </AdminBodyStateRow>
+                            ) : pagedSections.map((sec, idx) => (
+                                <tr key={sec.id} className="border-b border-[#EEF2FF] last:border-none hover:bg-[#FBFCFF]">
+                                    <AdminTd className="font-medium text-[#1E293B]">{(sectionPage - 1) * sectionEntries + idx + 1}</AdminTd>
+                                    <AdminTd>
+                                        <div className="font-semibold text-[#1E293B]">{sec.name}</div>
+                                        <div className="mt-1 text-[12px] text-[#94A3B8]">{sec.sessionCode || '-'}</div>
+                                    </AdminTd>
+                                    <AdminTd>{sec.registerUnlimit ? 'Unlimited' : `${sec.registerDateFrom || '-'} to ${sec.registerDateTo || '-'}`}</AdminTd>
+                                    <AdminTd>{sec.learnDateUnlimit ? 'Unlimited' : (sec.learnDateTo || '-')}</AdminTd>
+                                    <AdminTd>{sec.maxLearnerUnlimit ? 'Unlimited' : sec.maxLearner}</AdminTd>
+                                    <AdminTd className="text-center">
                                         <div className="flex items-center justify-center gap-2">
                                             <button onClick={async () => {
                                                 setSelectedSection(sec);
                                                 await loadLearners(selectedCourse?.id, sec?.id);
                                                 setView('SECTION_LEARNERS');
-                                            }} className="text-[#687EFF] hover:text-blue-800" title="Learners">
+                                            }} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#DDE4FF] bg-white text-[#687EFF] transition hover:bg-[#F8FAFF]" title="Learners">
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"></path></svg>
                                             </button>
-                                            <button onClick={() => handleEditSection(sec)} className="text-gray-500 hover:text-gray-800" title="Edit"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
-                                            <button onClick={() => handleDeleteSection(sec.id)} className="text-red-500 hover:text-red-700" title="Delete"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path></svg></button>
+                                            <button onClick={() => handleEditSection(sec)} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#DDE4FF] bg-white text-[#475569] transition hover:bg-[#F8FAFF]" title="Edit"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg></button>
+                                            <button onClick={() => handleDeleteSection(sec.id)} className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50" title="Delete"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"></path></svg></button>
                                         </div>
-                                    </td>
+                                    </AdminTd>
                                 </tr>
                             ))}
-                            {courseSections.length === 0 && (
-                                <tr>
-                                    <td colSpan="6" className="p-4 text-center text-gray-400">No sections found. Create one.</td>
-                                </tr>
-                            )}
                         </tbody>
-                    </table>
-                </div>
-            </div>
+                    </AdminTable>
+                </AdminTableWrap>
+                <AdminPagination
+                    currentPage={sectionPage}
+                    totalPages={totalSectionPages}
+                    onPageChange={setSectionPage}
+                    totalItems={filteredSections.length}
+                    startRow={filteredSections.length === 0 ? 0 : (sectionPage - 1) * sectionEntries + 1}
+                    endRow={Math.min(sectionPage * sectionEntries, filteredSections.length)}
+                />
+            </AdminCard>
         );
     };
 
     // --- RENDER SECTION CREATE ---
     const renderSectionCreate = () => (
-        <div className="bg-white flex flex-col w-full h-full min-h-[calc(100vh-200px)]">
-            <div className="bg-[#687EFF] px-4 py-3 flex items-center justify-between text-white font-medium text-[15px] rounded-t-[8px]">
-                <span>{editingSectionId ? 'Section Edit' : 'Section Create'}</span>
-            </div>
-            <form className="p-6 flex flex-col gap-[14px] text-[#334155] text-[13px] font-medium w-full border border-t-0 border-[#D1E3FB] rounded-b-[8px]">
+        <AdminCard
+            title={editingSectionId ? 'Edit Section' : 'Create Section'}
+            headerTone="secondary"
+            action={(
+                <button onClick={() => setView('SECTION_LIST')} className="text-sm font-medium text-[#687EFF] hover:underline">
+                    &larr; Back to Sections
+                </button>
+            )}
+        >
+            <form className="flex w-full flex-col gap-[14px] text-[13px] font-medium text-[#334155]
+                [&_input[type='text']]:rounded-xl [&_input[type='text']]:border [&_input[type='text']]:border-[#DDE4FF] [&_input[type='text']]:bg-white [&_input[type='text']]:px-3 [&_input[type='text']]:py-[9px] [&_input[type='text']]:outline-none [&_input[type='text']]:transition [&_input[type='text']]:focus:border-[#687EFF] [&_input[type='text']]:focus:ring-2 [&_input[type='text']]:focus:ring-[#687EFF]/20
+                [&_input[type='number']]:rounded-xl [&_input[type='number']]:border [&_input[type='number']]:border-[#DDE4FF] [&_input[type='number']]:bg-white [&_input[type='number']]:px-3 [&_input[type='number']]:py-[9px] [&_input[type='number']]:outline-none [&_input[type='number']]:transition [&_input[type='number']]:focus:border-[#687EFF] [&_input[type='number']]:focus:ring-2 [&_input[type='number']]:focus:ring-[#687EFF]/20
+                [&_input[type='date']]:rounded-xl [&_input[type='date']]:border [&_input[type='date']]:border-[#DDE4FF] [&_input[type='date']]:bg-white [&_input[type='date']]:px-3 [&_input[type='date']]:py-[9px] [&_input[type='date']]:outline-none [&_input[type='date']]:transition [&_input[type='date']]:focus:border-[#687EFF] [&_input[type='date']]:focus:ring-2 [&_input[type='date']]:focus:ring-[#687EFF]/20
+                [&_select]:rounded-xl [&_select]:border [&_select]:border-[#DDE4FF] [&_select]:bg-white [&_select]:px-3 [&_select]:py-[9px] [&_select]:outline-none [&_select]:transition [&_select]:focus:border-[#687EFF] [&_select]:focus:ring-2 [&_select]:focus:ring-[#687EFF]/20
+                [&_textarea]:rounded-xl [&_textarea]:border [&_textarea]:border-[#DDE4FF] [&_textarea]:bg-white [&_textarea]:px-3 [&_textarea]:py-3 [&_textarea]:outline-none [&_textarea]:transition [&_textarea]:focus:border-[#687EFF] [&_textarea]:focus:ring-2 [&_textarea]:focus:ring-[#687EFF]/20">
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
                     <label className="sm:w-[220px] text-right shrink-0">Session Code</label>
@@ -1279,43 +1503,47 @@ export default function CourseManagementPage() {
                             value={sectionForm.groups ? sectionForm.groups.split(',').filter(Boolean) : []}
                             onChange={(e) => {
                                 const selected = Array.from(e.target.selectedOptions).map((opt) => opt.value);
-                                setSectionForm({ ...sectionForm, groups: selected.join(',') });
+                                setSectionForm({ ...sectionForm, groups: normalizeSectionGroupsValue(selected.join(',')) });
                             }}
                             className="w-full border border-gray-300 px-1 py-1 outline-none bg-white text-[12px] font-normal overflow-y-auto"
                             style={{ height: '70px' }}
                         >
-                            <option>ADMINISTRATOR</option>
-                            <option>INSTRUCTOR</option>
-                            <option>LEARNER</option>
+                            <option value="ADMIN">ADMINISTRATOR</option>
+                            <option value="INSTRUCTOR">INSTRUCTOR</option>
+                            <option value="LEARNER">LEARNER</option>
                         </select>
                     </div>
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-2 sm:items-center mt-4 pt-4 border-t border-gray-100 pb-12">
-                    <div className="sm:w-[220px]"></div>
-                    <div className="flex gap-2">
-                        <button type="button" onClick={handleSectionSubmit} disabled={loading} className="bg-[#337AB7] text-white px-[14px] py-[4px] rounded-[15px] font-medium text-[12px] hover:bg-blue-600 outline-none w-[70px] disabled:opacity-50">{loading ? '...' : (editingSectionId ? 'Update' : 'Submit')}</button>
-                        <button type="button" onClick={() => { setEditingSectionId(null); setSectionForm(getDefaultSectionForm()); setView('SECTION_LIST'); }} className="bg-[#EAEAEA] text-[#333] px-[14px] py-[4px] border border-gray-300 rounded-[15px] font-medium text-[12px] hover:bg-gray-300 outline-none w-[70px]">Cancel</button>
+                <div className="mt-6 flex flex-col gap-2 border-t border-[#E8EEFF] pt-5 sm:flex-row sm:items-center">
+                    <div className="sm:w-[220px]" />
+                    <div className="flex gap-3">
+                        <button type="button" onClick={handleSectionSubmit} disabled={loading} className={adminPrimaryButtonClass}>
+                            {loading ? 'Working...' : (editingSectionId ? 'Update section' : 'Create section')}
+                        </button>
+                        <button type="button" onClick={() => { setEditingSectionId(null); setSectionForm(getDefaultSectionForm()); setView('SECTION_LIST'); }} className={adminSecondaryButtonClass}>
+                            Cancel
+                        </button>
                     </div>
                 </div>
             </form>
-        </div>
+        </AdminCard>
     );
 
     // --- RENDER SECTION LEARNERS ---
     const renderSectionLearners = () => {
-        const sectionLearners = learners;
+        const sectionLearners = pagedLearners;
         const getStatusMeta = (status) => {
             if (status === 'LEARNING') {
-                return { label: 'กำลังเรียน', chipClass: 'bg-[#EAF0FF] text-[#3752DC]' };
+                return { label: 'Learning', chipClass: 'bg-[#EAF0FF] text-[#3752DC]' };
             }
             if (status === 'COMPLETED') {
-                return { label: 'เสร็จสิ้น', chipClass: 'bg-[#E8FAF5] text-[#0F8B68]' };
+                return { label: 'Completed', chipClass: 'bg-[#E8FAF5] text-[#0F8B68]' };
             }
             if (status === 'SUSPENDED') {
-                return { label: 'ถูกระงับ', chipClass: 'bg-[#FFF1F3] text-[#C73D57]' };
+                return { label: 'Suspended', chipClass: 'bg-[#FFF1F3] text-[#C73D57]' };
             }
-            return { label: 'ยังไม่เริ่ม', chipClass: 'bg-[#F1F4FF] text-[#4B5AA8]' };
+            return { label: 'Not started', chipClass: 'bg-[#F1F4FF] text-[#4B5AA8]' };
         };
 
         return (
@@ -1328,26 +1556,26 @@ export default function CourseManagementPage() {
                         <div className="space-y-4">
                             <div className="font-semibold text-[22px] text-white flex items-center gap-2">
                                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
-                                สถานะผู้เรียน
+                                Learner Status
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <div className="rounded-xl bg-white/15 border border-white/30 px-4 py-3">
-                                    <div className="text-[12px] text-white/80">หมวดหมู่</div>
+                                    <div className="text-[12px] text-white/80">Category</div>
                                     <div className="text-white font-semibold text-[19px] leading-tight truncate">{selectedCourse?.category || '-'}</div>
                                 </div>
                                 <div className="rounded-xl bg-white/15 border border-white/30 px-4 py-3">
-                                    <div className="text-[12px] text-white/80">หลักสูตร</div>
+                                    <div className="text-[12px] text-white/80">Course</div>
                                     <div className="text-white font-semibold text-[19px] leading-tight truncate">{selectedCourse?.name || '-'}</div>
                                 </div>
                                 <div className="rounded-xl bg-white/15 border border-white/30 px-4 py-3">
-                                    <div className="text-[12px] text-white/80">กลุ่ม</div>
+                                    <div className="text-[12px] text-white/80">Section</div>
                                     <div className="text-white font-semibold text-[19px] leading-tight truncate">{selectedSection?.name || '-'}</div>
                                 </div>
                             </div>
                         </div>
 
                         <div className="mt-1 xl:mt-0 rounded-2xl bg-white px-3 py-3 shadow-md border border-[#E1E6FF] w-full sm:w-[220px]">
-                            <div className="text-[#1E2A56] text-[12px] font-semibold text-center mb-2">QR สำหรับ Enroll</div>
+                            <div className="text-[#1E2A56] text-[12px] font-semibold text-center mb-2">Enrollment QR</div>
                             <div className="w-[156px] h-[156px] mx-auto bg-[#F7F9FF] border border-[#E1E7FF] rounded-lg overflow-hidden flex items-center justify-center">
                                 {qrEnrollUrl ? (
                                     <img
@@ -1357,7 +1585,7 @@ export default function CourseManagementPage() {
                                     />
                                 ) : (
                                     <div className="text-[11px] text-gray-400 text-center px-2">
-                                        {qrLoading ? 'กำลังสร้าง QR...' : 'ยังไม่มี QR'}
+                                        {qrLoading ? 'Generating QR...' : 'QR not available yet'}
                                     </div>
                                 )}
                             </div>
@@ -1367,11 +1595,11 @@ export default function CourseManagementPage() {
                                 disabled={qrLoading || !selectedCourse?.id}
                                 className="mt-3 w-full h-9 rounded-lg bg-[#687EFF] hover:bg-[#5B72F2] disabled:opacity-50 text-white text-[13px] font-semibold transition-colors"
                             >
-                                {qrLoading ? 'กำลังสร้าง...' : 'Generate ใหม่'}
+                                {qrLoading ? 'Generating...' : 'Regenerate'}
                             </button>
                             {qrExpiresAt && (
                                 <div className="mt-2 text-[11px] text-[#5D6585] text-center">
-                                    หมดอายุ: {qrExpiresAt}
+                                    Expires: {qrExpiresAt}
                                 </div>
                             )}
                             {qrError && (
@@ -1391,9 +1619,9 @@ export default function CourseManagementPage() {
                             className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[#EEF1FF] hover:bg-[#E1E8FF] transition-colors"
                         >
                             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z"></path></svg>
-                            พิมพ์รายชื่อผู้ใช้
+                            Print learner list
                         </button>
-                        <span className="text-[#5D6690] font-medium">ผู้เรียนทั้งหมด {sectionLearners.length} คน</span>
+                        <span className="text-[#5D6690] font-medium">Total learners {filteredLearners.length}</span>
                     </div>
 
                     <button onClick={() => setView('SECTION_LIST')} className="text-sm text-[#687EFF] hover:text-[#4F64E6] hover:underline flex items-center gap-1 font-medium">
@@ -1402,19 +1630,23 @@ export default function CourseManagementPage() {
                 </div>
 
                 <div className="p-5 overflow-x-auto">
+                    <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <AdminEntriesControl value={learnerEntries} onChange={setLearnerEntries} label="learners" />
+                        <AdminSearchInput value={learnerSearch} onChange={(event) => setLearnerSearch(event.target.value)} placeholder="Search username, learner, or status" />
+                    </div>
                     <div className="rounded-xl border border-[#E2E8FF] overflow-x-auto">
                         <table className="w-full text-left text-[14px]">
                             <thead className="bg-[#F4F7FF] border-b border-[#E2E8FF] text-[#2F3C6C]">
                                 <tr>
-                                    <th className="p-3 border-r border-[#E2E8FF]">ลำดับ</th>
-                                    <th className="p-3 border-r border-[#E2E8FF]">ชื่อผู้ใช้</th>
-                                    <th className="p-3 border-r border-[#E2E8FF]">ชื่อ</th>
-                                    <th className="p-3 border-r border-[#E2E8FF]">วันที่เรียนรู้</th>
-                                    <th className="p-3 border-r border-[#E2E8FF] text-center">ยังไม่เริ่ม</th>
-                                    <th className="p-3 border-r border-[#E2E8FF] text-center">กำลังเรียน</th>
-                                    <th className="p-3 border-r border-[#E2E8FF] text-center">ถูกระงับ</th>
-                                    <th className="p-3 border-r border-[#E2E8FF] text-center">เสร็จสิ้น/ล้มเหลว</th>
-                                    <th className="p-3 text-center">สถานะปัจจุบัน</th>
+                                    <th className="p-3 border-r border-[#E2E8FF]">No.</th>
+                                    <th className="p-3 border-r border-[#E2E8FF]">Username</th>
+                                    <th className="p-3 border-r border-[#E2E8FF]">Learner</th>
+                                    <th className="p-3 border-r border-[#E2E8FF]">Learning date</th>
+                                    <th className="p-3 border-r border-[#E2E8FF] text-center">Not started</th>
+                                    <th className="p-3 border-r border-[#E2E8FF] text-center">Learning</th>
+                                    <th className="p-3 border-r border-[#E2E8FF] text-center">Suspended</th>
+                                    <th className="p-3 border-r border-[#E2E8FF] text-center">Completed</th>
+                                    <th className="p-3 text-center">Current status</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1422,7 +1654,7 @@ export default function CourseManagementPage() {
                                     const statusMeta = getStatusMeta(learner.status);
                                     return (
                                         <tr key={learner.id} className="border-b border-[#EEF1FF] text-[#475569] hover:bg-[#F9FAFF]">
-                                            <td className="p-3 border-r border-[#EEF1FF] text-center">{idx + 1}</td>
+                                            <td className="p-3 border-r border-[#EEF1FF] text-center">{(learnerPage - 1) * learnerEntries + idx + 1}</td>
                                             <td className="p-3 border-r border-[#EEF1FF]">{learner.username}</td>
                                             <td className="p-3 border-r border-[#EEF1FF]">{learner.name}</td>
                                             <td className="p-3 border-r border-[#EEF1FF] text-center">{learner.learnDate}</td>
@@ -1441,7 +1673,7 @@ export default function CourseManagementPage() {
                                 {sectionLearners.length === 0 && (
                                     <tr>
                                         <td colSpan="9" className="p-8 text-center text-[#64748B]">
-                                            ยังไม่มีผู้ลงทะเบียนในหลักสูตรนี้
+                                            {learnerSearch ? 'No learners matched the current search.' : 'No learners enrolled in this section yet.'}
                                         </td>
                                     </tr>
                                 )}
@@ -1449,37 +1681,50 @@ export default function CourseManagementPage() {
                         </table>
                     </div>
 
-                    <div className="flex gap-3 justify-center mt-6">
-                        <button className="h-10 min-w-[140px] bg-[#687EFF] hover:bg-[#5B72F2] text-white px-8 rounded-lg font-semibold shadow-sm transition-colors">บันทึก</button>
-                        <button className="h-10 min-w-[140px] bg-[#EEF1FF] hover:bg-[#E1E8FF] text-[#4E5FC9] px-8 rounded-lg font-semibold shadow-sm transition-colors">ยกเลิก</button>
-                    </div>
+                    <AdminPagination
+                        currentPage={learnerPage}
+                        totalPages={totalLearnerPages}
+                        onPageChange={setLearnerPage}
+                        totalItems={filteredLearners.length}
+                        startRow={filteredLearners.length === 0 ? 0 : (learnerPage - 1) * learnerEntries + 1}
+                        endRow={Math.min(learnerPage * learnerEntries, filteredLearners.length)}
+                    />
                 </div>
             </div>
         )
     };
 
     return (
-        <AdminLmsDashboard>
+        <AdminShell>
+            <AdminToastStack toasts={toasts} onDismiss={dismissToast} />
             <div className="w-full flex flex-col gap-6 font-['Outfit',sans-serif]">
-                <h1 className="text-[28px] font-medium text-[#052143] leading-[150%]">
-                    {view === 'COURSE_LIST' && 'Course'}
-                    {view === 'COURSE_CREATE' && (editingCourseId ? 'Course Edit' : 'Course Create')}
-                    {view === 'SECTION_LIST' && 'Section'}
-                    {view === 'SECTION_CREATE' && (editingSectionId ? 'Section Edit' : 'Section Create')}
-                    {view === 'SECTION_LEARNERS' && 'Section Learners'}
-                </h1>
+                <AdminPageHeader
+                    title={
+                        (view === 'COURSE_LIST' && 'Course')
+                        || (view === 'COURSE_CREATE' && (editingCourseId ? 'Edit Course' : 'Create Course'))
+                        || (view === 'SECTION_LIST' && 'Section')
+                        || (view === 'SECTION_CREATE' && (editingSectionId ? 'Edit Section' : 'Create Section'))
+                        || 'Section Learners'
+                    }
+                    description={
+                        view === 'COURSE_LIST'
+                            ? 'Manage course records, registration windows, and section setup.'
+                            : view === 'SECTION_LIST'
+                                ? `Review sections for ${selectedCourse?.name || 'the selected course'}.`
+                                : view === 'SECTION_LEARNERS'
+                                    ? 'Track learner progress and generate enrollment QR links.'
+                                    : 'Configure course information for the admin LMS.'
+                    }
+                />
 
                 {view === 'COURSE_LIST' && renderCourseList()}
                 {view === 'COURSE_CREATE' && renderCourseCreate()}
                 {view === 'SECTION_LIST' && renderSectionList()}
                 {view === 'SECTION_CREATE' && renderSectionCreate()}
                 {view === 'SECTION_LEARNERS' && renderSectionLearners()}
-
-                <div className="text-center text-[#6B778B] text-[13px] py-4">
-                    Copyright © 2024
-                </div>
             </div>
-        </AdminLmsDashboard>
+        </AdminShell>
     );
 }
+
 

@@ -1,7 +1,25 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+import AdminShell from '@/components/admin/layout/AdminShell';
+import {
+    AdminBodyStateRow,
+    AdminCard,
+    AdminEntriesControl,
+    AdminInlineAlert,
+    AdminPageHeader,
+    AdminPagination,
+    AdminSearchInput,
+    AdminTable,
+    AdminTableHead,
+    AdminTableWrap,
+    AdminTd,
+    AdminTh,
+    AdminToolbar,
+    adminPrimaryButtonClass,
+    adminSecondaryButtonClass,
+    adminSelectClass,
+} from '@/components/admin/ui/AdminPrimitives';
 import {
     CERTIFICATE_ASPECT_RATIO,
     CERTIFICATE_HOLDER_RATIO,
@@ -95,16 +113,6 @@ const ACTION_BUTTONS = {
     VIEW_SCORE: 'bg-violet-100 text-violet-700 border-violet-200 hover:bg-violet-200',
 };
 
-function pageRange(page, totalPages) {
-    const windowSize = 5;
-    if (totalPages <= windowSize) return Array.from({ length: totalPages }, (_, i) => i + 1);
-    const half = Math.floor(windowSize / 2);
-    let start = Math.max(1, page - half);
-    let end = Math.min(totalPages, start + windowSize - 1);
-    if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
-    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
-}
-
 export default function CertificateReportPage() {
     const [loading, setLoading] = useState(false);
     const [filters, setFilters] = useState({
@@ -186,8 +194,6 @@ export default function CertificateReportPage() {
         const start = (page - 1) * entries;
         return rows.slice(start, start + entries);
     }, [rows, page, entries]);
-    const pageNumbers = useMemo(() => pageRange(page, totalPages), [page, totalPages]);
-
     useEffect(() => {
         setPage(1);
     }, [entries, rows.length]);
@@ -411,17 +417,19 @@ export default function CertificateReportPage() {
     };
 
     return (
-        <AdminLmsDashboard>
+        <AdminShell>
             <div className="w-full flex flex-col gap-6 font-outfit">
-                <h1 className="text-[30px] font-semibold text-[#052143]">Report: Certificate Report</h1>
+                <AdminPageHeader
+                    title="Report: Certificate Report"
+                    description="Review certificate issuance, approval actions, and exportable certificate records."
+                />
 
-                <div className="bg-white border border-[#D1E3FB] rounded-[12px] overflow-hidden shadow-sm">
-                    <div className="bg-[#687EFF] text-white px-5 py-3 text-[18px] font-semibold">Certificate Report</div>
-                    <div className="p-5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <AdminCard title="Certificate Report" contentClassName="space-y-6 mt-2">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                         <select
                             value={selected.categoryId}
                             onChange={(e) => setSelected((prev) => ({ ...prev, categoryId: e.target.value, courseId: '' }))}
-                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                            className={adminSelectClass}
                         >
                             <option value="">Course Category: All</option>
                             {filters.categories.map((item) => (
@@ -432,7 +440,7 @@ export default function CertificateReportPage() {
                         <select
                             value={selected.courseId}
                             onChange={(e) => setSelected((prev) => ({ ...prev, courseId: e.target.value }))}
-                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                            className={adminSelectClass}
                         >
                             <option value="">Course: All</option>
                             {filteredCourseOptions.map((item) => (
@@ -443,7 +451,7 @@ export default function CertificateReportPage() {
                         <select
                             value={selected.certificateStatus}
                             onChange={(e) => setSelected((prev) => ({ ...prev, certificateStatus: e.target.value }))}
-                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                            className={adminSelectClass}
                         >
                             {filters.certificateStatuses.map((item) => (
                                 <option key={item.id} value={item.id}>{item.name}</option>
@@ -453,7 +461,7 @@ export default function CertificateReportPage() {
                         <select
                             value={selected.userStatus}
                             onChange={(e) => setSelected((prev) => ({ ...prev, userStatus: e.target.value }))}
-                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                            className={adminSelectClass}
                         >
                             {filters.userStatuses.map((item) => (
                                 <option key={item.id} value={item.id}>{item.name}</option>
@@ -464,31 +472,31 @@ export default function CertificateReportPage() {
                             type="date"
                             value={selected.fromDate}
                             onChange={(e) => setSelected((prev) => ({ ...prev, fromDate: e.target.value }))}
-                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
+                            className={adminSelectClass}
                         />
                         <input
                             type="date"
                             value={selected.toDate}
                             onChange={(e) => setSelected((prev) => ({ ...prev, toDate: e.target.value }))}
-                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
-                        />
-                        <input
-                            value={selected.q}
-                            onChange={(e) => setSelected((prev) => ({ ...prev, q: e.target.value }))}
-                            placeholder="Search user / course / cert no"
-                            className="h-[42px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF] md:col-span-2"
+                            className={adminSelectClass}
                         />
                     </div>
-                    <div className="px-5 pb-5 flex flex-wrap items-center gap-2">
+                    <AdminSearchInput
+                        value={selected.q}
+                        onChange={(e) => setSelected((prev) => ({ ...prev, q: e.target.value }))}
+                        placeholder="Search user / course / cert no"
+                        className="w-full lg:w-[360px]"
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
                         <button
                             onClick={() => fetchReport(selected)}
-                            className="h-[40px] px-5 rounded-[10px] bg-[#687EFF] text-white text-[14px] font-medium hover:bg-[#5A6FE0]"
+                            className={adminPrimaryButtonClass}
                         >
                             {loading ? 'Loading...' : 'View'}
                         </button>
                         <button
                             onClick={handleExport}
-                            className="h-[40px] px-5 rounded-[10px] border border-[#687EFF] bg-white text-[#687EFF] text-[14px] font-medium hover:bg-[#EEF1FF]"
+                            className={adminSecondaryButtonClass}
                         >
                             Export
                         </button>
@@ -497,17 +505,17 @@ export default function CertificateReportPage() {
                                 setSelected(DEFAULT_FILTERS);
                                 fetchReport(DEFAULT_FILTERS);
                             }}
-                            className="h-[40px] px-5 rounded-[10px] border border-[#D1D9EE] bg-white text-[#334155] text-[14px] font-medium hover:bg-[#F8FAFF]"
+                            className={adminSecondaryButtonClass}
                         >
                             Reset
                         </button>
                     </div>
-                </div>
+                </AdminCard>
 
                 {(error || success) && (
                     <div className="flex flex-col gap-2">
-                        {error && <div className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">{error}</div>}
-                        {success && <div className="rounded-[10px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-700">{success}</div>}
+                        {error && <AdminInlineAlert tone="error">{error}</AdminInlineAlert>}
+                        {success && <AdminInlineAlert tone="success">{success}</AdminInlineAlert>}
                     </div>
                 )}
 
@@ -519,77 +527,59 @@ export default function CertificateReportPage() {
                     <div className="rounded-[10px] border border-slate-200 bg-slate-50 p-3"><div className="text-[11px] text-slate-700">Pending</div><div className="text-[20px] font-semibold text-slate-700">{summary.pending}</div></div>
                 </div>
 
-                <div className="bg-white border border-[#D1E3FB] rounded-[12px] p-5 shadow-sm">
-                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
-                        <div className="flex items-center gap-2 text-[14px] text-[#64748B]">
-                            <select
-                                value={entries}
-                                onChange={(e) => setEntries(Number(e.target.value))}
-                                className="h-[38px] rounded-[10px] border border-[#D1D9EE] px-3 text-[14px] outline-none focus:border-[#687EFF]"
-                            >
-                                <option value={10}>10</option>
-                                <option value={20}>20</option>
-                                <option value={50}>50</option>
-                                <option value={100}>100</option>
-                            </select>
-                            <span>records</span>
-                        </div>
-                    </div>
+                <AdminCard title="Certificate Records" headerTone="secondary">
+                    <AdminToolbar left={<AdminEntriesControl value={entries} onChange={setEntries} label="records" />} />
 
-                    <div className="overflow-x-auto border border-[#E2E8F0] rounded-[10px]">
-                        <table className="w-full table-fixed text-left text-[12px]">
-                            <thead className="bg-[#EEF1FF] text-[#1E293B] border-b border-[#E2E8F0]">
+                    <AdminTableWrap>
+                        <AdminTable className="min-w-[1320px] text-[12px]">
+                            <AdminTableHead>
                                 <tr>
-                                    <th className="px-2 py-2 font-semibold w-[50px]">No.</th>
-                                    <th className="px-2 py-2 font-semibold w-[16%]">Course</th>
-                                    <th className="px-2 py-2 font-semibold w-[10%]">Section</th>
-                                    <th className="px-2 py-2 font-semibold w-[14%]">Username</th>
-                                    <th className="px-2 py-2 font-semibold w-[8%]">First Name</th>
-                                    <th className="px-2 py-2 font-semibold w-[8%]">Last Name</th>
-                                    <th className="px-2 py-2 font-semibold w-[8%]">User Status</th>
-                                    <th className="px-2 py-2 font-semibold w-[8%]">Certificate</th>
-                                    <th className="px-2 py-2 font-semibold w-[10%]">Certificate No</th>
-                                    <th className="px-2 py-2 font-semibold w-[9%]">Issued At</th>
-                                    <th className="px-2 py-2 font-semibold w-[9%]">Response By</th>
-                                    <th className="px-2 py-2 font-semibold w-[12%]">Action</th>
+                                    <AdminTh className="w-[50px]">No.</AdminTh>
+                                    <AdminTh className="w-[16%]">Course</AdminTh>
+                                    <AdminTh className="w-[10%]">Section</AdminTh>
+                                    <AdminTh className="w-[14%]">Username</AdminTh>
+                                    <AdminTh className="w-[8%]">First Name</AdminTh>
+                                    <AdminTh className="w-[8%]">Last Name</AdminTh>
+                                    <AdminTh className="w-[8%]">User Status</AdminTh>
+                                    <AdminTh className="w-[8%]">Certificate</AdminTh>
+                                    <AdminTh className="w-[10%]">Certificate No</AdminTh>
+                                    <AdminTh className="w-[9%]">Issued At</AdminTh>
+                                    <AdminTh className="w-[9%]">Response By</AdminTh>
+                                    <AdminTh className="w-[12%]">Action</AdminTh>
                                 </tr>
-                            </thead>
+                            </AdminTableHead>
                             <tbody className="text-[#334155]">
                                 {loading && (
-                                    <tr>
-                                        <td colSpan={12} className="px-3 py-8 text-center text-[#64748B]">Loading certificate report...</td>
-                                    </tr>
+                                    <AdminBodyStateRow colSpan={12}>Loading certificate report...</AdminBodyStateRow>
                                 )}
                                 {!loading && pagedRows.length === 0 && (
-                                    <tr>
-                                        <td colSpan={12} className="px-3 py-8 text-center text-[#64748B]">No data found</td>
-                                    </tr>
+                                    <AdminBodyStateRow colSpan={12}>No data found</AdminBodyStateRow>
                                 )}
                                 {!loading && pagedRows.map((row, index) => (
                                     <tr key={row.enrollmentId} className="border-b border-[#EEF2FF] last:border-b-0 hover:bg-[#F8FAFF]">
-                                        <td className="px-2 py-2">{(page - 1) * entries + index + 1}</td>
-                                        <td className="px-2 py-2 break-words">
+                                        <AdminTd>{(page - 1) * entries + index + 1}</AdminTd>
+                                        <AdminTd>
                                             <div className="font-medium">{row.courseName || '-'}</div>
                                             <div className="text-[10px] text-[#64748B] break-words">{row.categoryName || '-'}</div>
-                                        </td>
-                                        <td className="px-2 py-2 break-words">{row.sectionName || '-'}</td>
-                                        <td className="px-2 py-2 break-all">{row.username || '-'}</td>
-                                        <td className="px-2 py-2 break-words">{row.firstName || '-'}</td>
-                                        <td className="px-2 py-2 break-words">{row.lastName || '-'}</td>
-                                        <td className="px-2 py-2">
+                                        </AdminTd>
+                                        <AdminTd>{row.sectionName || '-'}</AdminTd>
+                                        <AdminTd className="break-all">{row.username || '-'}</AdminTd>
+                                        <AdminTd>{row.firstName || '-'}</AdminTd>
+                                        <AdminTd>{row.lastName || '-'}</AdminTd>
+                                        <AdminTd>
                                             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${learnerBadgeClass(row.userStatus)}`}>
                                                 {row.userStatusLabel || '-'}
                                             </span>
-                                        </td>
-                                        <td className="px-2 py-2">
+                                        </AdminTd>
+                                        <AdminTd>
                                             <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statusBadgeClass(row.certificateStatus)}`}>
                                                 {row.certificateStatusLabel || '-'}
                                             </span>
-                                        </td>
-                                        <td className="px-2 py-2 font-mono text-[10px] break-all">{row.certificateNo || '-'}</td>
-                                        <td className="px-2 py-2 break-words">{formatDateTime(row.issuedAt)}</td>
-                                        <td className="px-2 py-2 break-words">{row.responseBy || '-'}</td>
-                                        <td className="px-2 py-2">
+                                        </AdminTd>
+                                        <AdminTd className="font-mono text-[10px] break-all">{row.certificateNo || '-'}</AdminTd>
+                                        <AdminTd>{formatDateTime(row.issuedAt)}</AdminTd>
+                                        <AdminTd>{row.responseBy || '-'}</AdminTd>
+                                        <AdminTd>
                                             <div className="flex flex-col gap-1">
                                                 <button
                                                     type="button"
@@ -632,52 +622,24 @@ export default function CertificateReportPage() {
                                                     Print
                                                 </button>
                                             </div>
-                                        </td>
+                                        </AdminTd>
                                     </tr>
                                 ))}
                             </tbody>
-                        </table>
-                    </div>
+                        </AdminTable>
+                    </AdminTableWrap>
 
-                    <div className="mt-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div className="text-[13px] text-[#64748B]">
-                            Showing {pagedRows.length} of {rows.length} entries | Page {page} of {totalPages}
-                        </div>
-                        <div className="flex items-center gap-1 flex-wrap">
-                            <button
-                                type="button"
-                                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                                disabled={page <= 1}
-                                className="h-[34px] px-3 rounded-[8px] border border-[#D1D9EE] text-[13px] text-[#334155] disabled:opacity-50"
-                            >
-                                Prev
-                            </button>
-                            {pageNumbers.map((n) => (
-                                <button
-                                    key={n}
-                                    type="button"
-                                    onClick={() => setPage(n)}
-                                    className={`h-[34px] min-w-[34px] px-2 rounded-[8px] border text-[13px] font-medium ${
-                                        n === page
-                                            ? 'border-[#687EFF] bg-[#687EFF] text-white'
-                                            : 'border-[#D1D9EE] bg-white text-[#334155] hover:bg-[#F8FAFF]'
-                                    }`}
-                                >
-                                    {n}
-                                </button>
-                            ))}
-                            <button
-                                type="button"
-                                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-                                disabled={page >= totalPages}
-                                className="h-[34px] px-3 rounded-[8px] border border-[#D1D9EE] text-[13px] text-[#334155] disabled:opacity-50"
-                            >
-                                Next
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                    <AdminPagination
+                        currentPage={page}
+                        totalPages={totalPages}
+                        onPageChange={setPage}
+                        totalItems={rows.length}
+                        startRow={rows.length === 0 ? 0 : (page - 1) * entries + 1}
+                        endRow={Math.min(page * entries, rows.length)}
+                    />
+                </AdminCard>
             </div>
-        </AdminLmsDashboard>
+        </AdminShell>
     );
 }
+

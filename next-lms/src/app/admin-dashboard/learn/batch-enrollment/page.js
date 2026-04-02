@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
-import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+import AdminShell from '@/components/admin/layout/AdminShell';
 
 const DEFAULT_FORM = { categoryId: '', courseId: '', status: 'APPROVED' };
 const BATCH_STATUS_OPTIONS = [
@@ -24,7 +24,7 @@ function getPageNumbers(page, totalPages, windowSize = 5) {
   if (totalPages <= windowSize) return Array.from({ length: totalPages }, (_, i) => i + 1);
   const half = Math.floor(windowSize / 2);
   let start = Math.max(1, page - half);
-  let end = Math.min(totalPages, start + windowSize - 1);
+  const end = Math.min(totalPages, start + windowSize - 1);
   if (end - start + 1 < windowSize) start = Math.max(1, end - windowSize + 1);
   return Array.from({ length: end - start + 1 }, (_, i) => start + i);
 }
@@ -50,7 +50,7 @@ function Pagination({ page, totalPages, pageNumbers, setPage }) {
     <div className="flex items-center gap-1 flex-wrap">
       <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}
         className="h-[32px] px-3 rounded-lg border border-[#DDE4FF] text-[12px] text-[#334155] hover:bg-[#F0EDFF] disabled:opacity-40 transition">
-        ← ก่อนหน้า
+        ← Previous
       </button>
       {pageNumbers.map((n) => (
         <button key={n} type="button" onClick={() => setPage(n)}
@@ -63,7 +63,7 @@ function Pagination({ page, totalPages, pageNumbers, setPage }) {
       ))}
       <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
         className="h-[32px] px-3 rounded-lg border border-[#DDE4FF] text-[12px] text-[#334155] hover:bg-[#F0EDFF] disabled:opacity-40 transition">
-        ถัดไป →
+        Next →
       </button>
     </div>
   );
@@ -149,10 +149,10 @@ export default function BatchEnrollmentPage() {
 
   const parseManualInput = () => {
     const lines = manualInput.split(/\r?\n/).map(toSafeString).filter(Boolean);
-    if (lines.length === 0) { setError('กรุณาใส่อย่างน้อย 1 username/email'); return; }
+    if (lines.length === 0) { setError('Please provide at least 1 username/email'); return; }
     setFileName('manual-input.txt');
     parseRawRows(lines, 'Manual Input');
-    setError(''); setSuccess('พาร์สรายชื่อสำเร็จ!');
+    setError(''); setSuccess('List parsed successfully!');
   };
 
   const onFileChange = async (event) => {
@@ -161,14 +161,14 @@ export default function BatchEnrollmentPage() {
     setParseInfo({ totalRows: 0, validRows: 0, duplicateRows: 0, usedColumn: '' });
     if (!file) { setFileName(''); return; }
     setFileName(file.name);
-    try { await parseExcelFile(file); setSuccess('พาร์สไฟล์สำเร็จ!'); }
+    try { await parseExcelFile(file); setSuccess('File parsed successfully!'); }
     catch (err) { setParsedRows([]); setError(err?.message || 'Cannot parse file'); }
   };
 
   const submitBatchEnrollment = async (event) => {
     event.preventDefault(); setError(''); setSuccess(''); setBatchResult(null);
-    if (!form.courseId) { setError('กรุณาเลือกคอร์สเรียน'); return; }
-    if (parsedRows.length === 0) { setError('กรุณาอัปโหลดหรือพาร์สไฟล์ก่อน'); return; }
+    if (!form.courseId) { setError('Please select a course'); return; }
+    if (parsedRows.length === 0) { setError('Please upload or parse a file first'); return; }
     try {
       setSubmitting(true);
       const res = await fetch('/api/enrollments/batch', {
@@ -180,7 +180,7 @@ export default function BatchEnrollmentPage() {
       if (!res.ok) throw new Error(data?.error || 'Batch enrollment failed');
       setBatchResult(data);
       const s = data?.summary || {};
-      setSuccess(`เสร็จสิ้น: สำเร็จ ${s.successCount || 0} | ล้มเหลว ${s.failedCount || 0} | ข้ามไป ${s.skippedCount || 0}`);
+      setSuccess(`Completed: success ${s.successCount || 0} | failed ${s.failedCount || 0} | skipped ${s.skippedCount || 0}`);
     } catch (err) {
       setError(err?.message || 'Batch enrollment failed');
     } finally { setSubmitting(false); }
@@ -209,14 +209,14 @@ export default function BatchEnrollmentPage() {
   const inputCls = 'h-[42px] w-full rounded-xl border border-[#DDE4FF] bg-white px-3 text-[14px] text-[#1E293B] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 transition';
 
   return (
-    <AdminLmsDashboard>
+    <AdminShell>
       <div className="w-full flex flex-col gap-6" style={{ fontFamily: "'Inter', 'Noto Sans Thai', sans-serif" }}>
 
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[#1E293B]">ลงทะเบียนกลุ่ม (Batch Enrollment)</h1>
-            <p className="text-[13px] text-[#64748B] mt-0.5">เลือกคอร์ส → อัปโหลด/วางรายชื่อ → ยืนยันลงทะเบียนกลุ่ม</p>
+            <h1 className="text-2xl font-bold text-[#1E293B]">Batch Enrollment</h1>
+            <p className="text-[13px] text-[#64748B] mt-0.5">Select course → upload/paste users → confirm batch enrollment</p>
           </div>
           <div className="w-10 h-10 rounded-xl bg-[#687EFF] flex items-center justify-center shadow-md shadow-[#687EFF]/30">
             <svg width="20" height="20" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -226,9 +226,9 @@ export default function BatchEnrollmentPage() {
         {/* Step Guide */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {[
-            { step: 1, title: 'เลือกคอร์สเรียน', detail: 'เลือกหมวดหมู่, คอร์ส และสถานะที่ต้องการตั้ง', icon: <svg width="20" height="20" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> },
-            { step: 2, title: 'อัปโหลดรายชื่อ', detail: 'ใช้ไฟล์ Excel/CSV หรือวาง Username ทีละบรรทัด', icon: <svg width="20" height="20" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> },
-            { step: 3, title: 'ยืนยันลงทะเบียน', detail: 'ตรวจ Preview แล้วกด Submit', icon: <svg width="20" height="20" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
+            { step: 1, title: 'Choose course', detail: 'Pick category, course, and target status', icon: <svg width="20" height="20" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> },
+            { step: 2, title: 'Upload list', detail: 'Use Excel/CSV file or paste one username per line', icon: <svg width="20" height="20" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> },
+            { step: 3, title: 'Confirm enrollment', detail: 'Review preview and submit', icon: <svg width="20" height="20" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
           ].map(({ step, title, detail, icon }) => (
             <div key={step} className="flex items-start gap-4 bg-white rounded-2xl border border-[#EEF1FF] p-4 shadow-sm">
               <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: '#F0EDFF' }}>
@@ -250,11 +250,11 @@ export default function BatchEnrollmentPage() {
           <div className="flex items-center justify-between gap-3 px-6 py-4 border-b border-[#EEF1FF]" style={{ background: 'linear-gradient(90deg,#687EFF,#8A9CFF)' }}>
             <div className="flex items-center gap-2">
               <svg width="18" height="18" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-              <span className="text-white font-semibold text-[16px]">ตั้งค่าการลงทะเบียนกลุ่ม</span>
+              <span className="text-white font-semibold text-[16px]">Batch Enrollment Setup</span>
             </div>
             <button type="button" onClick={downloadTemplate}
               className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/40 text-white text-[12px] font-medium hover:bg-white/20 transition-all">
-              ⬇ ดาวน์โหลด Template
+              ⬇ Download Template
             </button>
           </div>
 
@@ -262,25 +262,25 @@ export default function BatchEnrollmentPage() {
             {/* Row 1: selects */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-medium text-[#334155]">หมวดหมู่</label>
+                <label className="text-[13px] font-medium text-[#334155]">Category</label>
                 <select value={form.categoryId}
                   onChange={(e) => setForm((p) => ({ ...p, categoryId: e.target.value, courseId: '' }))}
                   className={inputCls} disabled={loading || submitting}>
-                  <option value="">ทั้งหมด</option>
+                  <option value="">All</option>
                   {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-medium text-[#334155]">คอร์สเรียน <span className="text-rose-500">*</span></label>
+                <label className="text-[13px] font-medium text-[#334155]">Course <span className="text-rose-500">*</span></label>
                 <select value={form.courseId}
                   onChange={(e) => setForm((p) => ({ ...p, courseId: e.target.value }))}
                   className={inputCls} disabled={loading || submitting} required>
-                  <option value="">เลือกคอร์ส</option>
+                  <option value="">Select course</option>
                   {filteredCourses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-medium text-[#334155]">สถานะที่ตั้ง</label>
+                <label className="text-[13px] font-medium text-[#334155]">Target status</label>
                 <select value={form.status}
                   onChange={(e) => setForm((p) => ({ ...p, status: e.target.value }))}
                   className={inputCls} disabled={loading || submitting}>
@@ -291,7 +291,7 @@ export default function BatchEnrollmentPage() {
 
             {/* File upload */}
             <div>
-              <label className="text-[13px] font-medium text-[#334155] mb-2 block">อัปโหลดไฟล์ Excel / CSV</label>
+              <label className="text-[13px] font-medium text-[#334155] mb-2 block">Upload Excel / CSV file</label>
               <label className="w-full rounded-2xl border-2 border-dashed border-[#C4B5FD] bg-[#F8F7FF] px-6 py-8 flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-[#F0EDFF] transition-all group">
                 <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={onFileChange} disabled={loading || submitting} />
                 <div className="w-12 h-12 rounded-2xl bg-[#EEF1FF] flex items-center justify-center group-hover:bg-[#E0DAFF] transition">
@@ -300,22 +300,22 @@ export default function BatchEnrollmentPage() {
                 <div className="text-[14px] font-medium text-[#687EFF]">
                   {fileName
                     ? <span className="flex items-center gap-1.5"><svg width="14" height="14" fill="none" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>{fileName}</span>
-                    : 'คลิกเพื่อเลือกไฟล์ .xlsx / .xls / .csv'}
+                    : 'Click to choose .xlsx / .xls / .csv file'}
                 </div>
-                <div className="text-[12px] text-[#94A3B8]">แนะนำให้มี column: username / email / user_id</div>
+                <div className="text-[12px] text-[#94A3B8]">Recommended columns: username / email / user_id</div>
               </label>
             </div>
 
             {/* Manual input */}
             <div>
-              <label className="text-[13px] font-medium text-[#334155] mb-2 block">หรือวาง Username/Email (1 บรรทัดต่อ 1 คน)</label>
+              <label className="text-[13px] font-medium text-[#334155] mb-2 block">Or paste Username/Email (1 line per user)</label>
               <textarea value={manualInput} onChange={(e) => setManualInput(e.target.value)} rows={5}
                 placeholder={"learner01\nlearner02\nuser@example.com"}
                 className="w-full rounded-xl border border-[#DDE4FF] px-4 py-3 text-[14px] text-[#1E293B] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 transition resize-none" />
               <button type="button" onClick={parseManualInput}
                 className="mt-2 h-[36px] px-5 rounded-xl border border-[#687EFF] text-[#687EFF] bg-white text-[13px] font-medium hover:bg-[#F0EDFF] transition-all inline-flex items-center gap-1.5">
                 <svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-                พาร์สรายชื่อ Manual
+                Parse Manual List
               </button>
             </div>
 
@@ -327,15 +327,15 @@ export default function BatchEnrollmentPage() {
                 {submitting ? (
                   <span className="flex items-center gap-2">
                     <svg className="animate-spin w-4 h-4" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="white" strokeWidth="4"/><path className="opacity-75" fill="white" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                    กำลังลงทะเบียน...
+                    Enrolling...
                   </span>
                 ) : (
-                  <><svg width="15" height="15" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> ลงทะเบียนกลุ่ม ({parsedRows.length} คน)</> 
+                  <><svg width="15" height="15" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Enroll Batch ({parsedRows.length} users)</> 
                 )}
               </button>
               <button type="button" onClick={resetForm} disabled={loading || submitting}
                 className="h-[42px] px-6 rounded-xl border border-[#DDE4FF] text-[14px] text-[#687EFF] font-medium hover:bg-[#F0EDFF] transition-all">
-                ล้างทั้งหมด
+                Clear all
               </button>
             </div>
           </form>
@@ -356,7 +356,7 @@ export default function BatchEnrollmentPage() {
         <div className="bg-white rounded-2xl border border-[#EEF1FF] shadow-sm overflow-hidden">
           <div className="flex items-center gap-3 px-6 py-4 border-b border-[#EEF1FF]">
             <svg width="16" height="16" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-            <span className="font-semibold text-[16px] text-[#1E293B]">Preview รายชื่อ</span>
+            <span className="font-semibold text-[16px] text-[#1E293B]">Preview list</span>
           </div>
           <div className="p-6">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
@@ -379,7 +379,7 @@ export default function BatchEnrollmentPage() {
                 </thead>
                 <tbody>
                   {previewRows.length === 0 && (
-                    <tr><td colSpan={2} className="px-4 py-10 text-center text-[#94A3B8]">ยังไม่มีข้อมูล — อัปโหลดหรือพาร์สรายชื่อก่อน</td></tr>
+                    <tr><td colSpan={2} className="px-4 py-10 text-center text-[#94A3B8]">No data yet - upload a file or parse list first</td></tr>
                   )}
                   {previewRows.map((row, index) => (
                     <tr key={`${row}-${index}`} className="border-t border-[#F1F5F9] hover:bg-[#FAFBFF] transition-colors">
@@ -393,12 +393,12 @@ export default function BatchEnrollmentPage() {
 
             <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="flex items-center gap-2 text-[12px] text-[#64748B]">
-                แสดง
+                Show
                 <select value={previewEntries} onChange={(e) => setPreviewEntries(Number(e.target.value))}
                   className="h-[30px] rounded-lg border border-[#DDE4FF] px-2 text-[12px] outline-none focus:border-[#687EFF]">
                   {[20, 50, 100].map((v) => <option key={v} value={v}>{v}</option>)}
                 </select>
-                รายการ | {previewRows.length} / {parsedRows.length}
+                items | {previewRows.length} / {parsedRows.length}
               </div>
               <Pagination page={previewPage} totalPages={previewTotalPages} pageNumbers={previewPageNumbers} setPage={setPreviewPage} />
             </div>
@@ -410,7 +410,7 @@ export default function BatchEnrollmentPage() {
           <div className="bg-white rounded-2xl border border-[#EEF1FF] shadow-sm overflow-hidden">
             <div className="flex items-center gap-3 px-6 py-4 border-b border-[#EEF1FF]">
               <svg width="16" height="16" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-              <span className="font-semibold text-[16px] text-[#1E293B]">ผลลัพธ์การลงทะเบียน</span>
+              <span className="font-semibold text-[16px] text-[#1E293B]">Enrollment Results</span>
             </div>
             <div className="p-6">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
@@ -424,12 +424,12 @@ export default function BatchEnrollmentPage() {
                 <table className="w-full min-w-[700px] text-left text-[13px]">
                   <thead>
                     <tr className="bg-[#F0EDFF] text-[#687EFF]">
-                      <th className="px-4 py-3 font-semibold">แถว</th>
+                      <th className="px-4 py-3 font-semibold">Row</th>
                       <th className="px-4 py-3 font-semibold">Input</th>
                       <th className="px-4 py-3 font-semibold">Username</th>
-                      <th className="px-4 py-3 font-semibold">ชื่อ</th>
-                      <th className="px-4 py-3 font-semibold">ผลลัพธ์</th>
-                      <th className="px-4 py-3 font-semibold">หมายเหตุ</th>
+                      <th className="px-4 py-3 font-semibold">Name</th>
+                      <th className="px-4 py-3 font-semibold">Result</th>
+                      <th className="px-4 py-3 font-semibold">Note</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -457,12 +457,12 @@ export default function BatchEnrollmentPage() {
 
               <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <div className="flex items-center gap-2 text-[12px] text-[#64748B]">
-                  แสดง
+                  Show
                   <select value={resultEntries} onChange={(e) => setResultEntries(Number(e.target.value))}
                     className="h-[30px] rounded-lg border border-[#DDE4FF] px-2 text-[12px] outline-none focus:border-[#687EFF]">
                     {[10, 20, 50, 100].map((v) => <option key={v} value={v}>{v}</option>)}
                   </select>
-                  รายการ | {pagedResultRows.length} / {resultRows.length}
+                  items | {pagedResultRows.length} / {resultRows.length}
                 </div>
                 <Pagination page={resultPage} totalPages={resultTotalPages} pageNumbers={resultPageNumbers} setPage={setResultPage} />
               </div>
@@ -470,6 +470,7 @@ export default function BatchEnrollmentPage() {
           </div>
         )}
       </div>
-    </AdminLmsDashboard>
+    </AdminShell>
   );
 }
+

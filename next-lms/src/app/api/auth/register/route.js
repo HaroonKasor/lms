@@ -115,7 +115,7 @@ export async function POST(request) {
             await ensureUserRole(tx, {
                 organizationId,
                 userId: created.id,
-                roleCode: 'USER',
+                roleCode: 'LEARNER',
             });
 
             return created;
@@ -128,11 +128,11 @@ export async function POST(request) {
                 username: user.username,
                 email: user.email,
                 fullName: getUserDisplayName(user) || user.username,
-                role: 'user',
+                role: 'learner',
             },
         });
         const sessionToken = await createSessionToken(
-            { uid: user.id, role: 'user', rm: 1 },
+            { uid: user.id, role: 'learner', rm: 1 },
             { ttlSeconds: SESSION_TTL_SECONDS }
         );
         response.cookies.set(SESSION_COOKIE_NAME, sessionToken, getSessionCookieOptions());

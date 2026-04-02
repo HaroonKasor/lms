@@ -1,16 +1,23 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
-import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+import React, { useEffect, useMemo, useState } from 'react';
+import AdminShell from '@/components/admin/layout/AdminShell';
 import { useRouter } from 'next/navigation';
-
-const GROUP_OPTIONS = ['ADMINISTRATOR', 'INSTRUCTOR', 'LEARNER'];
-
-function mapGroupsToRole(groups = []) {
-    if (groups.includes('ADMINISTRATOR')) return 'admin';
-    if (groups.includes('INSTRUCTOR')) return 'instructor';
-    return 'user';
-}
+import {
+    AdminCard,
+    AdminInlineAlert,
+    AdminPageHeader,
+    adminInputClass,
+    adminPrimaryButtonClass,
+    adminSecondaryButtonClass,
+} from '@/components/admin/ui/AdminPrimitives';
+import { setAdminFlash } from '@/lib/admin/flash';
+import { createUser } from '@/services/admin/userService';
+import {
+    GROUP_ROLE_OPTIONS,
+    roleLabelFromEnterpriseRoleCode,
+    toUiRoleFromEnterpriseRoleCode,
+} from '@/lib/shared/role-directory';
 
 export default function CreateUserPage() {
     const router = useRouter();
@@ -18,7 +25,8 @@ export default function CreateUserPage() {
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
-    const [success, setSuccess] = useState('');
+    const [groupOptions, setGroupOptions] = useState([]);
+    const [loadingGroups, setLoadingGroups] = useState(true);
     const [formData, setFormData] = useState({
         fullName: '',
         username: '',
@@ -27,13 +35,57 @@ export default function CreateUserPage() {
         password: '',
         confirmPassword: '',
         status: 'Active',
-        selectedGroups: ['LEARNER'],
+        roleCode: 'LEARNER',
     });
 
-    const groupSummary = useMemo(() => {
-        if (formData.selectedGroups.length === 0) return 'No group selected';
-        return formData.selectedGroups.join(', ');
-    }, [formData.selectedGroups]);
+    useEffect(() => {
+        let active = true;
+        const loadGroups = async () => {
+            try {
+                setLoadingGroups(true);
+                const response = await fetch('/api/groups', { cache: 'no-store' });
+                const payload = await response.json().catch(() => []);
+                if (!response.ok || !active) return;
+                const normalized = Array.isArray(payload)
+                    ? payload
+                        .map((row) => ({
+                            code: String(row?.code || '').trim().toUpperCase(),
+                            name: String(row?.name || '').trim(),
+                            roleCode: String(row?.roleCode || 'LEARNER').trim().toUpperCase(),
+                            isSystemDefault: Boolean(row?.isSystemDefault),
+                        }))
+                        .filter((row) => row.code)
+                    : [];
+                setGroupOptions(normalized);
+                setFormData((prev) => {
+                    if (prev.roleCode) return prev;
+                    const fallbackRole = normalized[0]?.roleCode || 'LEARNER';
+                    return {
+                        ...prev,
+                        roleCode: fallbackRole,
+                    };
+                });
+            } catch (loadErr) {
+                console.error('[CreateUser] load groups failed', loadErr);
+            } finally {
+                if (active) setLoadingGroups(false);
+            }
+        };
+
+        loadGroups();
+        return () => { active = false; };
+    }, []);
+
+    const assignedGroup = useMemo(() => {
+        const roleCode = String(formData.roleCode || '').trim().toUpperCase() || 'LEARNER';
+        return groupOptions.find((item) => item.roleCode === roleCode && item.isSystemDefault)
+            || groupOptions.find((item) => item.roleCode === roleCode)
+            || null;
+    }, [formData.roleCode, groupOptions]);
+
+    const selectedRoleLabel = useMemo(() => {
+        return roleLabelFromEnterpriseRoleCode(formData.roleCode || 'LEARNER');
+    }, [formData.roleCode]);
 
     const handleChange = (field, value) => {
         setFormData((prev) => ({ ...prev, [field]: value }));
@@ -41,71 +93,45 @@ export default function CreateUserPage() {
 
     const normalizePhoneInput = (value) => String(value || '').replace(/\D/g, '').slice(0, 20);
 
-    const handleToggleGroup = (group) => {
-        setFormData((prev) => {
-            const exists = prev.selectedGroups.includes(group);
-            if (exists) {
-                const remaining = prev.selectedGroups.filter((item) => item !== group);
-                return { ...prev, selectedGroups: remaining };
-            }
-            return { ...prev, selectedGroups: [...prev.selectedGroups, group] };
-        });
-    };
-
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
-        setSuccess('');
 
         if (!formData.username.trim() || !formData.email.trim() || !formData.password) {
-            setError('กรุณากรอก Username, Email และ Password');
+            setError('Please enter username, email, and password.');
             return;
         }
         if (formData.phoneNumber && !/^\d{8,20}$/.test(formData.phoneNumber)) {
-            setError('Phone Number ต้องเป็นตัวเลข 8-20 หลัก');
+            setError('Phone number must contain 8 to 20 digits.');
             return;
         }
         if (formData.password.length < 6) {
-            setError('Password ต้องอย่างน้อย 6 ตัวอักษร');
+            setError('Password must be at least 6 characters.');
             return;
         }
         if (formData.password !== formData.confirmPassword) {
-            setError('Confirm Password ไม่ตรงกัน');
+            setError('Confirm password does not match.');
             return;
         }
-        if (formData.selectedGroups.length === 0) {
-            setError('กรุณาเลือก Group อย่างน้อย 1 รายการ');
+        if (!assignedGroup?.code) {
+            setError('Role group is not ready yet. Please check Group Management first.');
             return;
         }
-
-        const role = mapGroupsToRole(formData.selectedGroups);
-        const isActive = formData.status === 'Active';
 
         setSaving(true);
         try {
-            const res = await fetch('/api/users', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    username: formData.username.trim(),
-                    email: formData.email.trim(),
-                    password: formData.password,
-                    fullName: formData.fullName.trim(),
-                    phone: formData.phoneNumber.trim(),
-                    role,
-                    isActive,
-                }),
+            const role = toUiRoleFromEnterpriseRoleCode(formData.roleCode || 'LEARNER');
+            await createUser({
+                ...formData,
+                role,
+                selectedGroups: [assignedGroup.code],
             });
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                setError(data?.error || 'Create user failed');
-                return;
-            }
-
-            setSuccess('สร้างผู้ใช้สำเร็จ');
-            setTimeout(() => {
-                router.push('/admin-dashboard/manage-user/users');
-            }, 500);
+            setAdminFlash({
+                tone: 'success',
+                title: 'Created',
+                message: `Created ${formData.username.trim()} successfully.`,
+            });
+            router.push('/admin-dashboard/manage-user/users');
         } catch (err) {
             setError(err?.message || 'Create user failed');
         } finally {
@@ -114,33 +140,19 @@ export default function CreateUserPage() {
     };
 
     const labelClass = 'text-[14px] text-[#052143] font-medium';
-    const inputClass = 'w-full h-[42px] rounded-[6px] border border-[#D1D9EE] px-3 text-[14px] text-[#334155] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 bg-white';
-    const boxClass = 'w-full min-h-[120px] rounded-[6px] border border-[#D1D9EE] px-3 py-2 text-[14px] text-[#334155] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 bg-white';
+    const boxClass = 'w-full min-h-[120px] rounded-xl border border-[#DDE4FF] px-3 py-3 text-[14px] text-[#334155] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 bg-white';
 
     return (
-        <AdminLmsDashboard>
+        <AdminShell>
             <div className="w-full flex flex-col gap-6 font-outfit">
-                <h1 className="text-[40px] leading-none font-medium text-[#052143]">User</h1>
+                <AdminPageHeader
+                    title="Create User"
+                    description="Set login credentials, profile information, and default group access."
+                />
 
-                <div className="bg-white border border-[#D1E3FB] rounded-[8px] overflow-hidden shadow-sm">
-                    <div className="bg-[#687EFF] px-4 py-3 flex items-center gap-2 text-white font-medium text-[22px]">
-                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
-                        </svg>
-                        User
-                    </div>
-
-                    <form onSubmit={handleSubmit} className="p-5 md:p-6 space-y-4">
-                        {error && (
-                            <div className="rounded-[6px] border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">
-                                {error}
-                            </div>
-                        )}
-                        {success && (
-                            <div className="rounded-[6px] border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] text-emerald-700">
-                                {success}
-                            </div>
-                        )}
+                <AdminCard title="User Details">
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        {error && <AdminInlineAlert>{error}</AdminInlineAlert>}
 
                         <div className="space-y-1.5">
                             <label className={labelClass}>Username</label>
@@ -149,7 +161,7 @@ export default function CreateUserPage() {
                                 placeholder="Username"
                                 value={formData.username}
                                 onChange={(e) => handleChange('username', e.target.value)}
-                                className={inputClass}
+                                className={adminInputClass}
                                 required
                             />
                         </div>
@@ -162,7 +174,7 @@ export default function CreateUserPage() {
                                     placeholder="Password"
                                     value={formData.password}
                                     onChange={(e) => handleChange('password', e.target.value)}
-                                    className={`${inputClass} pr-10`}
+                                    className={`${adminInputClass} pr-10`}
                                     required
                                 />
                                 <button
@@ -197,7 +209,7 @@ export default function CreateUserPage() {
                                     placeholder="Confirm Password"
                                     value={formData.confirmPassword}
                                     onChange={(e) => handleChange('confirmPassword', e.target.value)}
-                                    className={`${inputClass} pr-10`}
+                                    className={`${adminInputClass} pr-10`}
                                     required
                                 />
                                 <button
@@ -231,7 +243,7 @@ export default function CreateUserPage() {
                                 placeholder="Full Name"
                                 value={formData.fullName}
                                 onChange={(e) => handleChange('fullName', e.target.value)}
-                                className={inputClass}
+                                className={adminInputClass}
                             />
                         </div>
 
@@ -242,7 +254,7 @@ export default function CreateUserPage() {
                                 placeholder="Email"
                                 value={formData.email}
                                 onChange={(e) => handleChange('email', e.target.value)}
-                                className={inputClass}
+                                className={adminInputClass}
                                 required
                             />
                         </div>
@@ -254,7 +266,7 @@ export default function CreateUserPage() {
                                 placeholder="Phone Number"
                                 value={formData.phoneNumber}
                                 onChange={(e) => handleChange('phoneNumber', normalizePhoneInput(e.target.value))}
-                                className={inputClass}
+                                className={adminInputClass}
                                 inputMode="numeric"
                                 pattern="[0-9]*"
                                 maxLength={20}
@@ -266,7 +278,7 @@ export default function CreateUserPage() {
                             <select
                                 value={formData.status}
                                 onChange={(e) => handleChange('status', e.target.value)}
-                                className={inputClass}
+                                className={adminInputClass}
                             >
                                 <option value="Active">Active</option>
                                 <option value="Inactive">Inactive</option>
@@ -275,44 +287,58 @@ export default function CreateUserPage() {
                         </div>
 
                         <div className="space-y-1.5">
-                            <label className={labelClass}>Group List</label>
-                            <div className={`${boxClass} overflow-y-auto`}>
-                                <div className="space-y-2">
-                                    {GROUP_OPTIONS.map((group) => (
-                                        <label key={group} className="flex items-center gap-2 cursor-pointer text-[#334155]">
-                                            <input
-                                                type="checkbox"
-                                                checked={formData.selectedGroups.includes(group)}
-                                                onChange={() => handleToggleGroup(group)}
-                                                className="h-4 w-4 rounded border-[#CBD5E1] text-[#687EFF] focus:ring-[#687EFF]"
-                                            />
-                                            <span>{group}</span>
-                                        </label>
-                                    ))}
-                                </div>
+                            <label className={labelClass}>Role</label>
+                            <select
+                                value={formData.roleCode}
+                                onChange={(e) => handleChange('roleCode', String(e.target.value || 'LEARNER').toUpperCase())}
+                                className={adminInputClass}
+                                disabled={loadingGroups}
+                            >
+                                {GROUP_ROLE_OPTIONS.map((option) => (
+                                    <option key={option.code} value={option.code}>{option.label}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className={labelClass}>Assigned Group (Auto)</label>
+                            <div className={boxClass}>
+                                {loadingGroups && <div className="text-[13px] text-[#64748B]">Loading groups...</div>}
+                                {!loadingGroups && !assignedGroup && (
+                                    <div className="text-[13px] text-rose-500">No default group found for {selectedRoleLabel}.</div>
+                                )}
+                                {!loadingGroups && assignedGroup && (
+                                    <div className="space-y-1">
+                                        <div className="text-[14px] font-semibold text-[#1F2937]">
+                                            {assignedGroup.name || assignedGroup.code}
+                                        </div>
+                                        <div className="text-[12px] text-[#64748B]">Code: {assignedGroup.code}</div>
+                                        <div className="text-[12px] text-[#64748B]">Role: {selectedRoleLabel}</div>
+                                    </div>
+                                )}
                             </div>
-                            <div className="text-[12px] text-[#6B778B]">Selected: {groupSummary}</div>
                         </div>
 
                         <div className="pt-2 flex items-center gap-2">
                             <button
                                 type="submit"
                                 disabled={saving}
-                                className="h-[42px] px-6 rounded-[6px] bg-[#687EFF] hover:bg-[#5A6FE0] text-white text-[14px] font-medium transition-colors disabled:opacity-60"
+                                className={adminPrimaryButtonClass}
                             >
                                 {saving ? 'Submitting...' : 'Submit'}
                             </button>
                             <button
                                 type="button"
                                 onClick={() => router.push('/admin-dashboard/manage-user/users')}
-                                className="h-[42px] px-6 rounded-[6px] border border-[#D1D9EE] bg-white text-[#334155] text-[14px] font-medium hover:bg-[#F8FAFF]"
+                                className={adminSecondaryButtonClass}
                             >
                                 Cancel
                             </button>
                         </div>
                     </form>
-                </div>
+                </AdminCard>
             </div>
-        </AdminLmsDashboard>
+        </AdminShell>
     );
 }
+

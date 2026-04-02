@@ -3,7 +3,7 @@ import prisma from '@/lib/prisma';
 import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
 import { ensureDefaultOrganization, resolveUserId } from '@/lib/server/enterprise-context';
-import { getCourseCompatMaps } from '@/lib/server/compat-db';
+import { getCourseCompatMaps, getSectionCompatMaps } from '@/lib/server/compat-db';
 
 const DB_ACTIVE_STATUSES = new Set(['enrolled', 'in_progress', 'completed']);
 
@@ -27,6 +27,41 @@ function normalizeBatchStatus(value) {
     if (key === 'FAILED') return 'FAILED';
     if (key === 'CANCELLED') return 'CANCELLED';
     return 'APPROVED';
+}
+
+function normalizeEnrollmentRoleCode(value) {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (!normalized) return '';
+    if (normalized === 'ADMIN' || normalized === 'ADMINISTRATOR') return 'ADMIN';
+    if (normalized === 'INSTRUCTOR' || normalized === 'INSTRUCTURE' || normalized === 'TEACHER') return 'INSTRUCTOR';
+    if (normalized === 'LEARNER' || normalized === 'USER' || normalized === 'STUDENT') return 'LEARNER';
+    return '';
+}
+
+function normalizeEnrollmentRoleCodes(input) {
+    const source = Array.isArray(input) ? input : [input];
+    const normalized = Array.from(new Set(source.map(normalizeEnrollmentRoleCode).filter(Boolean)));
+    if (normalized.length > 0) return normalized;
+    return ['LEARNER'];
+}
+
+function getAllowedRoleCodesForSection(sectionId, sectionSettingsBySectionId = {}) {
+    const key = String(sectionId || '').trim();
+    const sectionSettings = key ? (sectionSettingsBySectionId?.[key] || {}) : {};
+    return normalizeEnrollmentRoleCodes(sectionSettings?.groups || []);
+}
+
+function canRoleEnroll(roleCodes = [], allowedRoleCodes = []) {
+    const allowed = new Set(normalizeEnrollmentRoleCodes(allowedRoleCodes));
+    return normalizeEnrollmentRoleCodes(roleCodes).some((code) => allowed.has(code));
+}
+
+function getPrimaryRoleCode(roleCodes = []) {
+    const normalized = normalizeEnrollmentRoleCodes(roleCodes);
+    if (normalized.includes('LEARNER')) return 'LEARNER';
+    if (normalized.includes('INSTRUCTOR')) return 'INSTRUCTOR';
+    if (normalized.includes('ADMIN')) return 'ADMIN';
+    return normalized[0] || 'LEARNER';
 }
 
 function toEnrollmentUpdatePayload(targetStatus) {
@@ -117,6 +152,23 @@ export async function POST(request) {
             return NextResponse.json({ error: 'Course not found' }, { status: 404 });
         }
 
+        const fallbackSection = await prisma.section.findFirst({
+            where: {
+                courseId: course.id,
+                isActive: true,
+            },
+            select: { id: true },
+            orderBy: [{ orderNo: 'asc' }, { id: 'asc' }],
+        });
+        const sectionCompatMaps = fallbackSection?.id
+            ? await getSectionCompatMaps([Number(fallbackSection.id)])
+            : null;
+        const sectionSettingsBySectionId = sectionCompatMaps?.sectionSettingsBySectionId || {};
+        const allowedRoleCodes = getAllowedRoleCodesForSection(
+            fallbackSection?.id,
+            sectionSettingsBySectionId
+        );
+
         const rows = rawKeys.map((raw, index) => ({
             rowNo: index + 1,
             input: String(raw || '').trim(),
@@ -162,6 +214,28 @@ export async function POST(request) {
             })
             : [];
         const userMap = new Map(users.map((user) => [Number(user.id), user]));
+
+        const userRoleRows = resolvedUserIds.length > 0
+            ? await prisma.userRole.findMany({
+                where: {
+                    organization_id: organizationId,
+                    userId: { in: resolvedUserIds },
+                },
+                include: {
+                    roles: {
+                        select: { code: true },
+                    },
+                },
+            })
+            : [];
+        const userRoleCodeMap = new Map();
+        for (const row of userRoleRows) {
+            const key = Number(row.userId);
+            const existing = userRoleCodeMap.get(key) || [];
+            const normalizedCode = normalizeEnrollmentRoleCode(row?.roles?.code);
+            if (normalizedCode) existing.push(normalizedCode);
+            userRoleCodeMap.set(key, existing);
+        }
 
         const existingEnrollments = resolvedUserIds.length > 0
             ? await prisma.enrollment.findMany({
@@ -235,6 +309,23 @@ export async function POST(request) {
                     userId: Number(userId),
                     success: false,
                     message: 'User is not in this organization',
+                });
+                continue;
+            }
+
+            const userRoleCodes = userRoleCodeMap.get(Number(userId)) || [];
+            if (!canRoleEnroll(userRoleCodes, allowedRoleCodes)) {
+                failedCount += 1;
+                const user = userMap.get(Number(userId));
+                const role = getPrimaryRoleCode(userRoleCodes);
+                results.push({
+                    rowNo: row.rowNo,
+                    input: row.input,
+                    userId: Number(userId),
+                    username: user?.username || '',
+                    fullName: getDisplayName(user),
+                    success: false,
+                    message: `Role ${role} is not allowed for this section (allowed: ${allowedRoleCodes.join(', ')})`,
                 });
                 continue;
             }

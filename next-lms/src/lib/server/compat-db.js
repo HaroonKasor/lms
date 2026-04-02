@@ -9,6 +9,7 @@ const COURSE_SETTINGS_MAP_PREFIX = '__map__/course-settings/';
 const SECTION_SETTINGS_MAP_PREFIX = '__map__/section-settings/';
 const CONTENT_ASSET_TYPE = 'xapi';
 const MAP_ASSET_TYPE = 'document';
+const DEFAULT_SECTION_ROLE_CODES = ['LEARNER'];
 
 function parseMetadata(metadataJson) {
     if (!metadataJson) return {};
@@ -31,6 +32,36 @@ function isTruthyFlag(value) {
         if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
     }
     return Boolean(value);
+}
+
+function normalizeInteger(value, fallback = 0, min = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    const rounded = Math.floor(n);
+    return rounded < min ? min : rounded;
+}
+
+function normalizeStringValue(value, fallback = '') {
+    const text = String(value ?? '').trim();
+    if (text) return text;
+    return String(fallback ?? '').trim();
+}
+
+function normalizeOptionalBoolean(value, fallback = null) {
+    if (value === undefined) return fallback;
+    if (value === null || value === '') return null;
+    return isTruthyFlag(value);
+}
+
+function normalizeStringArray(value, fallback = []) {
+    const source = Array.isArray(value)
+        ? value
+        : String(value || '')
+            .split(/[|,]/g)
+            .map((item) => item.trim())
+            .filter(Boolean);
+    const normalized = Array.from(new Set(source.map((item) => String(item || '').trim()).filter(Boolean)));
+    return normalized.length > 0 ? normalized : (Array.isArray(fallback) ? fallback : []);
 }
 
 function normalizeDateOnly(value) {
@@ -66,6 +97,8 @@ function normalizeCourseSettings(input = {}) {
         ? (!Number.isFinite(parsedMaxCapacity) || parsedMaxCapacity <= 0)
         : false;
 
+    const existingPrerequisites = Array.isArray(input?.prerequisites) ? input.prerequisites : [];
+
     return {
         registerDateFrom: normalizeDateOnly(input?.registerDateFrom),
         registerDateTo: normalizeDateOnly(input?.registerDateTo),
@@ -73,6 +106,14 @@ function normalizeCourseSettings(input = {}) {
         maxLearnerUnlimit: hasMaxUnlimitFlag
             ? isTruthyFlag(rawMaxUnlimitFlag)
             : inferredUnlimitedFromCapacity,
+        detail: normalizeStringValue(input?.detail),
+        lessons: normalizeInteger(input?.lessons, 0, 0),
+        durationHours: normalizeInteger(input?.durationHours, 0, 0),
+        durationMinutes: normalizeInteger(input?.durationMinutes, 0, 0),
+        instructor: normalizeStringValue(input?.instructor),
+        prerequisites: normalizeStringArray(input?.prerequisites, existingPrerequisites),
+        webboard: normalizeOptionalBoolean(input?.webboard, null),
+        printCert: Boolean(input?.printCert),
     };
 }
 
@@ -92,6 +133,9 @@ function normalizeSectionSettings(input = {}) {
         ? (!Number.isFinite(parsedMaxCapacity) || parsedMaxCapacity <= 0)
         : false;
 
+    const rawGroups = input?.groups ?? input?.groupCodes ?? input?.allowedRoles ?? input?.roles;
+    const normalizedGroups = normalizeSectionRoleCodes(rawGroups);
+
     return {
         registerDateFrom: normalizeDateOnly(input?.registerDateFrom),
         registerDateTo: normalizeDateOnly(input?.registerDateTo),
@@ -101,7 +145,43 @@ function normalizeSectionSettings(input = {}) {
         maxLearnerUnlimit: hasMaxUnlimitFlag
             ? isTruthyFlag(rawMaxUnlimitFlag)
             : inferredUnlimitedFromCapacity,
+        sessionCode: normalizeStringValue(input?.sessionCode),
+        detail: normalizeStringValue(input?.detail),
+        autoApprove: normalizeOptionalBoolean(input?.autoApprove, true),
+        certificate: Boolean(input?.certificate),
+        autoCert: Boolean(input?.autoCert),
+        printCert: Boolean(input?.printCert),
+        cohortModule: Boolean(input?.cohortModule),
+        groups: normalizedGroups,
     };
+}
+
+function normalizeSectionRoleCode(value) {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (!normalized) return '';
+    if (normalized === 'ADMIN' || normalized === 'ADMINISTRATOR') return 'ADMIN';
+    if (normalized === 'INSTRUCTOR' || normalized === 'INSTRUCTURE' || normalized === 'TEACHER') return 'INSTRUCTOR';
+    if (normalized === 'LEARNER' || normalized === 'USER' || normalized === 'STUDENT') return 'LEARNER';
+    return '';
+}
+
+function normalizeSectionRoleCodes(input) {
+    const rawList = Array.isArray(input)
+        ? input
+        : String(input || '')
+            .split(',')
+            .map((item) => item.trim())
+            .filter(Boolean);
+
+    const normalized = Array.from(
+        new Set(
+            rawList
+                .map(normalizeSectionRoleCode)
+                .filter(Boolean)
+        )
+    );
+    if (normalized.length > 0) return normalized;
+    return [...DEFAULT_SECTION_ROLE_CODES];
 }
 
 function toDateOnlyTime(value) {
@@ -506,7 +586,12 @@ async function setCourseSettings(courseId, settings) {
         return;
     }
 
-    const normalized = normalizeCourseSettings(settings);
+    const existing = await getMapAsset(storagePath);
+    const current = existing ? normalizeCourseSettings(parseMetadata(existing.metadataJson)) : {};
+    const normalized = normalizeCourseSettings({
+        ...current,
+        ...(settings && typeof settings === 'object' ? settings : {}),
+    });
     await upsertMapAsset({
         storagePath,
         title: `Course ${id} Settings Mapping`,
@@ -540,7 +625,12 @@ async function setSectionSettings(sectionId, settings) {
         return;
     }
 
-    const normalized = normalizeSectionSettings(settings);
+    const existing = await getMapAsset(storagePath);
+    const current = existing ? normalizeSectionSettings(parseMetadata(existing.metadataJson)) : {};
+    const normalized = normalizeSectionSettings({
+        ...current,
+        ...(settings && typeof settings === 'object' ? settings : {}),
+    });
     await upsertMapAsset({
         storagePath,
         title: `Section ${id} Settings Mapping`,

@@ -579,11 +579,18 @@ export default function MyLearning() {
                             </>
                         ) : (
                             <>
-                                <div className="text-[56px] leading-none mb-5">🎉</div>
-                                <h3 className="text-[#687EFF] text-[36px] font-semibold leading-[120%] mb-4">
+                                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#F5F7FF]">
+                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                                        <path d="M4 8.5l5 2.3L20 4M10 10l1.2 5.3L16 14" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                        <circle cx="4.5" cy="4.5" r="1.2" fill="#1DBA9F" />
+                                        <circle cx="18.5" cy="19" r="1.1" fill="#F87A53" />
+                                        <circle cx="20.5" cy="7.5" r="1.1" fill="#687EFF" />
+                                    </svg>
+                                </div>
+                                <h3 className="text-[#687EFF] text-[34px] sm:text-[38px] font-semibold leading-[118%] mb-3">
                                     Thank you for your feedback!
                                 </h3>
-                                <p className="text-[#052143] text-[18px] leading-[140%] mb-10">
+                                <p className="text-[#4B5567] text-[16px] leading-[145%] mb-8">
                                     Your review has been submitted successfully. It helps us and other students a lot.
                                 </p>
                                 <button
@@ -591,7 +598,7 @@ export default function MyLearning() {
                                     onClick={() => {
                                         closeReviewModal({ dismissCurrent: false });
                                     }}
-                                    className="h-[53px] px-8 rounded-full bg-[#F87A53] text-white text-[24px] font-medium hover:bg-[#E96E48] transition-colors"
+                                    className="h-[48px] px-8 rounded-full bg-[#F87A53] text-white text-[18px] font-medium hover:bg-[#E96E48] transition-colors min-w-[220px]"
                                 >
                                     Back to My LMS
                                 </button>

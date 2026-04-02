@@ -1,24 +1,73 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import AdminShell from '@/components/admin/layout/AdminShell';
+import {
+    AdminBodyStateRow,
+    AdminCard,
+    AdminEntriesControl,
+    AdminInlineAlert,
+    AdminPageHeader,
+    AdminPagination,
+    AdminSearchInput,
+    AdminTable,
+    AdminTableHead,
+    AdminTableWrap,
+    AdminTd,
+    AdminTh,
+    AdminToastStack,
+    AdminToolbar,
+    adminInputClass,
+    adminPrimaryButtonClass,
+    adminSecondaryButtonClass,
+} from '@/components/admin/ui/AdminPrimitives';
+import {
+    createContent,
+    deleteContent,
+    listContents,
+    updateContent,
+} from '@/services/admin/contentService';
+
+const CONTENT_FILTERS = [
+    { id: 'ALL', label: 'All content' },
+    { id: 'HAS_ACTIVITY', label: 'Has activities' },
+    { id: 'NO_ACTIVITY', label: 'No activities' },
+];
+
+const INITIAL_FORM = {
+    title: '',
+    file: null,
+};
+
+function slugify(value = '') {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+}
 
 export default function ContentManagementPage() {
-    const [view, setView] = useState('CONTENT_LIST');
+    const [view, setView] = useState('list');
     const [contents, setContents] = useState([]);
     const [loading, setLoading] = useState(true);
-
-    // Upload state
-    const [uploadTitle, setUploadTitle] = useState('');
-    const [uploadFile, setUploadFile] = useState(null);
-    const [uploading, setUploading] = useState(false);
-    const [uploadProgress, setUploadProgress] = useState(0);
-    const [uploadMessage, setUploadMessage] = useState('');
+    const [loadError, setLoadError] = useState('');
+    const [saving, setSaving] = useState(false);
+    const [formMode, setFormMode] = useState('create');
+    const [editingContent, setEditingContent] = useState(null);
+    const [form, setForm] = useState(INITIAL_FORM);
+    const [entries, setEntries] = useState(10);
+    const [page, setPage] = useState(1);
+    const [search, setSearch] = useState('');
+    const [contentFilter, setContentFilter] = useState('ALL');
     const [isDragging, setIsDragging] = useState(false);
+    const [uploadProgress, setUploadProgress] = useState(0);
+    const [toasts, setToasts] = useState([]);
+
     const fileInputRef = useRef(null);
     const dragCounterRef = useRef(0);
+    const toastTimersRef = useRef(new Map());
 
-    const headerClass = "bg-[#687EFF] px-4 py-3 flex items-center justify-between text-white font-medium text-[15px]";
     const appOrigin = React.useMemo(() => {
         const candidates = [
             process.env.NEXT_PUBLIC_XAPI_OBJECT_BASE_URL,
@@ -37,6 +86,29 @@ export default function ContentManagementPage() {
         }
         return 'https://example.invalid';
     }, []);
+
+    useEffect(() => {
+        return () => {
+            for (const timer of toastTimersRef.current.values()) clearTimeout(timer);
+            toastTimersRef.current.clear();
+        };
+    }, []);
+
+    const dismissToast = (id) => {
+        const timer = toastTimersRef.current.get(id);
+        if (timer) {
+            clearTimeout(timer);
+            toastTimersRef.current.delete(id);
+        }
+        setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    };
+
+    const pushToast = (tone, message, title = '') => {
+        const id = Date.now() + Math.random();
+        setToasts((prev) => [...prev, { id, tone, message, title }]);
+        const timer = setTimeout(() => dismissToast(id), 3200);
+        toastTimersRef.current.set(id, timer);
+    };
 
     const getContentRootLaunchUrl = (content) => {
         const contentId = String(content?.id || '').trim();
@@ -64,7 +136,7 @@ export default function ContentManagementPage() {
     };
 
     const resolveSafeLaunchUrl = async (candidateUrl, fallbackUrl) => {
-        const candidates = [candidateUrl, fallbackUrl].filter((x) => x && x !== '#');
+        const candidates = [candidateUrl, fallbackUrl].filter((value) => value && value !== '#');
         if (candidates.length === 0) return '#';
 
         for (const candidate of candidates) {
@@ -74,7 +146,6 @@ export default function ContentManagementPage() {
                 const res = await fetch(`/api/content/resolve?src=${encodeURIComponent(localPath)}`, { cache: 'no-store' });
                 const data = await res.json().catch(() => null);
                 const resolved = String(data?.resolvedSrc || '').trim();
-                // Only trust resolved path when API confirms it is valid.
                 if (res.ok && resolved) return resolved;
                 if (res.ok) return localPath;
             } catch {
@@ -82,8 +153,8 @@ export default function ContentManagementPage() {
             }
         }
 
-        const last = candidates[candidates.length - 1];
-        return last.startsWith('/') || /^https?:\/\//i.test(last) ? last : `/${last}`;
+        const fallback = candidates[candidates.length - 1];
+        return fallback.startsWith('/') || /^https?:\/\//i.test(fallback) ? fallback : `/${fallback}`;
     };
 
     const openLaunchWindow = (url, fallbackUrl) => {
@@ -91,77 +162,129 @@ export default function ContentManagementPage() {
         const h = window.screen?.availHeight || window.innerHeight || 900;
         const features = `left=0,top=0,width=${w},height=${h}`;
         const win = window.open('about:blank', '_blank', features);
-        if (win) {
-            win.focus();
-            try {
-                win.moveTo(0, 0);
-                win.resizeTo(w, h);
-            } catch {
-                // Some browsers block move/resize; opening in new tab still works.
-            }
-            (async () => {
-                const safeUrl = await resolveSafeLaunchUrl(url, fallbackUrl);
-                if (!safeUrl || safeUrl === '#') {
-                    try { win.close(); } catch { }
-                    return;
-                }
-                const launchUrl = `/launch?src=${encodeURIComponent(safeUrl)}&autoplay=1`;
-                win.location.href = launchUrl;
-            })();
+        if (!win) return;
+
+        win.focus();
+        try {
+            win.moveTo(0, 0);
+            win.resizeTo(w, h);
+        } catch {
+            // Some browsers block move/resize.
         }
+
+        (async () => {
+            const safeUrl = await resolveSafeLaunchUrl(url, fallbackUrl);
+            if (!safeUrl || safeUrl === '#') {
+                try { win.close(); } catch {}
+                return;
+            }
+            const launchUrl = `/launch?src=${encodeURIComponent(safeUrl)}&autoplay=1`;
+            win.location.href = launchUrl;
+        })();
     };
 
-    // Load contents from API
     const loadContents = async () => {
         try {
             setLoading(true);
-            const res = await fetch('/api/content/upload');
-            if (res.ok) {
-                const data = await res.json();
-                setContents(data);
-            }
+            setLoadError('');
+            setContents(await listContents());
         } catch (err) {
-            console.error('Failed to load contents:', err);
+            console.error(err);
+            setContents([]);
+            setLoadError(err?.message || 'Failed to load content library');
+            pushToast('error', err?.message || 'Failed to load content library', 'Load failed');
         } finally {
             setLoading(false);
         }
     };
 
-    useEffect(() => { loadContents(); }, []);
+    useEffect(() => {
+        loadContents();
+    }, []);
+
+    const filteredContents = useMemo(() => {
+        const keyword = search.trim().toLowerCase();
+        return contents.filter((content) => {
+            const activityCount = Array.isArray(content?.activities) ? content.activities.length : 0;
+            const matchesFilter = contentFilter === 'ALL'
+                || (contentFilter === 'HAS_ACTIVITY' && activityCount > 0)
+                || (contentFilter === 'NO_ACTIVITY' && activityCount === 0);
+            if (!matchesFilter) return false;
+            if (!keyword) return true;
+            return [content?.title, content?.id, content?.entryPoint]
+                .filter(Boolean)
+                .some((value) => String(value).toLowerCase().includes(keyword));
+        });
+    }, [contents, contentFilter, search]);
+
+    const totalPages = useMemo(() => Math.max(1, Math.ceil(filteredContents.length / entries)), [filteredContents.length, entries]);
+    const pagedContents = useMemo(() => {
+        const start = (page - 1) * entries;
+        return filteredContents.slice(start, start + entries);
+    }, [filteredContents, page, entries]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [entries, search, contentFilter, filteredContents.length]);
+
+    useEffect(() => {
+        if (page > totalPages) setPage(totalPages);
+    }, [page, totalPages]);
+
+    const resetForm = () => {
+        setForm(INITIAL_FORM);
+        setEditingContent(null);
+        setFormMode('create');
+        setUploadProgress(0);
+        setIsDragging(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+    };
+
+    const openCreate = () => {
+        resetForm();
+        setView('form');
+        setFormMode('create');
+    };
+
+    const openEdit = (content) => {
+        setEditingContent(content);
+        setFormMode('edit');
+        setForm({ title: content?.title || '', file: null });
+        setUploadProgress(0);
+        setView('form');
+    };
 
     const handleSelectedFile = (file) => {
         if (!file) return;
-
         const isZipByMime = ['application/zip', 'application/x-zip-compressed'].includes(file.type);
         const isZipByName = /\.zip$/i.test(file.name || '');
 
         if (!isZipByMime && !isZipByName) {
-            setUploadFile(null);
-            setUploadMessage('❌ รองรับเฉพาะไฟล์ .zip (TinCan/xAPI Package)');
-            setUploadProgress(0);
+            pushToast('error', 'Only .zip TinCan/xAPI packages are supported.', 'Invalid file');
+            if (fileInputRef.current) fileInputRef.current.value = '';
             return;
         }
 
-        setUploadFile(file);
-        setUploadMessage('');
+        setForm((prev) => ({ ...prev, file }));
+        pushToast('success', `Selected ${file.name}`, 'File ready');
     };
 
-    const handleDragEnter = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+    const handleDragEnter = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         dragCounterRef.current += 1;
         setIsDragging(true);
     };
 
-    const handleDragOver = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    const handleDragOver = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
     };
 
-    const handleDragLeave = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+    const handleDragLeave = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         dragCounterRef.current -= 1;
         if (dragCounterRef.current <= 0) {
             dragCounterRef.current = 0;
@@ -169,347 +292,319 @@ export default function ContentManagementPage() {
         }
     };
 
-    const handleDrop = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+    const handleDrop = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         dragCounterRef.current = 0;
         setIsDragging(false);
-
-        const droppedFile = e.dataTransfer?.files?.[0] || null;
+        const droppedFile = event.dataTransfer?.files?.[0] || null;
         handleSelectedFile(droppedFile);
     };
 
-    // Handle file upload
-    const handleUpload = async () => {
-        if (!uploadFile) {
-            setUploadMessage('กรุณาเลือกไฟล์ก่อน');
-            return;
-        }
-        if (!uploadTitle.trim()) {
-            setUploadMessage('กรุณากรอกชื่อ Content');
+    const simulateProgress = () => {
+        setUploadProgress(12);
+        return window.setInterval(() => {
+            setUploadProgress((prev) => (prev >= 86 ? prev : prev + 8));
+        }, 170);
+    };
+
+    const handleSubmit = async (event) => {
+        event.preventDefault();
+        if (!form.title.trim()) {
+            pushToast('error', 'Please enter a content title.', 'Missing title');
             return;
         }
 
-        setUploading(true);
-        setUploadProgress(0);
-        setUploadMessage('');
+        setSaving(true);
+        const progressTimer = formMode === 'create' ? simulateProgress() : null;
 
         try {
-            const formData = new FormData();
-            formData.append('file', uploadFile);
-            formData.append('title', uploadTitle);
-
-            // Simulate progress
-            const progressInterval = setInterval(() => {
-                setUploadProgress(prev => Math.min(prev + 10, 90));
-            }, 300);
-
-            const res = await fetch('/api/content/upload', {
-                method: 'POST',
-                body: formData,
-            });
-
-            clearInterval(progressInterval);
-
-            if (res.ok) {
-                const data = await res.json();
-                setUploadProgress(100);
-                setUploadMessage(`✅ อัปโหลดสำเร็จ! Content ID: ${data.content.id}`);
-
-                // Reset form after 2s and go back
-                setTimeout(() => {
-                    setUploadFile(null);
-                    setUploadTitle('');
-                    setUploadProgress(0);
-                    setUploadMessage('');
-                    setView('CONTENT_LIST');
-                    loadContents();
-                }, 2000);
+            if (formMode === 'create') {
+                await createContent(form);
             } else {
-                const err = await res.json();
-                setUploadMessage(`❌ อัปโหลดล้มเหลว: ${err.error}`);
-                setUploadProgress(0);
+                await updateContent(editingContent?.id, { ...form, slug: slugify(form.title) });
             }
+
+            setUploadProgress(100);
+            pushToast('success', formMode === 'create' ? 'Content package created successfully.' : 'Content updated successfully.', formMode === 'create' ? 'Create complete' : 'Update complete');
+            await loadContents();
+            resetForm();
+            setView('list');
         } catch (err) {
-            setUploadMessage(`❌ Error: ${err.message}`);
+            console.error(err);
+            pushToast('error', err?.message || 'Unable to save content.', 'Save failed');
             setUploadProgress(0);
         } finally {
-            setUploading(false);
+            if (progressTimer) clearInterval(progressTimer);
+            setSaving(false);
         }
     };
 
-    // Handle delete
-    const handleDelete = async (id) => {
-        if (!confirm('ต้องการลบ content นี้หรือไม่?')) return;
+    const handleDelete = async (content) => {
+        if (!window.confirm(`Delete content \"${content?.title || '-'}\"?`)) return;
         try {
-            const res = await fetch(`/api/content/upload?id=${id}`, { method: 'DELETE' });
-            if (res.ok) loadContents();
+            await deleteContent(content?.id);
+            pushToast('success', 'Content removed from the library.', 'Deleted');
+            await loadContents();
         } catch (err) {
-            console.error('Delete failed:', err);
+            console.error(err);
+            pushToast('error', err?.message || 'Delete failed', 'Delete failed');
         }
     };
 
-    // Launch content in player
     const handleLaunch = (content) => {
         const launchUrl = getContentRootLaunchUrl(content);
         openLaunchWindow(launchUrl, launchUrl);
     };
 
-    // --- RENDER CONTENT LIST ---
-    const renderContentList = () => (
-        <div className="bg-white border border-[#D1E3FB] rounded-[8px] flex flex-col w-full overflow-hidden shadow-sm font-['Outfit',sans-serif]">
-            <div className={headerClass}>
-                <div className="flex items-center gap-2">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M19.35 10.04A7.49 7.49 0 0012 4C9.11 4 6.6 5.64 5.35 8.04A5.994 5.994 0 000 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM13 13v4h-2v-4H8l4-4 4 4h-3z"></path></svg>
-                    Content
-                </div>
-                <button onClick={() => setView('CONTENT_CREATE')} className="text-white hover:bg-white/20 w-7 h-7 rounded flex items-center justify-center transition-colors text-xl leading-none font-bold pb-0.5">
-                    +
-                </button>
-            </div>
+    return (
+        <AdminShell>
+            <AdminToastStack toasts={toasts} onDismiss={dismissToast} />
+            <div className="flex w-full flex-col gap-6 font-['Outfit',sans-serif]">
+                <AdminPageHeader
+                    title="Content"
+                    description="Manage TinCan/xAPI content packages used in the LMS."
+                    action={view === 'list' ? (
+                        <button type="button" onClick={openCreate} className={adminPrimaryButtonClass}>
+                            Create content
+                        </button>
+                    ) : null}
+                />
 
-            <div className="p-4 flex flex-col gap-4">
-                {/* Controls */}
-                <div className="flex flex-col sm:flex-row justify-between items-center text-[13px] text-[#333]">
-                    <div className="flex items-center gap-2">
-                        <span>แสดง</span>
-                        <select className="border border-gray-300 rounded px-2 py-1 outline-none focus:border-[#687EFF]">
-                            <option>10</option><option>25</option><option>50</option>
-                        </select>
-                        <span>รายการ</span>
-                    </div>
-                    <div className="flex items-center gap-2 mt-2 sm:mt-0">
-                        <span>ค้นหา:</span>
-                        <input type="text" className="border border-gray-300 rounded px-2 py-1 outline-none focus:border-[#687EFF]" />
-                    </div>
-                </div>
+                {view === 'list' ? (
+                    <AdminCard title="Content Library">
+                        {loadError ? (
+                            <div className="mb-4">
+                                <AdminInlineAlert>{loadError}</AdminInlineAlert>
+                            </div>
+                        ) : null}
 
-                {/* Table */}
-                <div className="overflow-x-auto border border-[#E0E0E0]">
-                    <table className="w-full text-left text-[13px] whitespace-nowrap md:whitespace-normal">
-                        <thead className="border-b border-gray-200 text-[#333] font-semibold bg-[#FAFAFA]">
-                            <tr>
-                                <th className="p-2 border-r border-[#E0E0E0] text-center w-[60px]">ลำดับ</th>
-                                <th className="p-2 border-r border-[#E0E0E0] w-[180px]">หลักสูตร</th>
-                                <th className="p-2 border-r border-[#E0E0E0] w-[200px] text-center">UUID</th>
-                                <th className="p-2 border-r border-[#E0E0E0] text-center">Activities</th>
-                                <th className="p-2 border-r border-[#E0E0E0] text-center w-[80px]">Learn</th>
-                                <th className="p-2 text-center w-[80px]">Tools</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {loading ? (
-                                <tr><td colSpan="6" className="p-8 text-center text-gray-400">
-                                    <div className="flex items-center justify-center gap-2">
-                                        <div className="w-4 h-4 border-2 border-[#687EFF] border-t-transparent rounded-full animate-spin"></div>
-                                        Loading...
-                                    </div>
-                                </td></tr>
-                            ) : contents.length === 0 ? (
-                                <tr><td colSpan="6" className="p-8 text-center text-gray-400">
-                                    ยังไม่มี content กด + เพื่อเพิ่ม
-                                </td></tr>
-                            ) : contents.map((content, idx) => (
-                                <tr key={content.id} className="border-b border-gray-200 text-[#444] hover:bg-gray-50/50 align-top">
-                                    <td className="p-2 border-r border-[#E0E0E0] text-center">{idx + 1}</td>
-                                    <td className="p-2 border-r border-[#E0E0E0] break-words whitespace-normal font-medium">{content.title}</td>
-                                    <td className="p-2 border-r border-[#E0E0E0] text-center text-[11px] font-mono text-gray-500">{content.id}</td>
-                                    <td className="p-2 border-r border-[#E0E0E0]">
-                                        {content.activities?.length > 0 ? (
-                                            <ul className="list-disc pl-5">
-                                                {content.activities.map((act, i) => (
-                                                    <li key={i} className="mb-0.5">
-                                                        <a
-                                                            href={resolveActivityUrl(content, act.launch)}
-                                                            className="inline-flex items-center gap-1 text-[#337ab7] hover:underline"
-                                                            title={act.launch || ''}
-                                                            onClick={(e) => {
-                                                                e.preventDefault();
-                                                                const fallback = getContentRootLaunchUrl(content);
-                                                                openLaunchWindow(resolveActivityUrl(content, act.launch), fallback);
-                                                            }}
-                                                        >
-                                                            <span>{act.name || act}</span>
-                                                            <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                                                <path d="M14 3h7v7"></path>
-                                                                <path d="M10 14L21 3"></path>
-                                                                <path d="M21 14v7h-7"></path>
-                                                                <path d="M3 10v11h11"></path>
-                                                            </svg>
-                                                        </a>
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        ) : (
-                                            <span className="text-gray-400 text-[12px]">—</span>
-                                        )}
-                                    </td>
-                                    <td className="p-2 border-r border-[#E0E0E0] text-center">
-                                        <button onClick={() => handleLaunch(content)} className="text-[#5CB85C] hover:text-green-700" title="Learn">
-                                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                                        </button>
-                                    </td>
-                                    <td className="p-2 text-center">
-                                        <button onClick={() => handleDelete(content.id)} className="text-red-400 hover:text-red-600" title="Delete">
-                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    );
-
-    // --- RENDER CONTENT CREATE ---
-    const renderContentCreate = () => (
-        <div className="bg-white flex flex-col w-full min-h-[calc(100vh-200px)] font-['Outfit',sans-serif] rounded-[8px] border border-[#D1E3FB] shadow-sm overflow-hidden">
-            <div className={headerClass}>
-                <span>Upload Content</span>
-            </div>
-            <div className="p-8 flex flex-col gap-8 text-[#334155] text-[15px] pt-10">
-                {/* Content Title */}
-                <div className="flex flex-col sm:flex-row sm:items-center gap-4 border-b border-gray-100 pb-8">
-                    <label className="font-semibold text-[#052143] text-[16px] sm:w-[150px]">Content Title :</label>
-                    <input
-                        type="text"
-                        value={uploadTitle}
-                        onChange={(e) => setUploadTitle(e.target.value)}
-                        placeholder="Enter your content title here..."
-                        className="flex-1 max-w-[500px] border border-[#E1E5EC] rounded-[8px] px-4 py-3 outline-none focus:border-[#687EFF] focus:ring-4 focus:ring-[#687EFF]/10 transition-all bg-[#FAFAFA]"
-                    />
-                </div>
-
-                {/* Upload Area */}
-                <div className="flex flex-col gap-4">
-                    <div
-                        className={`w-full max-w-[690px] border-2 border-dashed rounded-[16px] flex flex-col items-center justify-center py-12 px-6 transition-all group cursor-pointer relative ${uploadFile
-                            ? 'border-[#1DBA9F] bg-[#F0FDF9]'
-                            : isDragging
-                                ? 'border-[#687EFF] bg-[#EEF2FF]'
-                                : 'border-[#A0BCE0] bg-[#F8FAFC] hover:bg-[#F0F5FA] hover:border-[#687EFF]'
-                            }`}
-                        onClick={() => fileInputRef.current?.click()}
-                        onDragEnter={handleDragEnter}
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                    >
-                        <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept=".zip"
-                            onChange={(e) => handleSelectedFile(e.target.files?.[0] || null)}
-                            className="hidden"
+                        <AdminToolbar
+                            left={(
+                                <>
+                                    <AdminEntriesControl value={entries} onChange={setEntries} label="items" />
+                                    <select
+                                        value={contentFilter}
+                                        onChange={(event) => setContentFilter(event.target.value)}
+                                        className="h-[38px] rounded-xl border border-[#DDE4FF] bg-white px-3 text-[13px] text-[#334155] outline-none focus:border-[#687EFF]"
+                                    >
+                                        {CONTENT_FILTERS.map((item) => (
+                                            <option key={item.id} value={item.id}>{item.label}</option>
+                                        ))}
+                                    </select>
+                                </>
+                            )}
+                            right={<AdminSearchInput value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search title, UUID, or entry point" />}
                         />
 
-                        {uploadFile ? (
-                            <>
-                                <div className="w-[64px] h-[64px] bg-[#1DBA9F] rounded-full shadow-sm flex items-center justify-center mb-4">
-                                    <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
-                                    </svg>
+                        <AdminTableWrap>
+                            <AdminTable>
+                                <AdminTableHead>
+                                    <tr>
+                                        <AdminTh className="w-[72px]">No.</AdminTh>
+                                        <AdminTh className="min-w-[220px]">Content</AdminTh>
+                                        <AdminTh className="min-w-[220px]">UUID</AdminTh>
+                                        <AdminTh className="min-w-[240px]">Activities</AdminTh>
+                                        <AdminTh className="w-[120px] text-center">Launch</AdminTh>
+                                        <AdminTh className="w-[160px] text-center">Tools</AdminTh>
+                                    </tr>
+                                </AdminTableHead>
+                                <tbody>
+                                    {loading ? (
+                                        <AdminBodyStateRow colSpan={6}>Loading content library...</AdminBodyStateRow>
+                                    ) : pagedContents.length === 0 ? (
+                                        <AdminBodyStateRow colSpan={6}>
+                                            {search || contentFilter !== 'ALL'
+                                                ? 'No content matched the current filters.'
+                                                : 'No content yet. Create your first package to get started.'}
+                                        </AdminBodyStateRow>
+                                    ) : pagedContents.map((content, index) => {
+                                        const activityCount = Array.isArray(content?.activities) ? content.activities.length : 0;
+                                        return (
+                                            <tr key={content.id} className="border-b border-[#EEF2FF] last:border-none hover:bg-[#FBFCFF]">
+                                                <AdminTd className="font-medium text-[#1E293B]">{(page - 1) * entries + index + 1}</AdminTd>
+                                                <AdminTd>
+                                                    <div className="font-semibold text-[#1E293B]">{content.title}</div>
+                                                    <div className="mt-1 text-[12px] text-[#94A3B8]">{content.entryPoint || '-'}</div>
+                                                </AdminTd>
+                                                <AdminTd className="font-mono text-[12px] text-[#64748B]">{content.id}</AdminTd>
+                                                <AdminTd>
+                                                    {activityCount > 0 ? (
+                                                        <div className="flex flex-col gap-1.5">
+                                                            {content.activities.map((activity, activityIndex) => (
+                                                                <button
+                                                                    key={`${content.id}-${activityIndex}`}
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        const fallback = getContentRootLaunchUrl(content);
+                                                                        openLaunchWindow(resolveActivityUrl(content, activity.launch), fallback);
+                                                                    }}
+                                                                    className="inline-flex items-center gap-2 text-left text-[13px] text-[#4F64E6] transition hover:underline"
+                                                                >
+                                                                    <span>{activity?.name || `Activity ${activityIndex + 1}`}</span>
+                                                                    <span className="text-[11px] text-[#94A3B8]">Open</span>
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    ) : (
+                                                        <span className="text-[13px] text-[#94A3B8]">No activities</span>
+                                                    )}
+                                                </AdminTd>
+                                                <AdminTd className="text-center">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleLaunch(content)}
+                                                        className="inline-flex h-9 items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 px-3 text-[13px] font-medium text-emerald-700 transition hover:bg-emerald-100"
+                                                    >
+                                                        Learn
+                                                    </button>
+                                                </AdminTd>
+                                                <AdminTd className="text-center">
+                                                    <div className="flex items-center justify-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openEdit(content)}
+                                                            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-[#DDE4FF] bg-white text-[#475569] transition hover:bg-[#F8FAFF]"
+                                                            title="Edit"
+                                                        >
+                                                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" /></svg>
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDelete(content)}
+                                                            className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-rose-200 bg-white text-rose-600 transition hover:bg-rose-50"
+                                                            title="Delete"
+                                                        >
+                                                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M19 7l-.867 12.142A2 2 0 0 1 16.138 21H7.862a2 2 0 0 1-1.995-1.858L5 7" /><path d="M10 11v6" /><path d="M14 11v6" /><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3" /><path d="M4 7h16" /></svg>
+                                                        </button>
+                                                    </div>
+                                                </AdminTd>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </AdminTable>
+                        </AdminTableWrap>
+
+                        <AdminPagination
+                            currentPage={page}
+                            totalPages={totalPages}
+                            onPageChange={setPage}
+                            totalItems={filteredContents.length}
+                            startRow={filteredContents.length === 0 ? 0 : (page - 1) * entries + 1}
+                            endRow={Math.min(page * entries, filteredContents.length)}
+                        />
+                    </AdminCard>
+                ) : (
+                    <AdminCard title={formMode === 'create' ? 'Upload Content Package' : 'Edit Content'}>
+                        <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+                            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+                                <div className="space-y-5">
+                                    <div>
+                                        <label className="mb-2 block text-[14px] font-semibold text-[#1E293B]">Content title</label>
+                                        <input
+                                            type="text"
+                                            value={form.title}
+                                            onChange={(event) => setForm((prev) => ({ ...prev, title: event.target.value }))}
+                                            placeholder="Enter content title"
+                                            className={adminInputClass}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="mb-2 block text-[14px] font-semibold text-[#1E293B]">
+                                            TinCan package {formMode === 'create' ? '' : '(optional)'}
+                                        </label>
+                                        <div
+                                            className={`flex min-h-[220px] cursor-pointer flex-col items-center justify-center rounded-[20px] border-2 border-dashed px-6 py-10 text-center transition ${
+                                                form.file
+                                                    ? 'border-emerald-300 bg-emerald-50'
+                                                    : isDragging
+                                                        ? 'border-[#687EFF] bg-[#EEF2FF]'
+                                                        : 'border-[#C9D6FF] bg-[#F8FAFF] hover:border-[#687EFF] hover:bg-[#F4F7FF]'
+                                            }`}
+                                            onClick={() => fileInputRef.current?.click()}
+                                            onDragEnter={handleDragEnter}
+                                            onDragOver={handleDragOver}
+                                            onDragLeave={handleDragLeave}
+                                            onDrop={handleDrop}
+                                        >
+                                            <input
+                                                ref={fileInputRef}
+                                                type="file"
+                                                accept=".zip"
+                                                className="hidden"
+                                                onChange={(event) => handleSelectedFile(event.target.files?.[0] || null)}
+                                            />
+                                            {form.file ? (
+                                                <>
+                                                    <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500 text-white shadow-sm">
+                                                        <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" /></svg>
+                                                    </div>
+                                                    <div className="text-[16px] font-semibold text-[#0F2243]">{form.file.name}</div>
+                                                    <div className="mt-1 text-[13px] text-[#64748B]">{(form.file.size / 1024 / 1024).toFixed(2)} MB</div>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-white text-[#687EFF] shadow-sm">
+                                                        <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 0 1-.88-7.903A5 5 0 1 1 15.9 6L16 6a5 5 0 0 1 1 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                                                    </div>
+                                                    <div className="text-[16px] font-semibold text-[#0F2243]">Drag and drop your .zip package here</div>
+                                                    <div className="mt-1 text-[13px] text-[#64748B]">or click to browse from your machine</div>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
                                 </div>
-                                <h3 className="text-[18px] font-medium text-[#052143] mb-1">{uploadFile.name}</h3>
-                                <p className="text-[14px] text-[#6B778B]">
-                                    {(uploadFile.size / 1024 / 1024).toFixed(2)} MB — Click to change file
-                                </p>
-                            </>
-                        ) : (
-                            <>
-                                <div className="w-[64px] h-[64px] bg-white rounded-full shadow-sm flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                    <svg className="w-8 h-8 text-[#687EFF]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                                    </svg>
+
+                                <div className="rounded-[20px] border border-[#E8EEFF] bg-[#FBFCFF] p-5">
+                                    <h3 className="text-[15px] font-semibold text-[#1E293B]">Package summary</h3>
+                                    <dl className="mt-4 space-y-4 text-[13px] text-[#64748B]">
+                                        <div>
+                                            <dt className="font-medium text-[#1E293B]">Mode</dt>
+                                            <dd className="mt-1 capitalize">{formMode}</dd>
+                                        </div>
+                                        <div>
+                                            <dt className="font-medium text-[#1E293B]">Current title</dt>
+                                            <dd className="mt-1 break-words">{form.title || '-'}</dd>
+                                        </div>
+                                        <div>
+                                            <dt className="font-medium text-[#1E293B]">File</dt>
+                                            <dd className="mt-1 break-words">{form.file?.name || (formMode === 'edit' ? 'Keep existing package' : '-')}</dd>
+                                        </div>
+                                        <div>
+                                            <dt className="font-medium text-[#1E293B]">Progress</dt>
+                                            <dd className="mt-2">
+                                                <div className="h-3 overflow-hidden rounded-full bg-[#E8EEFF]">
+                                                    <div className="h-full rounded-full bg-[linear-gradient(90deg,#687EFF_0%,#1DBA9F_100%)] transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+                                                </div>
+                                                <div className="mt-2 text-[12px] text-[#64748B]">{uploadProgress}% complete</div>
+                                            </dd>
+                                        </div>
+                                    </dl>
                                 </div>
-                                <h3 className="text-[18px] font-medium text-[#052143] mb-1 group-hover:text-[#687EFF] transition-colors">
-                                    Drag & Drop your TinCan package here
-                                </h3>
-                                <p className="text-[14px] text-[#6B778B] text-center mb-6">
-                                    Supported format: .zip (TinCan/xAPI Package)
-                                </p>
-                                <span className="bg-[#687EFF] text-white font-medium px-6 py-2.5 rounded-[8px] shadow-sm">
-                                    Select File
-                                </span>
-                            </>
-                        )}
-                    </div>
-                </div>
+                            </div>
 
-                {/* Progress Bar */}
-                {uploadProgress > 0 && (
-                    <div className="w-full max-w-[690px]">
-                        <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                            <div
-                                className="h-full bg-gradient-to-r from-[#687EFF] to-[#1DBA9F] rounded-full transition-all duration-300"
-                                style={{ width: `${uploadProgress}%` }}
-                            ></div>
-                        </div>
-                        <p className="text-[13px] text-[#6B778B] mt-2">{uploadProgress}% uploaded</p>
-                    </div>
+                            <div className="flex flex-wrap items-center justify-end gap-3 border-t border-[#EEF2FF] pt-5">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        resetForm();
+                                        setView('list');
+                                    }}
+                                    className={adminSecondaryButtonClass}
+                                >
+                                    Cancel
+                                </button>
+                                <button type="submit" disabled={saving} className={adminPrimaryButtonClass}>
+                                    {saving ? 'Saving...' : formMode === 'create' ? 'Create content' : 'Save changes'}
+                                </button>
+                            </div>
+                        </form>
+                    </AdminCard>
                 )}
-
-                {/* Message */}
-                {uploadMessage && (
-                    <div className={`max-w-[690px] p-4 rounded-[8px] text-[14px] ${uploadMessage.includes('✅') ? 'bg-green-50 text-green-800 border border-green-200' :
-                            uploadMessage.includes('❌') ? 'bg-red-50 text-red-800 border border-red-200' :
-                                'bg-yellow-50 text-yellow-800 border border-yellow-200'
-                        }`}>
-                        {uploadMessage}
-                    </div>
-                )}
-
-                {/* Actions */}
-                <div className="mt-6 pt-6 flex gap-4 border-t border-gray-100 max-w-[690px] justify-end">
-                    <button
-                        onClick={() => {
-                            setView('CONTENT_LIST');
-                            setUploadFile(null);
-                            setUploadTitle('');
-                            setUploadProgress(0);
-                            setUploadMessage('');
-                            setIsDragging(false);
-                        }}
-                        className="bg-white text-[#6B778B] hover:text-[#052143] border border-[#E1E5EC] hover:bg-gray-50 px-8 py-3 rounded-[8px] font-medium transition-colors"
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        onClick={handleUpload}
-                        disabled={uploading}
-                        className={`px-8 py-3 rounded-[8px] font-medium shadow-sm flex items-center gap-2 transition-all ${uploading
-                                ? 'bg-gray-400 text-white cursor-not-allowed'
-                                : 'bg-[#1DBA9F] hover:bg-teal-600 text-white hover:shadow-md hover:-translate-y-0.5'
-                            }`}
-                    >
-                        {uploading ? (
-                            <>
-                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                Uploading...
-                            </>
-                        ) : (
-                            <>
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                                Start Upload
-                            </>
-                        )}
-                    </button>
-                </div>
             </div>
-        </div>
-    );
-
-    return (
-        <AdminLmsDashboard>
-            <div className="w-full flex flex-col gap-6 font-['Outfit',sans-serif]">
-                <h1 className="text-[28px] font-medium text-[#052143] leading-[150%]">Content</h1>
-                {view === 'CONTENT_LIST' && renderContentList()}
-                {view === 'CONTENT_CREATE' && renderContentCreate()}
-                <div className="text-center text-[#6B778B] text-[13px] py-4">Copyright © 2024</div>
-            </div>
-        </AdminLmsDashboard>
+        </AdminShell>
     );
 }
 

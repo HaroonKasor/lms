@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { createPortal } from 'react-dom';
 import Navbar from '@/components/layout/Navbar';
 import LoadScreen from '@/components/ui/LoadScreen';
 
@@ -86,6 +88,7 @@ function containsThai(value) {
 }
 
 export default function UserCoursesView() {
+    const router = useRouter();
     const [searchQuery, setSearchQuery] = useState('');
     const [viewMode, setViewMode] = useState('grid');
     const [currentPage, setCurrentPage] = useState(1);
@@ -98,6 +101,12 @@ export default function UserCoursesView() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [enrollingId, setEnrollingId] = useState(null);
+    const [enrollSuccessModal, setEnrollSuccessModal] = useState({
+        open: false,
+        courseName: '',
+        learnHref: '/my-learning',
+        isPending: false,
+    });
     const [animateIn, setAnimateIn] = useState(false);
 
     useEffect(() => {
@@ -264,6 +273,25 @@ export default function UserCoursesView() {
         return filteredCourses.slice(start, start + PAGE_SIZE);
     }, [filteredCourses, currentPage]);
 
+    const closeEnrollSuccessModal = useCallback(() => {
+        setEnrollSuccessModal((prev) => ({ ...prev, open: false }));
+    }, []);
+
+    useEffect(() => {
+        if (!enrollSuccessModal.open) return undefined;
+        const previousOverflow = document.body.style.overflow;
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') closeEnrollSuccessModal();
+        };
+
+        document.body.style.overflow = 'hidden';
+        window.addEventListener('keydown', onKeyDown);
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            window.removeEventListener('keydown', onKeyDown);
+        };
+    }, [enrollSuccessModal.open, closeEnrollSuccessModal]);
+
     if (loading) {
         return <LoadScreen text="Loading courses..." variant="minimal" />;
     }
@@ -282,12 +310,31 @@ export default function UserCoursesView() {
                 throw new Error(data?.error || 'Enroll failed');
             }
 
+            const nextEnrollment = data?.enrollment || null;
             setEnrollments((prev) => {
                 const next = [...prev];
-                const idx = next.findIndex((e) => e.id === data.enrollment.id);
-                if (idx >= 0) next[idx] = data.enrollment;
-                else next.unshift(data.enrollment);
+                const idx = next.findIndex((e) => e.id === nextEnrollment?.id);
+                if (idx >= 0) next[idx] = nextEnrollment;
+                else if (nextEnrollment) next.unshift(nextEnrollment);
                 return next;
+            });
+
+            const enrolledStatus = normalizeEnrollmentStatus(nextEnrollment?.status);
+            const courseId = Number(courseItem?.course?.id || 0);
+            const sectionId = Number(
+                nextEnrollment?.section?.id
+                || nextEnrollment?.sectionId
+                || 0
+            );
+            const learnHref = sectionId > 0
+                ? `/courses/${courseId}/learn?launch=1&sectionId=${sectionId}`
+                : `/courses/${courseId}/learn?launch=1`;
+
+            setEnrollSuccessModal({
+                open: true,
+                courseName: String(courseItem?.course?.name || 'Course').trim() || 'Course',
+                learnHref,
+                isPending: enrolledStatus === 'PENDING',
             });
         } catch (e) {
             alert(e.message || 'Enroll failed');
@@ -607,6 +654,64 @@ export default function UserCoursesView() {
                     </div>
                 </div>
             </main>
+
+            {typeof window !== 'undefined' && enrollSuccessModal.open && createPortal(
+                <div
+                    className="fixed inset-0 z-[1100] bg-[rgba(10,16,36,0.52)] backdrop-blur-[3px] flex items-center justify-center p-4"
+                    onClick={closeEnrollSuccessModal}
+                >
+                    <div
+                        className="w-full max-w-[560px] rounded-[24px] bg-white px-6 sm:px-8 py-8 text-center shadow-[0_28px_80px_rgba(9,16,35,0.35)] border border-[#E8ECFF]"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#F5F7FF]">
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                                <path d="M4 8.5l5 2.3L20 4M10 10l1.2 5.3L16 14" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                <circle cx="4.5" cy="4.5" r="1.2" fill="#1DBA9F" />
+                                <circle cx="18.5" cy="19" r="1.1" fill="#F87A53" />
+                                <circle cx="20.5" cy="7.5" r="1.1" fill="#687EFF" />
+                            </svg>
+                        </div>
+
+                        <h3 className="text-[#687EFF] text-[34px] sm:text-[38px] font-semibold leading-[118%] mb-3">
+                            {enrollSuccessModal.isPending
+                                ? 'Enrollment request sent!'
+                                : "Congratulations! You've enrolled successfully"}
+                        </h3>
+                        <p className="text-[#4B5567] text-[16px] leading-[145%] mb-5">
+                            {enrollSuccessModal.isPending
+                                ? 'Your request is waiting for admin approval. We will notify you once it is approved.'
+                                : 'You can start learning immediately or come back later. Your progress will be saved.'}
+                        </p>
+
+                        <div className="rounded-[12px] bg-[#EEF2FF] px-4 py-3 text-[#1F2A44] text-[14px] font-medium leading-[140%] mb-7">
+                            {enrollSuccessModal.courseName}
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const target = enrollSuccessModal.isPending ? '/my-learning' : enrollSuccessModal.learnHref;
+                                    closeEnrollSuccessModal();
+                                    router.push(target);
+                                }}
+                                className="h-[46px] px-7 rounded-full bg-[#687EFF] text-white text-[16px] font-medium hover:bg-[#5C70EA] transition-colors min-w-[190px]"
+                            >
+                                {enrollSuccessModal.isPending ? 'Go to My Learning' : 'Start Learning Now'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={closeEnrollSuccessModal}
+                                className="h-[46px] px-7 rounded-full border border-[#D5DDF5] text-[#5C6784] text-[16px] font-medium hover:bg-[#F8FAFF] transition-colors min-w-[150px]"
+                            >
+                                Learn Later
+                            </button>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
 
             <style jsx>{`
                 .entry-fade {

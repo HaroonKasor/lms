@@ -9,8 +9,9 @@ import {
 } from '@/lib/server/compat-db';
 import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
-import { ensureDefaultOrganization, resolveUserId } from '@/lib/server/enterprise-context';
+import { ensureDefaultOrganization, listUserRoleCodes, resolveUserId } from '@/lib/server/enterprise-context';
 import { createAdminNotification, createNotification } from '@/lib/server/notifications';
+import { hasMailConfig, sendEnrollmentSuccessEmail } from '@/lib/server/mailer';
 
 const ENROLLMENT_STATUS_RANK = {
     COMPLETED: 5,
@@ -32,6 +33,33 @@ function isTruthyFlag(value) {
         if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
     }
     return Boolean(value);
+}
+
+function normalizeEnrollmentRoleCode(value) {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (!normalized) return '';
+    if (normalized === 'ADMIN' || normalized === 'ADMINISTRATOR') return 'ADMIN';
+    if (normalized === 'INSTRUCTOR' || normalized === 'INSTRUCTURE' || normalized === 'TEACHER') return 'INSTRUCTOR';
+    if (normalized === 'LEARNER' || normalized === 'USER' || normalized === 'STUDENT') return 'LEARNER';
+    return '';
+}
+
+function normalizeEnrollmentRoleCodes(input) {
+    const source = Array.isArray(input) ? input : [input];
+    const normalized = Array.from(new Set(source.map(normalizeEnrollmentRoleCode).filter(Boolean)));
+    if (normalized.length > 0) return normalized;
+    return ['LEARNER'];
+}
+
+function getAllowedRoleCodesForSection(sectionId, sectionSettingsBySectionId = {}) {
+    const key = String(sectionId || '').trim();
+    const sectionSettings = key ? (sectionSettingsBySectionId?.[key] || {}) : {};
+    return normalizeEnrollmentRoleCodes(sectionSettings?.groups || []);
+}
+
+function canRoleEnroll(roleCodes = [], allowedRoleCodes = []) {
+    const allowed = new Set(normalizeEnrollmentRoleCodes(allowedRoleCodes));
+    return normalizeEnrollmentRoleCodes(roleCodes).some((code) => allowed.has(code));
 }
 
 function toProgressNumber(progressPercent) {
@@ -163,6 +191,7 @@ function normalizeSection(section, sectionSettingsBySectionId = {}) {
         registerUnlimit: Boolean(settings?.registerUnlimit),
         learnDateTo: String(settings?.learnDateTo || '').trim(),
         learnDateUnlimit: settings?.learnDateUnlimit !== false,
+        groups: normalizeEnrollmentRoleCodes(settings?.groups || []).join(','),
         asset: section.asset
             ? {
                 ...section.asset,
@@ -421,6 +450,14 @@ function resolveDisplayName(user) {
     return full || String(user?.username || '').trim() || String(user?.email || '').trim() || 'Learner';
 }
 
+function getAppBaseUrl() {
+    const primary = String(process.env.NEXT_PUBLIC_APP_URL || '').trim();
+    if (primary) return primary.replace(/\/+$/, '');
+    const fallback = String(process.env.APP_URL || '').trim();
+    if (fallback) return fallback.replace(/\/+$/, '');
+    return 'http://localhost:8080';
+}
+
 async function buildContentMapForEnrollments(enrollments = [], compatMaps = {}) {
     const contentByCourseId = compatMaps?.contentByCourseId || {};
     const contentIds = Array.from(
@@ -490,6 +527,11 @@ export async function POST(request) {
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);
         if (invalidBodyResponse) return invalidBodyResponse;
         const { userId = 'anonymous', courseId, sectionId } = body;
+        const hasRequestedUser =
+            userId !== undefined
+            && userId !== null
+            && String(userId).trim() !== ''
+            && String(userId).trim().toLowerCase() !== 'anonymous';
 
         if (!courseId) {
             return NextResponse.json({ error: 'courseId is required' }, { status: 400 });
@@ -500,9 +542,15 @@ export async function POST(request) {
         }
 
         let numericUserId = session.uid;
-        if (session.isAdmin && userId) {
+        if (hasRequestedUser) {
             const resolved = await resolveUserId(userId);
-            if (resolved) numericUserId = resolved;
+            if (!resolved) {
+                return NextResponse.json({ error: 'User not found' }, { status: 404 });
+            }
+            if (!session.isAdmin && Number(resolved) !== Number(session.uid)) {
+                return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+            }
+            numericUserId = resolved;
         }
 
         const existingEnrollment = await prisma.enrollment.findUnique({
@@ -673,6 +721,22 @@ export async function POST(request) {
             }
         }
 
+        const targetRoleCodes = normalizeEnrollmentRoleCodes(
+            await listUserRoleCodes(numericUserId, organizationId)
+        );
+        const allowedRoleCodes = getAllowedRoleCodesForSection(
+            validatedSection?.id,
+            sectionSettingsBySectionId
+        );
+        if (!canRoleEnroll(targetRoleCodes, allowedRoleCodes)) {
+            return NextResponse.json(
+                {
+                    error: `Role ${targetRoleCodes.join(', ')} is not allowed for this section. Allowed: ${allowedRoleCodes.join(', ')}`,
+                },
+                { status: 403 }
+            );
+        }
+
         const courseMaxEnrollment = Number(course.maxEnrollment || 0);
         const hasCourseCapacity = Number.isFinite(courseMaxEnrollment) && courseMaxEnrollment > 0;
         const isCourseUnlimited = isTruthyFlag(courseSettings?.registerUnlimit) || isTruthyFlag(courseSettings?.maxLearnerUnlimit) || !hasCourseCapacity;
@@ -765,11 +829,36 @@ export async function POST(request) {
             ...(hydratedSectionCompatMaps?.sectionSettingsBySectionId || {}),
         };
 
-        if (!courseAutoApprove && !session.isAdmin && !hasActiveExistingEnrollment) {
-            const learner = await prisma.user.findUnique({
+        const isFirstActiveEnrollment = !hasActiveExistingEnrollment || shouldReactivateEnrollment || shouldUpgradePendingEnrollment;
+        const shouldNotifyAdminForApproval = !courseAutoApprove && !session.isAdmin && !hasActiveExistingEnrollment;
+        const shouldSendEnrollmentEmail = isFirstActiveEnrollment && hasMailConfig();
+        let learner = null;
+
+        if (shouldNotifyAdminForApproval || shouldSendEnrollmentEmail) {
+            learner = await prisma.user.findUnique({
                 where: { id: numericUserId },
                 include: { profile: true },
             });
+        }
+
+        if (shouldSendEnrollmentEmail) {
+            const learnerEmail = String(learner?.email || '').trim();
+            if (learnerEmail) {
+                const appBaseUrl = getAppBaseUrl();
+                sendEnrollmentSuccessEmail({
+                    to: learnerEmail,
+                    learnerName: resolveDisplayName(learner),
+                    courseName: String(course?.title || 'Course').trim(),
+                    enrollmentStatus: String(enrollment?.status || '').trim().toLowerCase(),
+                    learnUrl: `${appBaseUrl}/courses/${Number(course?.id || 0)}`,
+                    myLearningUrl: `${appBaseUrl}/my-learning`,
+                }).catch((mailErr) => {
+                    console.error('[enrollments/POST] enrollment email failed', mailErr);
+                });
+            }
+        }
+
+        if (shouldNotifyAdminForApproval) {
             const learnerName = resolveDisplayName(learner);
             await createAdminNotification({
                 organizationId,
@@ -810,12 +899,17 @@ export async function GET(request) {
     try {
         const { session, response } = await requireSession(request);
         if (response) return response;
+        const sessionRole = String(session?.role || '').trim().toLowerCase();
         const organizationId = await ensureDefaultOrganization();
 
         const { searchParams } = new URL(request.url);
         const userId = searchParams.get('userId') || '';
         const courseId = searchParams.get('courseId');
         const raw = searchParams.get('raw');
+
+        if (!session.isAdmin && !['learner', 'instructor'].includes(sessionRole)) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
 
         if (!session.isAdmin && userId && !isSameSessionUser(userId, session)) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -827,10 +921,11 @@ export async function GET(request) {
             if (!resolved) return NextResponse.json([]);
             numericUserId = resolved;
         }
+        const shouldLimitAdminRawToSelf = raw === '1' && session.isAdmin && !userId;
 
         const where = { organization_id: organizationId };
-        if (!session.isAdmin || userId) {
-            where.userId = numericUserId;
+        if (!session.isAdmin || userId || shouldLimitAdminRawToSelf) {
+            where.userId = session.isAdmin && userId ? numericUserId : session.uid;
         }
         if (courseId) where.courseId = parseInt(courseId, 10);
 
@@ -931,6 +1026,10 @@ export async function PATCH(request) {
     try {
         const { session, response } = await requireSession(request);
         if (response) return response;
+        const sessionRole = String(session?.role || '').trim().toLowerCase();
+        if (!session.isAdmin && !['learner', 'instructor'].includes(sessionRole)) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
         const organizationId = session.organizationId || await ensureDefaultOrganization();
 
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);

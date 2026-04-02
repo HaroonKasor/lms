@@ -3,6 +3,11 @@ import prisma from '@/lib/prisma';
 import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
+import {
+    deleteCategoryDetail,
+    getCategoryDetailMapByIds,
+    setCategoryDetail,
+} from '@/lib/server/category-detail-db';
 
 function slugify(value) {
     return String(value || '')
@@ -13,12 +18,12 @@ function slugify(value) {
         .slice(0, 120);
 }
 
-function mapCategory(category) {
+function mapCategory(category, detail = '') {
     return {
         ...category,
         codeName: category.code || '',
-        detail: '',
-        categoryDetail: '',
+        detail: String(detail || '').trim(),
+        categoryDetail: String(detail || '').trim(),
         isPublic: Boolean(category.isActive),
     };
 }
@@ -33,7 +38,13 @@ export async function GET(request) {
             where: { organization_id: organizationId },
             orderBy: [{ parentId: 'asc' }, { name: 'asc' }],
         });
-        return NextResponse.json(categories.map(mapCategory));
+        const detailMap = await getCategoryDetailMapByIds(
+            categories.map((item) => item.id),
+            organizationId
+        );
+        return NextResponse.json(
+            categories.map((category) => mapCategory(category, detailMap.get(Number(category.id)) || ''))
+        );
     } catch (err) {
         console.error('[categories/GET] failed', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -69,8 +80,16 @@ export async function POST(request) {
                 parentId,
             },
         });
+        await setCategoryDetail(prisma, {
+            organizationId,
+            categoryId: category.id,
+            detail: body.categoryDetail || body.detail || '',
+        });
 
-        return NextResponse.json({ success: true, category: mapCategory(category) });
+        return NextResponse.json({
+            success: true,
+            category: mapCategory(category, body.categoryDetail || body.detail || ''),
+        });
     } catch (err) {
         const isUniqueViolation = err?.code === 'P2002';
         if (!isUniqueViolation) {
@@ -110,6 +129,10 @@ export async function DELETE(request) {
                     organization_id: organizationId,
                 },
             },
+        });
+        await deleteCategoryDetail(prisma, {
+            organizationId,
+            categoryId: id,
         });
         return NextResponse.json({ success: true });
     } catch (err) {
@@ -163,8 +186,16 @@ export async function PUT(request) {
                 parentId,
             },
         });
+        await setCategoryDetail(prisma, {
+            organizationId,
+            categoryId: category.id,
+            detail: body.categoryDetail || body.detail || '',
+        });
 
-        return NextResponse.json({ success: true, category: mapCategory(category) });
+        return NextResponse.json({
+            success: true,
+            category: mapCategory(category, body.categoryDetail || body.detail || ''),
+        });
     } catch (err) {
         if (err?.code === 'P2025') {
             return NextResponse.json({ error: 'Category not found' }, { status: 404 });

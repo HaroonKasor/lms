@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+import AdminShell from '@/components/admin/layout/AdminShell';
 
 const DEFAULT_FILTERS = { categoryId: '', courseId: '', sectionId: '', username: '', status: 'ALL' };
 
@@ -25,7 +25,7 @@ function toSafeString(value) { return String(value || '').trim(); }
 
 function formatDateTime(value) {
     if (!value) return '-';
-    try { return new Date(value).toLocaleString('th-TH'); } catch { return String(value); }
+    try { return new Date(value).toLocaleString('en-US'); } catch { return String(value); }
 }
 
 function StatusBadge({ status }) {
@@ -39,7 +39,8 @@ function StatusBadge({ status }) {
     }[key] || { bg: '#F8FAFC', text: '#64748B', border: '#E2E8F0', label: key || '-' };
     return (
         <span style={{ background: cfg.bg, color: cfg.text, border: `1px solid ${cfg.border}` }}
-            className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-semibold whitespace-nowrap">
+            className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold whitespace-nowrap shadow-sm">
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: cfg.text }} />
             {cfg.label}
         </span>
     );
@@ -49,13 +50,18 @@ function ProgressBar({ value }) {
     const pct = Math.min(100, Math.max(0, Number(value || 0)));
     const color = pct >= 100 ? '#059669' : pct > 0 ? '#687EFF' : '#E2E8F0';
     return (
-        <div className="flex items-center gap-2 min-w-[80px]">
-            <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
+        <div className="flex items-center gap-3 min-w-[120px]">
+            <div className="flex-1 h-2 bg-[#EEF2F8] rounded-full overflow-hidden">
                 <div style={{ width: `${pct}%`, background: color }} className="h-full rounded-full transition-all" />
             </div>
-            <span className="text-[12px] text-[#64748B] w-8 text-right">{pct}%</span>
+            <span className="text-[12px] font-medium text-[#64748B] w-9 text-right">{pct}%</span>
         </div>
     );
+}
+
+function getAvailableActions(status) {
+    const current = toSafeString(status).toUpperCase();
+    return ACTION_OPTIONS.filter((action) => action.value !== current);
 }
 
 export default function LearnerStatusManagePage() {
@@ -155,7 +161,7 @@ export default function LearnerStatusManagePage() {
         if (totalPages <= w) return Array.from({ length: totalPages }, (_, i) => i + 1);
         const half = Math.floor(w / 2);
         let start = Math.max(1, page - half);
-        let end = Math.min(totalPages, start + w - 1);
+        const end = Math.min(totalPages, start + w - 1);
         if (end - start + 1 < w) start = Math.max(1, end - w + 1);
         return Array.from({ length: end - start + 1 }, (_, i) => start + i);
     }, [page, totalPages]);
@@ -192,7 +198,7 @@ export default function LearnerStatusManagePage() {
                 ? { ...item, status: nextStatus, progress: nextStatus === 'COMPLETED' ? 100 : Number(item?.progress || 0), completedAt: nextStatus === 'COMPLETED' ? new Date().toISOString() : item?.completedAt, startedAt: nextStatus === 'LEARNING' ? (item?.startedAt || new Date().toISOString()) : item?.startedAt }
                 : item
             ));
-            setSuccess('อัปเดตสถานะสำเร็จ!');
+            setSuccess('Status updated successfully!');
         } catch (err) { setError(err?.message || 'Update status failed'); }
         finally { setUpdatingId(''); }
     };
@@ -206,14 +212,14 @@ export default function LearnerStatusManagePage() {
     const statsPending = enrollments.filter((r) => toSafeString(r?.status).toUpperCase() === 'APPROVED').length;
 
     return (
-        <AdminLmsDashboard>
+        <AdminShell>
             <div className="w-full flex flex-col gap-6" style={{ fontFamily: "'Inter', 'Noto Sans Thai', sans-serif" }}>
 
                 {/* Header */}
                 <div className="flex items-center justify-between">
                     <div>
-                        <h1 className="text-2xl font-bold text-[#1E293B]">สถานะผู้เรียน</h1>
-                        <p className="text-[13px] text-[#64748B] mt-0.5">แอดมินสามารถอัปเดตสถานะผู้เรียนได้โดยตรงจากปุ่ม Action</p>
+                        <h1 className="text-2xl font-bold text-[#1E293B]">Learner Status</h1>
+                        <p className="text-[13px] text-[#64748B] mt-0.5">Review current progress and update a learner status from a single action menu.</p>
                     </div>
                     <div className="w-10 h-10 rounded-xl bg-[#687EFF] flex items-center justify-center shadow-md shadow-[#687EFF]/30">
                         <svg width="20" height="20" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>
@@ -223,10 +229,10 @@ export default function LearnerStatusManagePage() {
                 {/* Stat Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     {[
-                        { label: 'ผู้เรียนทั้งหมด', value: statsTotal, color: '#687EFF', icon: <svg width="22" height="22" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
-                        { label: 'กำลังเรียน', value: statsLearning, color: '#2563EB', icon: <svg width="22" height="22" fill="none" stroke="#2563EB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> },
-                        { label: 'เรียนจบแล้ว', value: statsCompleted, color: '#059669', icon: <svg width="22" height="22" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
-                        { label: 'รออนุมัติ', value: statsPending, color: '#D97706', icon: <svg width="22" height="22" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
+                        { label: 'Total Learners', value: statsTotal, color: '#687EFF', icon: <svg width="22" height="22" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> },
+                        { label: 'Learning', value: statsLearning, color: '#2563EB', icon: <svg width="22" height="22" fill="none" stroke="#2563EB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> },
+                        { label: 'Completed', value: statsCompleted, color: '#059669', icon: <svg width="22" height="22" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> },
+                        { label: 'Approved', value: statsPending, color: '#D97706', icon: <svg width="22" height="22" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> },
                     ].map((card) => (
                         <div key={card.label} className="bg-white rounded-2xl border border-[#EEF1FF] p-5 flex items-center gap-4 shadow-sm">
                             <div style={{ background: `${card.color}18` }} className="w-12 h-12 rounded-xl flex items-center justify-center shrink-0">
@@ -244,25 +250,25 @@ export default function LearnerStatusManagePage() {
                 <div className="bg-white rounded-2xl border border-[#EEF1FF] shadow-sm overflow-hidden">
                     <div className="flex items-center gap-3 px-6 py-4 border-b border-[#EEF1FF]" style={{ background: 'linear-gradient(90deg,#687EFF,#8A9CFF)' }}>
                         <svg width="16" height="16" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-                        <span className="text-white font-semibold text-[16px]">ค้นหาและกรองผู้เรียน</span>
+                        <span className="text-white font-semibold text-[16px]">Search and filter learners</span>
                     </div>
                     <form onSubmit={applyFilters} className="p-6">
                         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[13px] font-medium text-[#334155]">หมวดหมู่</label>
+                                <label className="text-[13px] font-medium text-[#334155]">Category</label>
                                 <select value={filters.categoryId}
                                     onChange={(e) => setFilters((p) => ({ ...p, categoryId: e.target.value, courseId: '', sectionId: '' }))}
                                     className={inputCls}>
-                                    <option value="">ทั้งหมด</option>
+                                    <option value="">All</option>
                                     {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
                             </div>
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[13px] font-medium text-[#334155]">คอร์สเรียน</label>
+                                <label className="text-[13px] font-medium text-[#334155]">Course</label>
                                 <select value={filters.courseId}
                                     onChange={(e) => setFilters((p) => ({ ...p, courseId: e.target.value, sectionId: '' }))}
                                     className={inputCls}>
-                                    <option value="">ทุกคอร์ส</option>
+                                    <option value="">All courses</option>
                                     {filteredCourses.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
                             </div>
@@ -271,12 +277,12 @@ export default function LearnerStatusManagePage() {
                                 <select value={filters.sectionId}
                                     onChange={(e) => setFilters((p) => ({ ...p, sectionId: e.target.value }))}
                                     className={inputCls}>
-                                    <option value="">ทุก Section</option>
+                                    <option value="">All sections</option>
                                     {sectionOptions.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                                 </select>
                             </div>
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[13px] font-medium text-[#334155]">สถานะ</label>
+                                <label className="text-[13px] font-medium text-[#334155]">Status</label>
                                 <select value={filters.status}
                                     onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}
                                     className={inputCls}>
@@ -287,18 +293,18 @@ export default function LearnerStatusManagePage() {
                                 <label className="text-[13px] font-medium text-[#334155]">Username</label>
                                 <input value={filters.username}
                                     onChange={(e) => setFilters((p) => ({ ...p, username: e.target.value }))}
-                                    placeholder="กรองตาม username"
+                                    placeholder="Filter by username"
                                     className={inputCls} />
                             </div>
                             <div className="flex items-end gap-2">
                                 <button type="submit"
                                     className="flex-1 h-[42px] rounded-xl text-white text-[14px] font-semibold transition-all"
                                     style={{ background: '#687EFF' }}>
-                                    ค้นหา
+                                    Search
                                 </button>
                                 <button type="button" onClick={resetFilters}
                                     className="h-[42px] px-4 rounded-xl border border-[#DDE4FF] text-[#687EFF] text-[14px] font-medium hover:bg-[#F0EDFF] transition-all">
-                                    รีเซ็ต
+                                    Reset
                                 </button>
                             </div>
                         </div>
@@ -326,84 +332,101 @@ export default function LearnerStatusManagePage() {
                 <div className="bg-white rounded-2xl border border-[#EEF1FF] shadow-sm overflow-hidden">
                     <div className="flex items-center gap-3 px-6 py-4 border-b border-[#EEF1FF]">
                         <svg width="16" height="16" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-                        <span className="font-semibold text-[16px] text-[#1E293B]">รายการผู้เรียน</span>
-                        <span className="ml-auto text-[13px] text-[#64748B]">{filteredRows.length} รายการ</span>
+                        <span className="font-semibold text-[16px] text-[#1E293B]">Learner List</span>
+                        <span className="ml-auto text-[13px] text-[#64748B]">{filteredRows.length} items</span>
                     </div>
 
                     {/* Toolbar */}
                     <div className="px-6 py-4 border-b border-[#F1F5F9] bg-[#FAFBFF] flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
                         <div className="flex items-center gap-2 text-[13px] text-[#64748B]">
-                            <span>แสดง</span>
+                            <span>Show</span>
                             <select value={entries} onChange={(e) => setEntries(Number(e.target.value))}
                                 className="h-[36px] rounded-lg border border-[#DDE4FF] px-2 text-[13px] outline-none focus:border-[#687EFF]">
                                 {[10, 20, 50, 100].map((v) => <option key={v} value={v}>{v}</option>)}
                             </select>
-                            <span>รายการ</span>
+                            <span>items</span>
                         </div>
                         <input value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setPage(1); }}
-                            placeholder="ค้นหาในผลลัพธ์..."
+                            placeholder="Search in results..."
                             className="w-full lg:w-[280px] h-[36px] rounded-lg border border-[#DDE4FF] px-3 text-[13px] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 transition" />
                     </div>
 
                     <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1100px] text-left text-[13px]">
+                        <table className="w-full min-w-[980px] text-left text-[13px]">
                             <thead>
                                 <tr className="bg-[#F0EDFF] text-[#687EFF]">
-                                    <th className="px-4 py-3 font-semibold">การดำเนินการ</th>
-                                    <th className="px-4 py-3 font-semibold">สถานะ</th>
-                                    <th className="px-4 py-3 font-semibold">คอร์ส</th>
-                                    <th className="px-4 py-3 font-semibold">Section</th>
-                                    <th className="px-4 py-3 font-semibold">Username</th>
-                                    <th className="px-4 py-3 font-semibold">ชื่อ-สกุล</th>
-                                    <th className="px-4 py-3 font-semibold">ความคืบหน้า</th>
-                                    <th className="px-4 py-3 font-semibold whitespace-nowrap">วันที่ลงทะเบียน</th>
-                                    <th className="px-4 py-3 font-semibold whitespace-nowrap">กิจกรรมล่าสุด</th>
+                                    <th className="px-4 py-3 font-semibold">Learner</th>
+                                    <th className="px-4 py-3 font-semibold">Course & Section</th>
+                                    <th className="px-4 py-3 font-semibold">Current Status</th>
+                                    <th className="px-4 py-3 font-semibold">Progress</th>
+                                    <th className="px-4 py-3 font-semibold whitespace-nowrap">Last Activity</th>
+                                    <th className="px-4 py-3 font-semibold whitespace-nowrap">Enrolled At</th>
+                                    <th className="px-4 py-3 font-semibold whitespace-nowrap">Update</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {loading && (
-                                    <tr><td colSpan={9} className="px-4 py-10 text-center text-[#687EFF]">
+                                    <tr><td colSpan={7} className="px-4 py-10 text-center text-[#687EFF]">
                                         <div className="flex items-center justify-center gap-2">
                                             <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="#687EFF" strokeWidth="4"/><path className="opacity-75" fill="#687EFF" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                                            กำลังโหลดข้อมูล...
+                                            Loading data...
                                         </div>
                                     </td></tr>
                                 )}
                                 {!loading && pagedRows.length === 0 && (
-                                    <tr><td colSpan={9} className="px-4 py-10 text-center text-[#94A3B8]">ไม่พบข้อมูลผู้เรียน</td></tr>
+                                    <tr><td colSpan={7} className="px-4 py-10 text-center text-[#94A3B8]">No learner data found</td></tr>
                                 )}
                                 {!loading && pagedRows.map((row) => {
                                     const learner = row?.learner || {};
                                     const course = row?.course || {};
                                     const section = row?.section || {};
                                     const isRowUpdating = String(updatingId) === String(row?.id || '');
+                                    const availableActions = getAvailableActions(row?.status);
                                     return (
-                                        <tr key={row.id} className="border-t border-[#F1F5F9] hover:bg-[#FAFBFF] transition-colors">
-                                            <td className="px-4 py-3">
-                                                <div className="flex flex-wrap items-center gap-1.5">
-                                                    {ACTION_OPTIONS.map((action) => (
-                                                        <button key={`${row.id}-${action.value}`} type="button"
-                                                            disabled={isRowUpdating}
-                                                            onClick={() => updateStatus(row, action.value)}
-                                                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-95 whitespace-nowrap"
-                                                            style={{ background: action.bg, color: action.color, border: `1px solid ${action.border}` }}>
-                                                            {action.label}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3"><StatusBadge status={row?.status} /></td>
-                                            <td className="px-4 py-3 max-w-[160px]">
-                                                <div className="truncate font-medium text-[#334155]">{course?.name || '-'}</div>
-                                            </td>
-                                            <td className="px-4 py-3 text-[#64748B]">{section?.name || section?.title || '-'}</td>
+                                        <tr key={row.id} className="border-t border-[#F4F6FB] hover:bg-[#FCFDFF] transition-colors">
                                             <td className="px-4 py-3">
                                                 <div className="font-medium text-[#1E293B]">{learner?.username || learner?.email || '-'}</div>
+                                                <div className="text-[12px] text-[#94A3B8] mt-1">{learner?.fullName || '-'}</div>
                                             </td>
-                                            <td className="px-4 py-3 text-[#64748B]">{learner?.fullName || '-'}</td>
+                                            <td className="px-4 py-3 max-w-[220px]">
+                                                <div className="font-medium text-[#334155] truncate">{course?.name || '-'}</div>
+                                                <div className="text-[12px] text-[#94A3B8] mt-1 truncate">{section?.name || section?.title || 'No section assigned'}</div>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <div className="flex flex-col gap-1.5">
+                                                    <StatusBadge status={row?.status} />
+                                                    <span className="text-[11px] uppercase tracking-[0.08em] text-[#94A3B8]">Current status</span>
+                                                </div>
+                                            </td>
                                             <td className="px-4 py-3"><ProgressBar value={row?.progress} /></td>
-                                            <td className="px-4 py-3 text-[#64748B] whitespace-nowrap">{formatDateTime(row?.enrolledAt)}</td>
                                             <td className="px-4 py-3 text-[#64748B] whitespace-nowrap">{formatDateTime(row?.lastActivityAt)}</td>
+                                            <td className="px-4 py-3 text-[#64748B] whitespace-nowrap">{formatDateTime(row?.enrolledAt)}</td>
+                                            <td className="px-4 py-3">
+                                                {isRowUpdating ? (
+                                                    <div className="inline-flex items-center gap-2 rounded-xl border border-[#DDE4FF] bg-[#F8FAFF] px-3 py-2 text-[12px] font-medium text-[#687EFF]">
+                                                        <svg className="animate-spin w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="#687EFF" strokeWidth="4"/><path className="opacity-75" fill="#687EFF" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                                        Updating...
+                                                    </div>
+                                                ) : (
+                                                    <select
+                                                        defaultValue=""
+                                                        onChange={(event) => {
+                                                            const nextStatus = event.target.value;
+                                                            event.target.value = '';
+                                                            if (!nextStatus) return;
+                                                            updateStatus(row, nextStatus);
+                                                        }}
+                                                        className="h-[38px] min-w-[150px] rounded-xl border border-[#DDE4FF] bg-white px-3 text-[12px] font-medium text-[#334155] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 transition"
+                                                    >
+                                                        <option value="">Change status</option>
+                                                        {availableActions.map((action) => (
+                                                            <option key={`${row.id}-${action.value}`} value={action.value}>
+                                                                {action.label}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                )}
+                                            </td>
                                         </tr>
                                     );
                                 })}
@@ -414,12 +437,12 @@ export default function LearnerStatusManagePage() {
                     {/* Pagination */}
                     <div className="px-6 py-4 border-t border-[#F1F5F9] flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                         <div className="text-[13px] text-[#64748B]">
-                            แสดง {pagedRows.length} จาก {filteredRows.length} รายการ &nbsp;|&nbsp; หน้า {page} / {totalPages}
+                            Show {pagedRows.length} of {filteredRows.length} items &nbsp;|&nbsp; Page {page} / {totalPages}
                         </div>
                         <div className="flex items-center gap-1 flex-wrap">
                             <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}
                                 className="h-[34px] px-3 rounded-lg border border-[#DDE4FF] text-[13px] text-[#334155] hover:bg-[#F0EDFF] disabled:opacity-40 transition">
-                                ← ก่อนหน้า
+                                ← Previous
                             </button>
                             {pageNumbers.map((n) => (
                                 <button key={n} type="button" onClick={() => setPage(n)}
@@ -432,12 +455,13 @@ export default function LearnerStatusManagePage() {
                             ))}
                             <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
                                 className="h-[34px] px-3 rounded-lg border border-[#DDE4FF] text-[13px] text-[#334155] hover:bg-[#F0EDFF] disabled:opacity-40 transition">
-                                ถัดไป →
+                                Next →
                             </button>
                         </div>
                     </div>
                 </div>
             </div>
-        </AdminLmsDashboard>
+        </AdminShell>
     );
 }
+

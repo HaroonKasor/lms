@@ -30,11 +30,12 @@ function normalizeSectionType(value) {
 function normalizeSection(section, sectionSettingsBySectionId = {}) {
     const sectionKey = String(section?.id || '');
     const settings = sectionSettingsBySectionId?.[sectionKey] || {};
+    const groups = Array.isArray(settings?.groups) ? settings.groups : [];
     return {
         ...section,
-        sessionCode: '',
+        sessionCode: String(settings?.sessionCode || '').trim(),
         name: section.title || '',
-        detail: '',
+        detail: String(settings?.detail || '').trim(),
         registerDateFrom: String(settings?.registerDateFrom || '').trim(),
         registerDateTo: String(settings?.registerDateTo || '').trim(),
         registerUnlimit: Boolean(settings?.registerUnlimit),
@@ -43,12 +44,12 @@ function normalizeSection(section, sectionSettingsBySectionId = {}) {
         maxLearner: section.maxLearner || 0,
         maxLearnerUnlimit: section.maxLearner == null || Boolean(settings?.maxLearnerUnlimit),
         status: section.isActive ? 'active' : 'inactive',
-        autoApprove: true,
-        certificate: false,
-        autoCert: false,
-        printCert: false,
-        cohortModule: false,
-        groups: '',
+        autoApprove: settings?.autoApprove ?? true,
+        certificate: Boolean(settings?.certificate),
+        autoCert: Boolean(settings?.autoCert),
+        printCert: Boolean(settings?.printCert),
+        cohortModule: Boolean(settings?.cohortModule),
+        groups: groups.join(','),
     };
 }
 
@@ -131,6 +132,14 @@ export async function POST(request) {
             learnDateTo: body.learnDateTo,
             learnDateUnlimit: body.learnDateUnlimit,
             maxLearnerUnlimit: body.maxLearnerUnlimit,
+            sessionCode: body.sessionCode,
+            detail: body.detail,
+            autoApprove: body.autoApprove,
+            certificate: body.certificate,
+            autoCert: body.autoCert,
+            printCert: body.printCert,
+            cohortModule: body.cohortModule,
+            groups: body.groups,
         });
 
         const sectionCompatMaps = await getSectionCompatMaps([section.id]);
@@ -215,6 +224,14 @@ export async function PUT(request) {
             || body.learnDateTo !== undefined
             || body.learnDateUnlimit !== undefined
             || body.maxLearnerUnlimit !== undefined
+            || body.sessionCode !== undefined
+            || body.detail !== undefined
+            || body.autoApprove !== undefined
+            || body.certificate !== undefined
+            || body.autoCert !== undefined
+            || body.printCert !== undefined
+            || body.cohortModule !== undefined
+            || body.groups !== undefined
         ) {
             await setSectionSettings(section.id, {
                 registerDateFrom: body.registerDateFrom,
@@ -223,6 +240,14 @@ export async function PUT(request) {
                 learnDateTo: body.learnDateTo,
                 learnDateUnlimit: body.learnDateUnlimit,
                 maxLearnerUnlimit: body.maxLearnerUnlimit,
+                sessionCode: body.sessionCode,
+                detail: body.detail,
+                autoApprove: body.autoApprove,
+                certificate: body.certificate,
+                autoCert: body.autoCert,
+                printCert: body.printCert,
+                cohortModule: body.cohortModule,
+                groups: body.groups,
             });
         }
 

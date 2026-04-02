@@ -1,8 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
-import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+import React, { useMemo, useState } from 'react';
+import AdminShell from '@/components/admin/layout/AdminShell';
 import FadeIn from '@/components/ui/FadeIn';
+import {
+    AdminCard,
+    AdminPageHeader,
+    adminDangerButtonClass,
+    adminInputClass,
+    adminPrimaryButtonClass,
+    adminSecondaryButtonClass,
+} from '@/components/admin/ui/AdminPrimitives';
 
 export default function CourseBuilderPage() {
     const [chapters, setChapters] = useState([
@@ -10,75 +18,148 @@ export default function CourseBuilderPage() {
         { id: 2, title: 'Visual Hierarchy', lessons: ['Contrast & Scale', 'Color Theory'] }
     ]);
 
+    const totalLessons = useMemo(() => chapters.reduce((sum, chapter) => sum + chapter.lessons.length, 0), [chapters]);
+
     const addChapter = () => {
-        const newChapter = {
-            id: Date.now(),
-            title: 'New Chapter Title',
-            lessons: ['New Lesson 1']
-        };
-        setChapters([...chapters, newChapter]);
+        setChapters((current) => ([
+            ...current,
+            {
+                id: Date.now(),
+                title: 'New Chapter Title',
+                lessons: ['New Lesson 1']
+            }
+        ]));
+    };
+
+    const removeChapter = (chapterId) => {
+        setChapters((current) => current.filter((chapter) => chapter.id !== chapterId));
+    };
+
+    const addLesson = (chapterId) => {
+        setChapters((current) => current.map((chapter) => {
+            if (chapter.id !== chapterId) return chapter;
+            return {
+                ...chapter,
+                lessons: [...chapter.lessons, `New Lesson ${chapter.lessons.length + 1}`]
+            };
+        }));
+    };
+
+    const removeLesson = (chapterId, lessonIndex) => {
+        setChapters((current) => current.map((chapter) => {
+            if (chapter.id !== chapterId) return chapter;
+            return {
+                ...chapter,
+                lessons: chapter.lessons.filter((_, index) => index !== lessonIndex)
+            };
+        }));
+    };
+
+    const updateChapterTitle = (chapterId, value) => {
+        setChapters((current) => current.map((chapter) => (
+            chapter.id === chapterId ? { ...chapter, title: value } : chapter
+        )));
+    };
+
+    const updateLessonTitle = (chapterId, lessonIndex, value) => {
+        setChapters((current) => current.map((chapter) => {
+            if (chapter.id !== chapterId) return chapter;
+            return {
+                ...chapter,
+                lessons: chapter.lessons.map((lesson, index) => (index === lessonIndex ? value : lesson))
+            };
+        }));
     };
 
     return (
-        <AdminLmsDashboard>
+        <AdminShell>
             <FadeIn direction="up">
-                <div className="flex flex-col gap-8 w-full">
-                    <div className="flex justify-between items-center">
-                        <div>
-                            <h1 className="text-[32px] font-medium text-[#052143] leading-[150%]">Course Builder</h1>
-                            <p className="text-slate-500 font-medium">Create and manage your course curriculum</p>
-                        </div>
-                        <button
-                            onClick={addChapter}
-                            className="bg-[#687EFF] text-white px-8 py-4 rounded-2xl font-black shadow-lg shadow-indigo-500/20 hover:-translate-y-1 transition-all"
-                        >
-                            + Add New Chapter
-                        </button>
+                <div className="flex w-full flex-col gap-6">
+                    <AdminPageHeader
+                        eyebrow="Curriculum workspace"
+                        title="Course Builder"
+                        description="Organise chapters and lessons inside the refreshed admin shell without changing any backend wiring yet."
+                        actions={(
+                            <div className="flex flex-wrap gap-3">
+                                <button type="button" className={adminSecondaryButtonClass}>Save draft</button>
+                                <button type="button" onClick={addChapter} className={adminPrimaryButtonClass}>Add new chapter</button>
+                            </div>
+                        )}
+                    />
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                        <AdminCard className="border-[#D8E7FA] bg-[linear-gradient(135deg,_#F8FBFF_0%,_#F0F7FF_100%)]">
+                            <div className="text-[13px] font-semibold uppercase tracking-[0.18em] text-[#6F88A7]">Chapters</div>
+                            <div className="mt-3 text-[34px] font-semibold tracking-[-0.03em] text-[#052143]">{chapters.length}</div>
+                            <p className="mt-2 text-sm leading-6 text-[#60738E]">A clear snapshot of the curriculum structure we are shaping inside this builder.</p>
+                        </AdminCard>
+                        <AdminCard className="border-[#E3DBFF] bg-[linear-gradient(135deg,_#FCFBFF_0%,_#F4F1FF_100%)]">
+                            <div className="text-[13px] font-semibold uppercase tracking-[0.18em] text-[#7A6FA8]">Lessons</div>
+                            <div className="mt-3 text-[34px] font-semibold tracking-[-0.03em] text-[#1D275F]">{totalLessons}</div>
+                            <p className="mt-2 text-sm leading-6 text-[#6B6791]">Keeps the lesson count visible so the page feels purposeful even before persistence work lands.</p>
+                        </AdminCard>
+                        <AdminCard className="border-[#DDF3EA] bg-[linear-gradient(135deg,_#FAFFFD_0%,_#F1FBF6_100%)]">
+                            <div className="text-[13px] font-semibold uppercase tracking-[0.18em] text-[#4F8A72]">Shell status</div>
+                            <div className="mt-3 text-[24px] font-semibold tracking-[-0.03em] text-[#113B2D]">Pattern aligned</div>
+                            <p className="mt-2 text-sm leading-6 text-[#557768]">This builder now matches the new admin shell, so we can evolve behavior later without another layout reset.</p>
+                        </AdminCard>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-6">
-                        {chapters.map((chapter, i) => (
-                            <div key={chapter.id} className="bg-white border border-[#D1E3FB] rounded-[2rem] p-8 shadow-sm group hover:border-[#687EFF]/40 transition-all">
-                                <div className="flex items-center justify-between mb-8">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center text-[#052143] font-black border border-slate-100">
-                                            {i + 1}
+                    <div className="grid grid-cols-1 gap-5">
+                        {chapters.map((chapter, chapterIndex) => (
+                            <AdminCard key={chapter.id} className="overflow-hidden p-0">
+                                <div className="border-b border-[#E6EEF8] bg-[linear-gradient(180deg,_#FFFFFF_0%,_#FAFCFF_100%)] px-6 py-5">
+                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                        <div className="flex min-w-0 flex-1 items-start gap-4">
+                                            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] border border-[#DCE8F8] bg-[#F8FBFF] text-[15px] font-semibold text-[#0B2447]">
+                                                {chapterIndex + 1}
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[#6F88A7]">Chapter title</label>
+                                                <input
+                                                    value={chapter.title}
+                                                    onChange={(event) => updateChapterTitle(chapter.id, event.target.value)}
+                                                    className={adminInputClass}
+                                                />
+                                            </div>
                                         </div>
-                                        <input
-                                            defaultValue={chapter.title}
-                                            className="text-xl font-bold text-[#052143] bg-transparent border-none focus:outline-none focus:ring-2 ring-[#687EFF]/20 rounded-lg px-2"
-                                        />
-                                    </div>
-                                    <div className="flex gap-2">
-                                        <button className="p-2 text-slate-400 hover:text-rose-500 transition-colors">
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                        </button>
-                                        <button className="p-2 text-slate-400 hover:text-[#687EFF] transition-colors">
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M4 6h16M4 12h16m-7 6h7" /></svg>
-                                        </button>
+                                        <div className="flex flex-wrap gap-3">
+                                            <button type="button" onClick={() => addLesson(chapter.id)} className={adminSecondaryButtonClass}>Add lesson</button>
+                                            <button type="button" onClick={() => removeChapter(chapter.id)} className={adminDangerButtonClass}>Remove chapter</button>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div className="space-y-3 pl-14">
-                                    {chapter.lessons.map((lesson, j) => (
-                                        <div key={j} className="flex items-center justify-between p-4 bg-slate-50 border border-slate-100 rounded-xl group/lesson hover:bg-white hover:border-[#687EFF]/20 transition-all">
-                                            <div className="flex items-center gap-3">
-                                                <svg className="w-4 h-4 text-slate-400" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                                                <span className="font-bold text-slate-600 group-hover/lesson:text-[#052143] transition-colors">{lesson}</span>
+                                <div className="space-y-4 px-6 py-6">
+                                    {chapter.lessons.map((lesson, lessonIndex) => (
+                                        <div key={`${chapter.id}-${lessonIndex}`} className="rounded-[22px] border border-[#E6EEF8] bg-white px-5 py-5 shadow-[0_10px_30px_rgba(14,42,90,0.04)]">
+                                            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                                <div className="min-w-0 flex-1">
+                                                    <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[#6F88A7]">Lesson {lessonIndex + 1}</label>
+                                                    <input
+                                                        value={lesson}
+                                                        onChange={(event) => updateLessonTitle(chapter.id, lessonIndex, event.target.value)}
+                                                        className={adminInputClass}
+                                                    />
+                                                </div>
+                                                <button type="button" onClick={() => removeLesson(chapter.id, lessonIndex)} className={adminDangerButtonClass}>Remove lesson</button>
                                             </div>
-                                            <button className="opacity-0 group-hover/lesson:opacity-100 text-xs font-black text-rose-500 uppercase tracking-widest transition-opacity">Remove</button>
                                         </div>
                                     ))}
-                                    <button className="w-full py-4 border-2 border-dashed border-slate-200 rounded-xl text-slate-400 font-bold text-xs uppercase tracking-widest hover:border-[#687EFF]/40 hover:text-[#687EFF] transition-all">
-                                        + Add lesson to this chapter
+
+                                    <button
+                                        type="button"
+                                        onClick={() => addLesson(chapter.id)}
+                                        className="w-full rounded-[20px] border border-dashed border-[#C8D9F1] bg-[#FAFCFF] px-5 py-4 text-sm font-semibold text-[#426A9B] transition hover:border-[#7EA5DB] hover:bg-[#F3F8FF]"
+                                    >
+                                        Add lesson to this chapter
                                     </button>
                                 </div>
-                            </div>
+                            </AdminCard>
                         ))}
                     </div>
                 </div>
             </FadeIn>
-        </AdminLmsDashboard>
+        </AdminShell>
     );
 }
-

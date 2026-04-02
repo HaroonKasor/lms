@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import AdminLmsDashboard from '@/components/layout/AdminLmsDashboard';
+import AdminShell from '@/components/admin/layout/AdminShell';
 
 const DEFAULT_FILTERS = { categoryId: '', courseId: '', username: '', status: 'ALL' };
 const DEFAULT_ENROLL_FORM = { categoryId: '', courseId: '', userId: '' };
@@ -19,7 +19,7 @@ const toSafeString = (v) => String(v || '').trim();
 
 function formatDateTime(value) {
   if (!value) return '-';
-  try { return new Date(value).toLocaleString('th-TH'); } catch { return String(value); }
+  try { return new Date(value).toLocaleString('en-US'); } catch { return String(value); }
 }
 
 function statusConfig(status) {
@@ -174,7 +174,7 @@ export default function EnrollmentPage() {
     if (totalPages <= w) return Array.from({ length: totalPages }, (_, i) => i + 1);
     const half = Math.floor(w / 2);
     let start = Math.max(1, page - half);
-    let end = Math.min(totalPages, start + w - 1);
+    const end = Math.min(totalPages, start + w - 1);
     if (end - start + 1 < w) start = Math.max(1, end - w + 1);
     return Array.from({ length: end - start + 1 }, (_, i) => start + i);
   }, [page, totalPages]);
@@ -200,7 +200,7 @@ export default function EnrollmentPage() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || 'Enroll failed');
-      setSuccess('ลงทะเบียนสำเร็จ!');
+      setSuccess('Enrollment created successfully!');
       setEnrollForm((prev) => ({ ...prev, userId: '' }));
       await loadEnrollments(appliedFilters.courseId || '');
     } catch (err) {
@@ -241,14 +241,14 @@ export default function EnrollmentPage() {
   const inputCls = 'h-[42px] w-full rounded-xl border border-[#DDE4FF] bg-white px-3 text-[14px] text-[#1E293B] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 transition';
 
   return (
-    <AdminLmsDashboard>
+    <AdminShell>
       <div className="w-full flex flex-col gap-6" style={{ fontFamily: "'Inter', 'Noto Sans Thai', sans-serif" }}>
 
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-[#1E293B]">จัดการการลงทะเบียนเรียน</h1>
-            <p className="text-[13px] text-[#64748B] mt-0.5">เลือกคอร์ส → ค้นหาผู้เรียน → ลงทะเบียน</p>
+            <h1 className="text-2xl font-bold text-[#1E293B]">Enrollment Management</h1>
+            <p className="text-[13px] text-[#64748B] mt-0.5">Select course → find learner → enroll</p>
           </div>
           <div className="w-10 h-10 rounded-xl bg-[#687EFF] flex items-center justify-center shadow-md shadow-[#687EFF]/30">
             <svg width="20" height="20" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -258,50 +258,50 @@ export default function EnrollmentPage() {
         {/* Stat Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <StatCard label="Total Enrollments" value={enrollments.length} color="#687EFF" icon={<svg width="22" height="22" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>} />
-          <StatCard label="กำลังเรียน" value={statsLearning} color="#2563EB" icon={<svg width="22" height="22" fill="none" stroke="#2563EB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>} />
-          <StatCard label="เรียนจบแล้ว" value={statsCompleted} color="#059669" icon={<svg width="22" height="22" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>} />
-          <StatCard label="รอดำเนินการ" value={statsPending} color="#D97706" icon={<svg width="22" height="22" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>} />
+          <StatCard label="Learning" value={statsLearning} color="#2563EB" icon={<svg width="22" height="22" fill="none" stroke="#2563EB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>} />
+          <StatCard label="Completed" value={statsCompleted} color="#059669" icon={<svg width="22" height="22" fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>} />
+          <StatCard label="Pending" value={statsPending} color="#D97706" icon={<svg width="22" height="22" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>} />
         </div>
 
         {/* --- Enroll Form Card --- */}
         <div className="bg-white rounded-2xl border border-[#EEF1FF] shadow-sm overflow-hidden">
           <div className="flex items-center gap-3 px-6 py-4 border-b border-[#EEF1FF]" style={{ background: 'linear-gradient(90deg,#687EFF,#8A9CFF)' }}>
             <svg width="18" height="18" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
-            <span className="text-white font-semibold text-[16px]">ลงทะเบียนผู้เรียน (Manual Enrollment)</span>
+            <span className="text-white font-semibold text-[16px]">Learner Enrollment (Manual Enrollment)</span>
           </div>
           <form onSubmit={handleEnrollSubmit} className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-medium text-[#334155]">หมวดหมู่</label>
+                <label className="text-[13px] font-medium text-[#334155]">Category</label>
                 <select value={enrollForm.categoryId}
                   onChange={(e) => setEnrollForm((p) => ({ ...p, categoryId: e.target.value, courseId: '', userId: '' }))}
                   className={inputCls}>
-                  <option value="">ทั้งหมด</option>
+                  <option value="">All</option>
                   {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-medium text-[#334155]">คอร์สเรียน <span className="text-rose-500">*</span></label>
+                <label className="text-[13px] font-medium text-[#334155]">Course <span className="text-rose-500">*</span></label>
                 <select value={enrollForm.courseId}
                   onChange={(e) => setEnrollForm((p) => ({ ...p, courseId: e.target.value, userId: '' }))}
                   className={inputCls} required>
-                  <option value="">เลือกคอร์ส</option>
+                  <option value="">Select course</option>
                   {enrollCourseOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-medium text-[#334155]">ค้นหาผู้เรียน</label>
+                <label className="text-[13px] font-medium text-[#334155]">Find learner</label>
                 <input value={enrollUserSearch}
                   onChange={(e) => { setEnrollUserSearch(e.target.value); setEnrollForm((p) => ({ ...p, userId: '' })); }}
-                  placeholder="พิมพ์ชื่อ/อีเมล"
+                  placeholder="Type name/email"
                   className={inputCls} />
               </div>
               <div className="flex flex-col gap-1.5">
-                <label className="text-[13px] font-medium text-[#334155]">ผู้เรียน <span className="text-rose-500">*</span></label>
+                <label className="text-[13px] font-medium text-[#334155]">Learner <span className="text-rose-500">*</span></label>
                 <select value={enrollForm.userId}
                   onChange={(e) => setEnrollForm((p) => ({ ...p, userId: e.target.value }))}
                   className={inputCls} required>
-                  <option value="">เลือกผู้เรียน ({enrollUserOptions.length})</option>
+                  <option value="">Select learner ({enrollUserOptions.length})</option>
                   {enrollUserOptions.map((u) => <option key={u.id} value={u.id}>{u.username} | {u.fullName || '-'}</option>)}
                 </select>
               </div>
@@ -310,12 +310,12 @@ export default function EnrollmentPage() {
               <button type="submit" disabled={loading || enrolling}
                 className="h-[42px] px-6 rounded-xl text-white text-[14px] font-semibold disabled:opacity-60 transition-all"
                 style={{ background: 'linear-gradient(90deg,#687EFF,#8A9CFF)', boxShadow: '0 4px 14px #687EFF44' }}>
-                {enrolling ? 'กำลังลงทะเบียน...' : '+ ลงทะเบียน'}
+                {enrolling ? 'Enrolling...' : '+ Enroll'}
               </button>
               <button type="button"
                 onClick={() => { setEnrollForm(DEFAULT_ENROLL_FORM); setEnrollUserSearch(''); }}
                 className="h-[42px] px-6 rounded-xl border border-[#DDE4FF] text-[14px] text-[#687EFF] font-medium hover:bg-[#F0EDFF] transition-all">
-                ล้างฟอร์ม
+                Clear form
               </button>
             </div>
           </form>
@@ -336,8 +336,8 @@ export default function EnrollmentPage() {
         <div className="bg-white rounded-2xl border border-[#EEF1FF] shadow-sm overflow-hidden">
           <div className="flex items-center gap-3 px-6 py-4 border-b border-[#EEF1FF]">
             <svg width="18" height="18" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
-            <span className="font-semibold text-[16px] text-[#1E293B]">รายการลงทะเบียน</span>
-            <span className="ml-auto text-[13px] text-[#64748B]">{filteredRows.length} รายการ</span>
+            <span className="font-semibold text-[16px] text-[#1E293B]">Enrollment List</span>
+            <span className="ml-auto text-[13px] text-[#64748B]">{filteredRows.length} items</span>
           </div>
 
           {/* Filter Bar */}
@@ -346,13 +346,13 @@ export default function EnrollmentPage() {
               <select value={draftFilters.categoryId}
                 onChange={(e) => setDraftFilters((p) => ({ ...p, categoryId: e.target.value, courseId: '' }))}
                 className={inputCls}>
-                <option value="">ทุกหมวดหมู่</option>
+                <option value="">All categories</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <select value={draftFilters.courseId}
                 onChange={(e) => setDraftFilters((p) => ({ ...p, courseId: e.target.value }))}
                 className={inputCls}>
-                <option value="">ทุกคอร์ส</option>
+                <option value="">All courses</option>
                 {filterCourseOptions.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <select value={draftFilters.status}
@@ -362,18 +362,18 @@ export default function EnrollmentPage() {
               </select>
               <input value={draftFilters.username}
                 onChange={(e) => setDraftFilters((p) => ({ ...p, username: e.target.value }))}
-                placeholder="กรองตาม Username"
+                placeholder="Filter by username"
                 className={inputCls} />
               <div className="flex gap-2">
                 <button type="submit" disabled={submitting}
                   className="flex-1 h-[42px] rounded-xl text-white text-[14px] font-semibold transition-all disabled:opacity-60"
                   style={{ background: '#687EFF' }}>
-                  {submitting ? 'กำลังค้น...' : 'ค้นหา'}
+                  {submitting ? 'Searching...' : 'Search'}
                 </button>
                 <button type="button"
                   onClick={() => { setDraftFilters(DEFAULT_FILTERS); setAppliedFilters(DEFAULT_FILTERS); setSearchTerm(''); loadEnrollments(''); }}
                   className="h-[42px] px-3 rounded-xl border border-[#DDE4FF] text-[#687EFF] text-[14px] hover:bg-[#F0EDFF] transition-all">
-                  รีเซ็ต
+                  Reset
                 </button>
               </div>
             </div>
@@ -383,15 +383,15 @@ export default function EnrollmentPage() {
             {/* Table Toolbar */}
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-4">
               <div className="flex items-center gap-2 text-[13px] text-[#64748B]">
-                <span>แสดง</span>
+                <span>Show</span>
                 <select value={entries} onChange={(e) => setEntries(Number(e.target.value))}
                   className="h-[36px] rounded-lg border border-[#DDE4FF] px-2 text-[13px] outline-none focus:border-[#687EFF]">
                   {[10, 20, 50, 100].map((v) => <option key={v} value={v}>{v}</option>)}
                 </select>
-                <span>รายการ</span>
+                <span>items</span>
               </div>
               <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="ค้นหาในผลลัพธ์..."
+                placeholder="Search in results..."
                 className="w-full lg:w-[280px] h-[36px] rounded-lg border border-[#DDE4FF] px-3 text-[13px] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 transition" />
             </div>
 
@@ -401,12 +401,12 @@ export default function EnrollmentPage() {
                 <thead>
                   <tr className="bg-[#F0EDFF] text-[#687EFF]">
                     <th className="px-4 py-3 font-semibold">#</th>
-                    <th className="px-4 py-3 font-semibold">รหัส/ชื่อผู้เรียน</th>
-                    <th className="px-4 py-3 font-semibold">คอร์สเรียน</th>
-                    <th className="px-4 py-3 font-semibold">สถานะ</th>
-                    <th className="px-4 py-3 font-semibold">ความคืบหน้า</th>
-                    <th className="px-4 py-3 font-semibold">วันที่ลงทะเบียน</th>
-                    <th className="px-4 py-3 font-semibold text-center">การดำเนินการ</th>
+                    <th className="px-4 py-3 font-semibold">Learner ID/Name</th>
+                    <th className="px-4 py-3 font-semibold">Course</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold">Progress</th>
+                    <th className="px-4 py-3 font-semibold">Enrolled At</th>
+                    <th className="px-4 py-3 font-semibold text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -415,13 +415,13 @@ export default function EnrollmentPage() {
                       <td colSpan={7} className="px-4 py-10 text-center text-[#687EFF]">
                         <div className="flex items-center justify-center gap-2">
                           <svg className="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="#687EFF" strokeWidth="4"/><path className="opacity-75" fill="#687EFF" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                          กำลังโหลดข้อมูล...
+                          Loading data...
                         </div>
                       </td>
                     </tr>
                   )}
                   {!loading && pagedRows.length === 0 && (
-                    <tr><td colSpan={7} className="px-4 py-10 text-center text-[#94A3B8]">ไม่พบข้อมูลการลงทะเบียน</td></tr>
+                    <tr><td colSpan={7} className="px-4 py-10 text-center text-[#94A3B8]">No enrollment data found</td></tr>
                   )}
                   {!loading && pagedRows.map((row, idx) => {
                     const learner = row?.learner || {};
@@ -467,12 +467,12 @@ export default function EnrollmentPage() {
             {/* Pagination */}
             <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="text-[13px] text-[#64748B]">
-                แสดง {pagedRows.length} จาก {filteredRows.length} รายการ &nbsp;|&nbsp; หน้า {page} / {totalPages}
+                Show {pagedRows.length} of {filteredRows.length} items &nbsp;|&nbsp; Page {page} / {totalPages}
               </div>
               <div className="flex items-center gap-1 flex-wrap">
                 <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1}
                   className="h-[34px] px-3 rounded-lg border border-[#DDE4FF] text-[13px] text-[#334155] hover:bg-[#F0EDFF] disabled:opacity-40 transition">
-                  ← ก่อนหน้า
+                  ← Previous
                 </button>
                 {pageNumbers.map((n) => (
                   <button key={n} type="button" onClick={() => setPage(n)}
@@ -485,13 +485,14 @@ export default function EnrollmentPage() {
                 ))}
                 <button type="button" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}
                   className="h-[34px] px-3 rounded-lg border border-[#DDE4FF] text-[13px] text-[#334155] hover:bg-[#F0EDFF] disabled:opacity-40 transition">
-                  ถัดไป →
+                  Next →
                 </button>
               </div>
             </div>
           </div>
         </div>
       </div>
-    </AdminLmsDashboard>
+    </AdminShell>
   );
 }
+

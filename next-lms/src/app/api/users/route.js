@@ -8,12 +8,70 @@ import {
     ensureOrgUser,
     ensureUserRole,
     getUserDisplayName,
+    listUserRoleCodes,
     mapRoleCodesToSessionRole,
-    normalizeRoleCode,
     parseUserStatus,
 } from '@/lib/server/enterprise-context';
+import {
+    deleteUserGroups,
+    getUserGroupMapByUserIds,
+    setUserGroups,
+} from '@/lib/server/user-group-membership-db';
+import {
+    getDefaultGroupCodeByRoleFromDb,
+    getGroupMapByCodesFromDb,
+} from '@/lib/server/group-directory-db';
+import {
+    inferEnterpriseRoleCodeFromGroup,
+    normalizeEnterpriseRoleCode,
+} from '@/lib/shared/role-directory';
 
 const PHONE_REGEX = /^\d{8,20}$/;
+
+function normalizeGroupCode(value) {
+    return String(value || '').trim().toUpperCase();
+}
+
+function normalizeGroupCodes(values = []) {
+    if (!Array.isArray(values)) return [];
+    const unique = new Set();
+    for (const value of values) {
+        const code = normalizeGroupCode(value);
+        if (code) unique.add(code);
+    }
+    return Array.from(unique);
+}
+
+async function resolveRoleCodeFromSelectedGroups(selectedGroups, fallbackRoleCode) {
+    const requestedRoleCode = String(fallbackRoleCode || '').trim();
+    if (requestedRoleCode) {
+        return normalizeEnterpriseRoleCode(requestedRoleCode);
+    }
+
+    const normalizedGroups = normalizeGroupCodes(selectedGroups);
+    if (normalizedGroups.length === 0) return normalizeEnterpriseRoleCode('LEARNER');
+
+    const groupMap = await getGroupMapByCodesFromDb(normalizedGroups);
+    for (const groupCode of normalizedGroups) {
+        const group = groupMap.get(groupCode);
+        if (!group || group.isActive === false) continue;
+        return normalizeEnterpriseRoleCode(
+            group.roleCode || inferEnterpriseRoleCodeFromGroup(group)
+        );
+    }
+
+    return normalizeEnterpriseRoleCode('LEARNER');
+}
+
+async function resolveAssignedGroupsByRole(roleCode, fallbackGroups = []) {
+    const normalizedRoleCode = normalizeEnterpriseRoleCode(roleCode);
+    const mappedDefaultGroup = await getDefaultGroupCodeByRoleFromDb(normalizedRoleCode);
+    if (mappedDefaultGroup) return [mappedDefaultGroup];
+
+    const normalizedFallback = normalizeGroupCodes(fallbackGroups);
+    if (normalizedFallback.length > 0) return [normalizedFallback[0]];
+    return [];
+}
 
 function splitName(fullName) {
     const value = String(fullName || '').trim();
@@ -24,7 +82,8 @@ function splitName(fullName) {
     return { firstName, lastName };
 }
 
-function mapUser(user, roleCodes = []) {
+function mapUser(user, roleCodes = [], groups = []) {
+    const normalizedStatus = String(user?.status || '').toLowerCase() || 'active';
     return {
         id: user.id,
         username: user.username,
@@ -32,8 +91,10 @@ function mapUser(user, roleCodes = []) {
         fullName: getUserDisplayName(user),
         phone: user?.profile?.phone || '',
         role: mapRoleCodesToSessionRole(roleCodes),
+        groups: Array.isArray(groups) ? groups : [],
         avatar: user?.profile?.avatarUrl || '',
-        isActive: String(user.status || '').toLowerCase() === 'active',
+        status: normalizedStatus,
+        isActive: normalizedStatus === 'active',
         createdAt: null,
         updatedAt: user.lastLoginAt || null,
     };
@@ -70,6 +131,8 @@ export async function GET(request) {
         const { response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
 
+        const { searchParams } = new URL(request.url);
+        const groupCodeFilter = String(searchParams.get('groupCode') || '').trim().toUpperCase();
         const organizationId = await ensureDefaultOrganization();
         const users = await prisma.user.findMany({
             where: {
@@ -81,9 +144,19 @@ export async function GET(request) {
             orderBy: { id: 'asc' },
         });
 
-        const roleMap = await getRoleMapByUserIds(users.map((user) => user.id), organizationId);
+        const userIds = users.map((user) => user.id);
+        const roleMap = await getRoleMapByUserIds(userIds, organizationId);
+        const groupMap = await getUserGroupMapByUserIds(userIds, organizationId);
+        const mappedUsers = users.map((user) => mapUser(
+            user,
+            roleMap.get(String(user.id)) || [],
+            groupMap.get(Number(user.id)) || []
+        ));
+        const filteredUsers = groupCodeFilter
+            ? mappedUsers.filter((user) => (user.groups || []).includes(groupCodeFilter))
+            : mappedUsers;
         return NextResponse.json(
-            users.map((user) => mapUser(user, roleMap.get(String(user.id)) || []))
+            filteredUsers
         );
     } catch (err) {
         console.error('[users/GET] failed', err);
@@ -109,8 +182,11 @@ export async function POST(request) {
         const rawPhone = String(body.phone || '').trim();
         const phone = rawPhone.replace(/\D/g, '');
         const avatar = String(body.avatar || '').trim();
-        const roleCode = normalizeRoleCode(body.role);
-        const isActive = body.isActive ?? true;
+        const userStatus = parseUserStatus(body.status ?? body.isActive);
+        const selectedGroups = normalizeGroupCodes(Array.isArray(body.selectedGroups) ? body.selectedGroups : []);
+        const roleInput = String(body.role || '').trim();
+        const roleCode = await resolveRoleCodeFromSelectedGroups(selectedGroups, roleInput);
+        const assignedGroups = await resolveAssignedGroupsByRole(roleCode, selectedGroups);
 
         if (!username || !email || !password) {
             return NextResponse.json({ error: 'Username, email, and password are required' }, { status: 400 });
@@ -142,7 +218,7 @@ export async function POST(request) {
                     username,
                     email,
                     passwordHash: hashed,
-                    status: parseUserStatus(isActive),
+                    status: userStatus,
                     profile: {
                         create: {
                             firstName,
@@ -161,11 +237,16 @@ export async function POST(request) {
                 userId: created.id,
                 roleCode,
             });
+            await setUserGroups(tx, {
+                organizationId,
+                userId: created.id,
+                groups: assignedGroups,
+            });
 
             return created;
         });
 
-        return NextResponse.json({ success: true, user: mapUser(user, [roleCode]) });
+        return NextResponse.json({ success: true, user: mapUser(user, [roleCode], assignedGroups) });
     } catch (err) {
         console.error('[users/POST] failed', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
@@ -193,8 +274,16 @@ export async function PUT(request) {
         const rawPhone = String(body.phone || '').trim();
         const phone = rawPhone.replace(/\D/g, '');
         const avatar = String(body.avatar || '').trim();
-        const roleCode = normalizeRoleCode(body.role);
-        const isActive = body.isActive ?? true;
+        const userStatus = parseUserStatus(body.status ?? body.isActive);
+        const selectedGroups = Array.isArray(body.selectedGroups)
+            ? normalizeGroupCodes(body.selectedGroups)
+            : null;
+        const organizationId = await ensureDefaultOrganization();
+        const currentRoleCodes = await listUserRoleCodes(id, organizationId);
+        const fallbackRoleCode = normalizeEnterpriseRoleCode(currentRoleCodes[0] || 'LEARNER');
+        const roleInput = String(body.role || '').trim() || fallbackRoleCode;
+        const roleCode = await resolveRoleCodeFromSelectedGroups(selectedGroups, roleInput);
+        const assignedGroups = await resolveAssignedGroupsByRole(roleCode, selectedGroups || []);
 
         if (!username || !email) {
             return NextResponse.json({ error: 'Username and email are required' }, { status: 400 });
@@ -204,15 +293,13 @@ export async function PUT(request) {
         }
 
         const { firstName, lastName } = splitName(fullName || username);
-        const organizationId = await ensureDefaultOrganization();
-
         const user = await prisma.$transaction(async (tx) => {
             const updated = await tx.user.update({
                 where: { id },
                 data: {
                     username,
                     email,
-                    status: parseUserStatus(isActive),
+                    status: userStatus,
                 },
                 include: { profile: true },
             });
@@ -241,6 +328,11 @@ export async function PUT(request) {
                 userId: id,
                 roleCode,
             });
+            await setUserGroups(tx, {
+                organizationId,
+                userId: id,
+                groups: assignedGroups,
+            });
 
             return tx.user.findUnique({
                 where: { id: updated.id },
@@ -252,7 +344,11 @@ export async function PUT(request) {
             return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
-        return NextResponse.json({ success: true, user: mapUser(user, [roleCode]) });
+        const groupMap = await getUserGroupMapByUserIds([user.id], organizationId);
+        return NextResponse.json({
+            success: true,
+            user: mapUser(user, [roleCode], groupMap.get(Number(user.id)) || assignedGroups),
+        });
     } catch (err) {
         if (err?.code === 'P2002') {
             return NextResponse.json({ error: 'Username or email already exists' }, { status: 409 });
@@ -327,7 +423,14 @@ export async function DELETE(request) {
             );
         }
 
-        await prisma.user.delete({ where: { id } });
+        const organizationId = await ensureDefaultOrganization();
+        await prisma.$transaction(async (tx) => {
+            await deleteUserGroups(tx, {
+                organizationId,
+                userId: id,
+            });
+            await tx.user.delete({ where: { id } });
+        });
         return NextResponse.json({ success: true });
     } catch (err) {
         console.error('[users/DELETE] failed', err);

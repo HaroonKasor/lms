@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState } from 'react';
 import Link from 'next/link';
@@ -48,34 +48,54 @@ const defaultActivityList = [
 ];
 
 const menuItems = [
-    { name: 'Dashboard', path: '/admin-dashboard' },
+    { name: 'Dashboard', path: '/admin-dashboard', matchPrefix: '/admin-dashboard' },
+    { name: 'Group', path: '/admin-dashboard/group', matchPrefix: '/admin-dashboard/group' },
     {
         name: 'Manage User',
         hasSub: true,
+        matchPrefix: '/admin-dashboard/manage-user',
         subItems: [
-            { name: 'Users', path: '/admin-dashboard/manage-user/users' }
+            { name: 'Users', path: '/admin-dashboard/manage-user/users', matchPrefix: '/admin-dashboard/manage-user' }
         ]
     },
     {
         name: 'Learn',
         hasSub: true,
+        matchPrefix: '/admin-dashboard/learn',
         subItems: [
-            { name: 'Category', path: '/admin-dashboard/learn/category' },
-            { name: 'Course', path: '/admin-dashboard/learn/course' },
-            { name: 'Enrollment', path: '/admin-dashboard/learn/enrollment' },
-            { name: 'Batch Enrollment', path: '/admin-dashboard/learn/batch-enrollment' },
-            { name: 'Learner Status', path: '/admin-dashboard/learn/learner-status' },
+            { name: 'Category', path: '/admin-dashboard/learn/category', matchPrefix: '/admin-dashboard/learn/category' },
+            { name: 'Course', path: '/admin-dashboard/learn/course', matchPrefix: '/admin-dashboard/learn/course' },
+            { name: 'Enrollment', path: '/admin-dashboard/learn/enrollment', matchPrefix: '/admin-dashboard/learn/enrollment' },
+            { name: 'Batch Enrollment', path: '/admin-dashboard/learn/batch-enrollment', matchPrefix: '/admin-dashboard/learn/batch-enrollment' },
+            { name: 'Learner Status', path: '/admin-dashboard/learn/learner-status', matchPrefix: '/admin-dashboard/learn/learner-status' },
         ]
     },
-    { name: 'Content', path: '/admin-dashboard/content' },
+    { name: 'Content', path: '/admin-dashboard/content', matchPrefix: '/admin-dashboard/content' },
+    {
+        name: 'e-Publication',
+        hasSub: true,
+        matchPrefix: '/admin-dashboard/e-publication',
+        subItems: [
+            { name: 'Overview', path: '/admin-dashboard/e-publication', matchPrefix: '/admin-dashboard/e-publication' }
+        ]
+    },
+    {
+        name: 'Connection',
+        hasSub: true,
+        matchPrefix: '/admin-dashboard/connection',
+        subItems: [
+            { name: 'Overview', path: '/admin-dashboard/connection', matchPrefix: '/admin-dashboard/connection' }
+        ]
+    },
     {
         name: 'Report',
         hasSub: true,
+        matchPrefix: '/admin-dashboard/report',
         subItems: [
-            { name: 'Learner Status', path: '/admin-dashboard/report/learner-status' },
-            { name: 'Attempt report', path: '/admin-dashboard/report/attempt-report' },
-            { name: 'Examination Score', path: '/admin-dashboard/report/examination-score' },
-            { name: 'Certificate Report', path: '/admin-dashboard/report/certificate-report' }
+            { name: 'Learner Status', path: '/admin-dashboard/report/learner-status', matchPrefix: '/admin-dashboard/report/learner-status' },
+            { name: 'Attempt report', path: '/admin-dashboard/report/attempt-report', matchPrefix: '/admin-dashboard/report/attempt-report' },
+            { name: 'Examination Score', path: '/admin-dashboard/report/examination-score', matchPrefix: '/admin-dashboard/report/examination-score' },
+            { name: 'Certificate Report', path: '/admin-dashboard/report/certificate-report', matchPrefix: '/admin-dashboard/report/certificate-report' }
         ]
     },
 ];
@@ -152,7 +172,12 @@ export default function AdminLmsDashboard({ children }) {
         if (!rawPath) return false;
 
         const [basePath, queryString = ''] = rawPath.split('?');
-        if (pathname !== basePath) return false;
+        const matchPrefix = String(subItem?.matchPrefix || basePath).trim();
+        const matchesPath = queryString
+            ? pathname === basePath
+            : pathname === basePath || pathname.startsWith(`${matchPrefix}/`);
+
+        if (!matchesPath) return false;
 
         const expectedParams = new URLSearchParams(queryString);
         const expectedView = expectedParams.get('view');
@@ -261,8 +286,84 @@ export default function AdminLmsDashboard({ children }) {
         );
     };
 
+    React.useEffect(() => {
+        setSidebarOpen(false);
+    }, [pathname]);
+
+    const renderSidebar = () => (
+        <aside className="flex flex-col items-start px-[16px] pt-[16px] pb-[24px] gap-[8px] w-[190px] min-h-[480px] h-fit bg-[#FFFFFF] rounded-[16px] shadow-sm shrink-0 border border-[#D1E3FB]">
+            {menuItems.map((item, idx) => {
+                const isChildActive = item.subItems?.some((sub) => isSubItemActive(sub));
+                const matchPrefix = String(item?.matchPrefix || item?.path || '').trim();
+                const isExactDashboard = matchPrefix === '/admin-dashboard' && pathname === '/admin-dashboard';
+                const isActive = isExactDashboard || (matchPrefix && matchPrefix !== '/admin-dashboard' && pathname.startsWith(matchPrefix)) || item.active || isChildActive;
+                const isExpanded = expandedMenus.includes(item.name);
+                const showAsActiveParent = isExpanded || isActive;
+
+                return (
+                    <React.Fragment key={idx}>
+                        {item.hasSub ? (
+                            <div className="w-full flex flex-col">
+                                <button
+                                    onClick={() => toggleSubMenu(item.name)}
+                                    className={`flex items-center px-3 h-[38px] w-full transition-all ${showAsActiveParent
+                                        ? 'bg-[#687EFF] text-white shadow-[0px_4px_10px_rgba(104,126,255,0.2)]'
+                                        : 'text-[#6B778B] hover:bg-blue-50'
+                                        } rounded-lg`}
+                                >
+                                    <span className={`text-[15px] font-medium leading-[150%] flex-1 text-left ${showAsActiveParent ? 'text-white' : 'text-[#6B778B]'}`}>
+                                        {item.name}
+                                    </span>
+                                    <div className={`transition-transform duration-200 flex items-center justify-center ${isExpanded ? 'rotate-180' : ''}`}>
+                                        <ChevronDown className={showAsActiveParent ? 'text-white' : 'text-[#6B778B]'} />
+                                    </div>
+                                </button>
+
+                                {isExpanded && item.subItems && (
+                                    <div className="flex flex-col w-full mt-1">
+                                        {item.subItems.map((sub, sIdx) => {
+                                            const isSubActive = isSubItemActive(sub);
+                                            return (
+                                                <Link
+                                                    href={sub.path || '#'}
+                                                    key={sIdx}
+                                                    className={`flex items-center px-3 py-2 w-full transition-colors rounded-lg mb-0.5 ${isSubActive
+                                                        ? 'bg-[#E4E9FF] text-[#6B778B] font-medium'
+                                                        : 'bg-transparent text-[#6B778B] hover:bg-[#E4E9FF]/40'
+                                                        }`}
+                                                >
+                                                    <span className="pl-4 text-[14px]">{sub.name || sub}</span>
+                                                </Link>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <Link
+                                href={item.path || '#'}
+                                className={`flex items-center px-3 h-[38px] w-full transition-all rounded-lg ${isActive
+                                    ? 'bg-[#687EFF] text-white shadow-[0px_4px_10px_rgba(104,126,255,0.2)]'
+                                    : 'text-[#6B778B] hover:bg-blue-50'
+                                    }`}
+                            >
+                                <span className={`text-[15px] font-medium leading-[150%] flex-1 ${isActive ? 'text-white' : 'text-[#6B778B]'}`}>
+                                    {item.name}
+                                </span>
+                                {item.hasSub && <ChevronDown />}
+                            </Link>
+                        )}
+                        {idx !== menuItems.length - 1 && (
+                            <div className="w-full mx-auto border-b border-dashed border-[#C7CFDA]/60"></div>
+                        )}
+                    </React.Fragment>
+                );
+            })}
+        </aside>
+    );
+
     return (
-        <div className="w-full min-h-screen font-outfit overflow-x-hidden relative flex flex-col bg-[#F6F8FF]">
+        <div className="w-full h-screen font-outfit overflow-hidden relative flex flex-col bg-[#F6F8FF]">
 
             {/* Global Navbar */}
             <Navbar />
@@ -284,7 +385,7 @@ export default function AdminLmsDashboard({ children }) {
             </div>
 
             {/* Center Layout for Content */}
-            <div className="w-full max-w-[1760px] mx-auto flex flex-col md:flex-row relative z-10 px-6 xl:px-20">
+            <div className="w-full max-w-[1760px] mx-auto flex flex-1 min-h-0 flex-col md:flex-row relative z-10 px-6 xl:px-20">
 
                 {/* Mobile Header (Shows only on small screens) */}
                 <div className="md:hidden flex items-center justify-between py-4 w-full shrink-0">
@@ -294,85 +395,21 @@ export default function AdminLmsDashboard({ children }) {
                     </button>
                 </div>
 
+                {sidebarOpen && (
+                    <div className="fixed inset-0 z-40 bg-slate-900/35 md:hidden" onClick={() => setSidebarOpen(false)}>
+                        <div className="h-full w-[280px] max-w-[85vw] p-4" onClick={(event) => event.stopPropagation()}>
+                            {renderSidebar()}
+                        </div>
+                    </div>
+                )}
+
                 {/* Left Column for Sidebar placement */}
                 <div className="hidden md:block w-[190px] shrink-0 pt-6 relative z-20">
-                    {/* Floating Sidebar Card */}
-                    <aside className={`
-                        ${sidebarOpen ? 'block' : 'hidden'} 
-                        md:flex flex-col items-start px-[16px] pt-[16px] pb-[24px] gap-[8px]
-                        w-[190px] min-h-[480px] h-fit bg-[#FFFFFF] rounded-[16px] shadow-sm shrink-0 border border-[#D1E3FB]
-                    `}>
-                        {menuItems.map((item, idx) => {
-                            const isChildActive = item.subItems?.some((sub) => isSubItemActive(sub));
-                            const isActive = item.path === pathname || item.active || isChildActive;
-                            const isExpanded = expandedMenus.includes(item.name);
-                            const showAsActiveParent = isExpanded || isActive;
-
-                            return (
-                                <React.Fragment key={idx}>
-                                    {item.hasSub ? (
-                                        <div className="w-full flex flex-col">
-                                            <button
-                                                onClick={() => toggleSubMenu(item.name)}
-                                                className={`flex items-center px-3 h-[38px] w-full transition-all ${showAsActiveParent
-                                                    ? 'bg-[#687EFF] text-white shadow-[0px_4px_10px_rgba(104,126,255,0.2)]'
-                                                    : 'text-[#6B778B] hover:bg-blue-50'
-                                                    } rounded-lg`}
-                                            >
-                                                <span className={`text-[15px] font-medium leading-[150%] flex-1 text-left ${showAsActiveParent ? 'text-white' : 'text-[#6B778B]'}`}>
-                                                    {item.name}
-                                                </span>
-                                                <div className={`transition-transform duration-200 flex items-center justify-center ${isExpanded ? 'rotate-180' : ''}`}>
-                                                    <ChevronDown className={showAsActiveParent ? 'text-white' : 'text-[#6B778B]'} />
-                                                </div>
-                                            </button>
-
-                                            {/* Sub Menu Items - Nested look */}
-                                            {isExpanded && item.subItems && (
-                                                <div className="flex flex-col w-full mt-1">
-                                                    {item.subItems.map((sub, sIdx) => {
-                                                        const isSubActive = isSubItemActive(sub);
-                                                        return (
-                                                            <Link
-                                                                href={sub.path || '#'}
-                                                                key={sIdx}
-                                                                className={`flex items-center px-3 py-2 w-full transition-colors rounded-lg mb-0.5 ${isSubActive
-                                                                    ? 'bg-[#E4E9FF] text-[#6B778B] font-medium'
-                                                                    : 'bg-transparent text-[#6B778B] hover:bg-[#E4E9FF]/40'
-                                                                    }`}
-                                                            >
-                                                                <span className="pl-4 text-[14px]">{sub.name || sub}</span>
-                                                            </Link>
-                                                        );
-                                                    })}
-                                                </div>
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <Link
-                                            href={item.path || '#'}
-                                            className={`flex items-center px-3 h-[38px] w-full transition-all rounded-lg ${isActive
-                                                ? 'bg-[#687EFF] text-white shadow-[0px_4px_10px_rgba(104,126,255,0.2)]'
-                                                : 'text-[#6B778B] hover:bg-blue-50'
-                                                }`}
-                                        >
-                                            <span className={`text-[15px] font-medium leading-[150%] flex-1 ${isActive ? 'text-white' : 'text-[#6B778B]'}`}>
-                                                {item.name}
-                                            </span>
-                                            {item.hasSub && <ChevronDown />}
-                                        </Link>
-                                    )}
-                                    {idx !== menuItems.length - 1 && (
-                                        <div className="w-full mx-auto border-b border-dashed border-[#C7CFDA]/60"></div>
-                                    )}
-                                </React.Fragment>
-                            );
-                        })}
-                    </aside>
+                    {renderSidebar()}
                 </div>
 
                 {/* Main Content Area */}
-                <main className="admin-dashboard-main flex-1 md:pl-6 xl:pl-8 pt-6 pb-12 w-full max-w-full overflow-hidden">
+                <main className="admin-dashboard-main flex-1 min-h-0 md:pl-6 xl:pl-8 pt-6 pb-12 w-full max-w-full overflow-x-hidden overflow-y-auto">
                     {children ? children : (
                         <div className="w-full">
                             <h1 className="hidden md:block text-[32px] font-medium text-[#052143] leading-[150%] mb-8">Dashboard</h1>
@@ -586,9 +623,10 @@ function StatCard({ gradient, icon, value, label }) {
                 <div className="w-full h-0 border-t border-[#D1E3FB]"></div>
                 <a href="#" className="flex items-center gap-2 text-[#6155F5] text-[13px] font-medium group">
                     View details
-                    <span className="text-[#6155F5] group-hover:translate-x-1 transition-transform inline-block font-bold">→</span>
+                    <span className="text-[#6155F5] group-hover:translate-x-1 transition-transform inline-block font-bold">-&gt;</span>
                 </a>
             </div>
         </div>
     );
 }
+

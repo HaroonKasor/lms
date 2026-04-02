@@ -163,17 +163,20 @@ function normalizeCourse(
         ...course,
         name: course.title || '',
         nameEn: course.titleEn || '',
-        detail: '',
+        detail: String(settings?.detail || '').trim(),
         status: publishStatus === 'published' ? 'active' : publishStatus === 'archived' ? 'archived' : 'inactive',
         isPublic: visibility === 'public',
         certificate: Boolean(course.hasCertificate),
         certificateMode: String(course.certificateMode || 'none').toLowerCase(),
         autoCert: String(course.certificateMode || 'none').toLowerCase() === 'auto',
+        printCert: Boolean(settings?.printCert),
         autoApprove: typeof autoApprove === 'boolean' ? autoApprove : true,
-        instructor: '',
-        lessons: 0,
-        durationHours: 0,
-        durationMinutes: 0,
+        instructor: String(settings?.instructor || '').trim(),
+        lessons: Number(settings?.lessons || 0),
+        durationHours: Number(settings?.durationHours || 0),
+        durationMinutes: Number(settings?.durationMinutes || 0),
+        webboard: settings?.webboard ?? null,
+        prerequisites: Array.isArray(settings?.prerequisites) ? settings.prerequisites : [],
         price: 0,
         reviewCount: Number.isFinite(reviewCount) && reviewCount > 0 ? reviewCount : 0,
         averageRating: Number.isFinite(averageRating) && averageRating > 0 ? Number(averageRating.toFixed(1)) : 0,
@@ -347,6 +350,14 @@ export async function POST(request) {
             registerDateTo: body.registerDateTo,
             registerUnlimit: body.registerUnlimit,
             maxLearnerUnlimit: body.maxLearnerUnlimit,
+            detail: body.detail,
+            lessons: body.lessons,
+            durationHours: body.durationHours,
+            durationMinutes: body.durationMinutes,
+            instructor: body.instructor,
+            prerequisites: body.prerequisites,
+            webboard: body.webboard,
+            printCert: body.printCert,
         });
 
         const [compatMaps, reviewSummaryByCourseId] = await Promise.all([
@@ -452,12 +463,28 @@ export async function PUT(request) {
             || body.registerDateTo !== undefined
             || body.registerUnlimit !== undefined
             || body.maxLearnerUnlimit !== undefined
+            || body.detail !== undefined
+            || body.lessons !== undefined
+            || body.durationHours !== undefined
+            || body.durationMinutes !== undefined
+            || body.instructor !== undefined
+            || body.prerequisites !== undefined
+            || body.webboard !== undefined
+            || body.printCert !== undefined
         ) {
             await setCourseSettings(course.id, {
                 registerDateFrom: body.registerDateFrom,
                 registerDateTo: body.registerDateTo,
                 registerUnlimit: body.registerUnlimit,
                 maxLearnerUnlimit: body.maxLearnerUnlimit,
+                detail: body.detail,
+                lessons: body.lessons,
+                durationHours: body.durationHours,
+                durationMinutes: body.durationMinutes,
+                instructor: body.instructor,
+                prerequisites: body.prerequisites,
+                webboard: body.webboard,
+                printCert: body.printCert,
             });
         }
 

@@ -7,7 +7,7 @@ const DEFAULT_ORG_NAME = String(process.env.DEFAULT_ORG_NAME || 'LMS Enterprise'
 const ROLE_LABEL = {
     ADMIN: 'Administrator',
     INSTRUCTOR: 'Instructor',
-    USER: 'User',
+    LEARNER: 'Learner',
 };
 
 let cachedOrgId = null;
@@ -19,15 +19,18 @@ function toPositiveInt(value) {
 
 export function normalizeRoleCode(role) {
     const code = String(role || '').trim().toUpperCase();
-    if (code === 'ADMIN' || code === 'INSTRUCTOR') return code;
-    return 'USER';
+    if (code === 'ADMIN' || code === 'INSTRUCTOR' || code === 'LEARNER') return code;
+    // Backward compatibility for legacy USER role code.
+    if (code === 'USER') return 'LEARNER';
+    return 'LEARNER';
 }
 
 export function mapRoleCodesToSessionRole(roleCodes = []) {
     const codes = roleCodes.map((item) => String(item || '').toUpperCase());
     if (codes.includes('ADMIN')) return 'admin';
     if (codes.includes('INSTRUCTOR')) return 'instructor';
-    return 'user';
+    if (codes.includes('LEARNER') || codes.includes('USER')) return 'learner';
+    return 'learner';
 }
 
 export function getUserDisplayName(user) {
@@ -37,8 +40,16 @@ export function getUserDisplayName(user) {
     return full || String(user?.username || '');
 }
 
-export function parseUserStatus(isActive) {
-    return isActive === false ? 'inactive' : 'active';
+export function parseUserStatus(value) {
+    if (typeof value === 'string') {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (normalized === 'active') return 'active';
+        if (normalized === 'inactive') return 'inactive';
+        if (normalized === 'suspended') return 'suspended';
+        if (normalized === 'pending') return 'pending';
+    }
+    if (value === false) return 'inactive';
+    return 'active';
 }
 
 export function isUserActive(status) {
@@ -177,4 +188,3 @@ export async function resolveUserId(userKey = '') {
     });
     return user?.id || null;
 }
-

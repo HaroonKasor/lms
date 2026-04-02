@@ -146,6 +146,15 @@ async function sendEmail({ to, subject, text, html }) {
     await sendViaSmtp({ to, subject, text, html });
 }
 
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 export async function sendPasswordResetEmail({ to, name, resetUrl, ttlMinutes = 30 } = {}) {
     const safeTo = String(to || '').trim();
     if (!safeTo) {
@@ -309,6 +318,137 @@ export async function sendNewsletterSubscriptionNotification({
           <h2 style="margin: 0 0 10px 0;">New newsletter subscription</h2>
           <p style="margin: 0 0 8px 0;"><strong>Email:</strong> ${safeSubscriberEmail}</p>
           <p style="margin: 0;"><strong>Source:</strong> ${safeSource}</p>
+        </div>
+    `;
+
+    await sendEmail({
+        to: safeTo,
+        subject,
+        text,
+        html,
+    });
+}
+
+export async function sendEnrollmentSuccessEmail({
+    to,
+    learnerName,
+    courseName,
+    enrollmentStatus = 'in_progress',
+    learnUrl = '',
+    myLearningUrl = '',
+} = {}) {
+    const safeTo = String(to || '').trim();
+    if (!safeTo) {
+        throw new Error('Missing recipient email');
+    }
+
+    const appName = String(process.env.APP_NAME || 'SkillUp').trim();
+    const displayName = String(learnerName || '').trim() || 'Learner';
+    const safeCourseName = String(courseName || '').trim() || 'Course';
+    const status = String(enrollmentStatus || '').trim().toLowerCase();
+    const isPending = status === 'enrolled' || status === 'pending';
+    const targetUrl = String((isPending ? myLearningUrl : learnUrl) || '').trim() || String(myLearningUrl || learnUrl || '').trim();
+    const buttonLabel = isPending ? 'View My Learning' : 'Start Learning';
+    const headline = isPending
+        ? 'Enrollment received successfully'
+        : 'Enrollment completed successfully';
+    const bodyLine = isPending
+        ? 'Your enrollment has been submitted and is waiting for approval. We will notify you once it is approved.'
+        : 'You can start learning right away. Your progress will be saved automatically.';
+
+    const subject = `[${appName}] ${isPending ? 'Enrollment submitted' : 'Enrollment successful'}: ${safeCourseName}`;
+    const text = [
+        `Hi ${displayName},`,
+        '',
+        headline,
+        bodyLine,
+        `Course: ${safeCourseName}`,
+        ...(targetUrl ? ['', `Open: ${targetUrl}`] : []),
+    ].join('\n');
+
+    const escapedDisplayName = escapeHtml(displayName);
+    const escapedCourseName = escapeHtml(safeCourseName);
+    const escapedHeadline = escapeHtml(headline);
+    const escapedBodyLine = escapeHtml(bodyLine);
+    const escapedButtonLabel = escapeHtml(buttonLabel);
+    const escapedTargetUrl = escapeHtml(targetUrl);
+
+    const html = `
+        <div style="font-family: 'Noto Sans Thai', 'Segoe UI', Tahoma, Arial, sans-serif; color: #1f2937; line-height: 1.6;">
+          <p>Hi ${escapedDisplayName},</p>
+          <p><strong>${escapedHeadline}</strong></p>
+          <p>${escapedBodyLine}</p>
+          <p style="margin: 0 0 10px 0;"><strong>Course:</strong> ${escapedCourseName}</p>
+          ${targetUrl
+        ? `<p>
+            <a href="${escapedTargetUrl}" style="display: inline-block; padding: 10px 18px; border-radius: 999px; background: #687EFF; color: #fff; text-decoration: none; font-weight: 600;">
+              ${escapedButtonLabel}
+            </a>
+          </p>`
+        : ''}
+        </div>
+    `;
+
+    await sendEmail({
+        to: safeTo,
+        subject,
+        text,
+        html,
+    });
+}
+
+export async function sendCourseExpiryReminderEmail({
+    to,
+    learnerName,
+    courseName,
+    daysLeft = 3,
+    learnDateTo = '',
+    myLearningUrl = '',
+} = {}) {
+    const safeTo = String(to || '').trim();
+    if (!safeTo) {
+        throw new Error('Missing recipient email');
+    }
+
+    const appName = String(process.env.APP_NAME || 'SkillUp').trim();
+    const displayName = String(learnerName || '').trim() || 'Learner';
+    const safeCourseName = String(courseName || '').trim() || 'Course';
+    const safeDaysLeft = Number(daysLeft);
+    const normalizedDaysLeft = Number.isInteger(safeDaysLeft) && safeDaysLeft > 0 ? safeDaysLeft : 3;
+    const safeLearnDateTo = String(learnDateTo || '').trim();
+    const safeMyLearningUrl = String(myLearningUrl || '').trim();
+    const dayLabel = normalizedDaysLeft === 1 ? 'day' : 'days';
+
+    const subject = `[${appName}] Reminder: "${safeCourseName}" expires in ${normalizedDaysLeft} ${dayLabel}`;
+    const text = [
+        `Hi ${displayName},`,
+        '',
+        `This is a reminder that your learning access for "${safeCourseName}" will expire in ${normalizedDaysLeft} ${dayLabel}.`,
+        ...(safeLearnDateTo ? [`Expiry date: ${safeLearnDateTo}`] : []),
+        safeMyLearningUrl ? `Continue learning: ${safeMyLearningUrl}` : '',
+    ].filter(Boolean).join('\n');
+
+    const escapedDisplayName = escapeHtml(displayName);
+    const escapedCourseName = escapeHtml(safeCourseName);
+    const escapedLearnDateTo = escapeHtml(safeLearnDateTo);
+    const escapedMyLearningUrl = escapeHtml(safeMyLearningUrl);
+
+    const html = `
+        <div style="font-family: 'Noto Sans Thai', 'Segoe UI', Tahoma, Arial, sans-serif; color: #1f2937; line-height: 1.6;">
+          <p>Hi ${escapedDisplayName},</p>
+          <p>
+            This is a reminder that your learning access for
+            <strong>"${escapedCourseName}"</strong>
+            will expire in <strong>${normalizedDaysLeft} ${dayLabel}</strong>.
+          </p>
+          ${safeLearnDateTo ? `<p style="margin: 0 0 10px 0;"><strong>Expiry date:</strong> ${escapedLearnDateTo}</p>` : ''}
+          ${safeMyLearningUrl
+        ? `<p>
+            <a href="${escapedMyLearningUrl}" style="display: inline-block; padding: 10px 18px; border-radius: 999px; background: #F87A53; color: #fff; text-decoration: none; font-weight: 600;">
+              Continue Learning
+            </a>
+          </p>`
+        : ''}
         </div>
     `;
 

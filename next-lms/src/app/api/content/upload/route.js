@@ -4,6 +4,7 @@ import path from 'path';
 import AdmZip from 'adm-zip';
 import { deleteContent, listContents, saveContent } from '@/lib/server/compat-db';
 import { requireSession } from '@/lib/server/auth';
+import { readJsonBody } from '@/lib/server/request-validation';
 
 const ASSESSMENT_NAME_REGEX = /quiz|test|exam|assessment|post[\s-_]?test|pre[\s-_]?test|แบบทดสอบ|ทดสอบ/i;
 
@@ -127,6 +128,40 @@ export async function DELETE(request) {
         return NextResponse.json({ success: true });
     } catch (err) {
         console.error('[content/upload][DELETE] failed', err);
+        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    }
+}
+
+export async function PUT(request) {
+    try {
+        const { response } = await requireSession(request, { requireAdmin: true });
+        if (response) return response;
+
+        const { data: body, response: invalidBodyResponse } = await readJsonBody(request);
+        if (invalidBodyResponse) return invalidBodyResponse;
+
+        const id = String(body?.id || '').trim();
+        if (!id) {
+            return NextResponse.json({ error: 'id is required' }, { status: 400 });
+        }
+
+        const rows = await listContents();
+        const current = rows.find((item) => String(item?.id || '').trim() === id);
+        if (!current) {
+            return NextResponse.json({ error: 'Content not found' }, { status: 404 });
+        }
+
+        const nextContent = {
+            ...current,
+            id,
+            title: String(body?.title || current.title || '').trim() || current.title || 'Untitled',
+            status: String(body?.status || current.status || 'active').trim() || 'active',
+        };
+        const saved = await saveContent(nextContent);
+
+        return NextResponse.json({ success: true, content: saved });
+    } catch (err) {
+        console.error('[content/upload][PUT] failed', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 }

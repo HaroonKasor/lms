@@ -9,6 +9,7 @@ import {
     SESSION_TTL_SECONDS,
     verifySessionToken,
 } from '@/lib/session';
+import { triggerEnrollmentExpiryReminderSweep } from '@/lib/server/enrollment-email-reminders';
 
 function clearSessionCookie(response) {
     response.cookies.set(SESSION_COOKIE_NAME, '', {
@@ -38,7 +39,7 @@ export async function POST(request) {
         const refreshedToken = await createSessionToken(
             {
                 uid: payload.uid,
-                role: payload.role || 'user',
+                role: payload.role || 'learner',
                 rm: shouldRemember ? 1 : 0,
             },
             { ttlSeconds }
@@ -55,6 +56,13 @@ export async function POST(request) {
             refreshedToken,
             shouldRemember ? getSessionCookieOptions(ttlSeconds) : getSessionCookieOptions(null)
         );
+
+        // Trigger a throttled background-like sweep for "course expires in 3 days" reminder emails.
+        // The sweep is best-effort and should never block session refresh success.
+        triggerEnrollmentExpiryReminderSweep().catch((sweepErr) => {
+            console.error('[auth/touch] enrollment reminder sweep failed', sweepErr);
+        });
+
         return response;
     } catch (err) {
         console.error('[auth/touch] failed', err);
