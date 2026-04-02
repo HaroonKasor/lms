@@ -2,7 +2,8 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
+import { createPortal } from 'react-dom';
 import Navbar from '@/components/layout/Navbar';
 import Header from '@/components/layout/Header';
 import FadeIn from '@/components/ui/FadeIn';
@@ -26,6 +27,7 @@ function formatReviewDate(value) {
 
 export default function CourseDetailPage() {
     const params = useParams();
+    const router = useRouter();
     const courseId = params.id;
 
     const [course, setCourse] = useState(null);
@@ -44,7 +46,10 @@ export default function CourseDetailPage() {
     const [reviewText, setReviewText] = useState('');
     const [reviewSubmitting, setReviewSubmitting] = useState(false);
     const [reviewError, setReviewError] = useState('');
-    const [reviewSuccess, setReviewSuccess] = useState('');
+    const [reviewSuccessModal, setReviewSuccessModal] = useState({
+        open: false,
+        message: 'Your review has been submitted successfully. It helps us and other students a lot.',
+    });
 
     const pickDefaultSection = (courseData) => {
         const sections = Array.isArray(courseData?.sections) ? courseData.sections : [];
@@ -212,7 +217,6 @@ export default function CourseDetailPage() {
         try {
             setReviewSubmitting(true);
             setReviewError('');
-            setReviewSuccess('');
             const payload = {
                 courseId: Number(courseId || 0),
                 enrollmentId: myEnrollmentId || undefined,
@@ -227,8 +231,8 @@ export default function CourseDetailPage() {
             const data = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(data?.error || 'Submit review failed');
 
-            setReviewSuccess('ส่งรีวิวเรียบร้อยแล้ว');
             await loadCourseReviews();
+            setReviewSuccessModal((prev) => ({ ...prev, open: true }));
         } catch (error) {
             setReviewError(error?.message || 'Submit review failed');
         } finally {
@@ -243,6 +247,25 @@ export default function CourseDetailPage() {
             target.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     };
+
+    const closeReviewSuccessModal = useCallback(() => {
+        setReviewSuccessModal((prev) => ({ ...prev, open: false }));
+    }, []);
+
+    useEffect(() => {
+        if (!reviewSuccessModal.open) return undefined;
+        const previousOverflow = document.body.style.overflow;
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') closeReviewSuccessModal();
+        };
+
+        document.body.style.overflow = 'hidden';
+        window.addEventListener('keydown', onKeyDown);
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            window.removeEventListener('keydown', onKeyDown);
+        };
+    }, [reviewSuccessModal.open, closeReviewSuccessModal]);
 
     if (loading) {
         return <LoadScreen text="Loading course..." variant="minimal" />;
@@ -532,7 +555,6 @@ export default function CourseDetailPage() {
                                         </button>
                                     </div>
                                     {reviewError && <p className="mt-2 text-[13px] text-[#E11D48]">{reviewError}</p>}
-                                    {reviewSuccess && <p className="mt-2 text-[13px] text-[#059669]">{reviewSuccess}</p>}
                                 </div>
 
                                 <div className="bg-white border border-[#D1E3FB] rounded-[20px] p-5 md:p-6 shadow-[0_0_20px_rgba(0,0,0,0.04)]">
@@ -723,6 +745,46 @@ export default function CourseDetailPage() {
                     </div>
                 </FadeIn>
             </main>
+
+            {typeof window !== 'undefined' && reviewSuccessModal.open && createPortal(
+                <div
+                    className="fixed inset-0 z-[1100] bg-[rgba(10,16,36,0.5)] backdrop-blur-[3px] flex items-center justify-center p-4"
+                    onClick={closeReviewSuccessModal}
+                >
+                    <div
+                        className="w-full max-w-[560px] rounded-[26px] bg-white px-6 sm:px-7 py-7 sm:py-8 text-center shadow-[0_32px_80px_rgba(9,16,35,0.38)] border border-[#E8ECFF]"
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center">
+                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+                                <path d="M6 6l5.2 2.6L20 4.4M11 10l1.3 5.2L17 13.6" stroke="#6579FF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                <circle cx="5" cy="4.8" r="1.2" fill="#28C38A" />
+                                <circle cx="19" cy="18.4" r="1.1" fill="#FF8A63" />
+                                <circle cx="20.2" cy="8.2" r="1.1" fill="#6579FF" />
+                            </svg>
+                        </div>
+
+                        <h3 className="text-[#687EFF] text-[32px] sm:text-[40px] font-semibold leading-[112%] mb-3 tracking-[-0.01em]">
+                            Thank you for your feedback!
+                        </h3>
+                        <p className="text-[#4B5567] text-[16px] leading-[145%] mb-7 max-w-[430px] mx-auto">
+                            {reviewSuccessModal.message}
+                        </p>
+
+                        <button
+                            type="button"
+                            onClick={() => {
+                                closeReviewSuccessModal();
+                                router.push('/my-learning');
+                            }}
+                            className="h-[50px] px-8 rounded-full bg-[linear-gradient(90deg,#F78257_0%,#F77361_100%)] text-white text-[18px] leading-none font-medium hover:brightness-105 transition-all min-w-[280px]"
+                        >
+                            Back to My LMS
+                        </button>
+                    </div>
+                </div>,
+                document.body
+            )}
         </div>
     );
 }

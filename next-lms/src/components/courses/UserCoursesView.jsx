@@ -659,34 +659,40 @@ export default function UserCoursesView() {
 
             {typeof window !== 'undefined' && enrollSuccessModal.open && createPortal(
                 <div
-                    className="fixed inset-0 z-[1100] bg-[rgba(10,16,36,0.52)] backdrop-blur-[3px] flex items-center justify-center p-4"
+                    className="fixed inset-0 z-[1100] bg-[rgba(10,16,36,0.5)] backdrop-blur-[3px] flex items-center justify-center p-4"
                     onClick={closeEnrollSuccessModal}
                 >
                     <div
-                        className="w-full max-w-[560px] rounded-[24px] bg-white px-6 sm:px-8 py-8 text-center shadow-[0_28px_80px_rgba(9,16,35,0.35)] border border-[#E8ECFF]"
+                        className="w-full max-w-[560px] rounded-[26px] bg-white px-5 sm:px-7 py-7 sm:py-8 text-center shadow-[0_32px_80px_rgba(9,16,35,0.38)] border border-[#E8ECFF]"
                         onClick={(event) => event.stopPropagation()}
                     >
-                        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#F5F7FF]">
-                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                                <path d="M4 8.5l5 2.3L20 4M10 10l1.2 5.3L16 14" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                                <circle cx="4.5" cy="4.5" r="1.2" fill="#1DBA9F" />
-                                <circle cx="18.5" cy="19" r="1.1" fill="#F87A53" />
-                                <circle cx="20.5" cy="7.5" r="1.1" fill="#687EFF" />
+                        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center">
+                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+                                <path d="M6 6l5.2 2.6L20 4.4M11 10l1.3 5.2L17 13.6" stroke="#6579FF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+                                <circle cx="5" cy="4.8" r="1.2" fill="#28C38A" />
+                                <circle cx="19" cy="18.4" r="1.1" fill="#FF8A63" />
+                                <circle cx="20.2" cy="8.2" r="1.1" fill="#6579FF" />
                             </svg>
                         </div>
 
-                        <h3 className="text-[#687EFF] text-[34px] sm:text-[38px] font-semibold leading-[118%] mb-3">
+                        <h3 className="text-[#687EFF] text-[32px] sm:text-[40px] font-semibold leading-[112%] mb-3 tracking-[-0.01em]">
                             {enrollSuccessModal.isPending
                                 ? 'Enrollment request sent!'
-                                : "Congratulations! You've enrolled successfully"}
+                                : (
+                                    <>
+                                        Congratulations! You&apos;ve enrolled
+                                        <br />
+                                        successfully
+                                    </>
+                                )}
                         </h3>
-                        <p className="text-[#4B5567] text-[16px] leading-[145%] mb-5">
+                        <p className="text-[#4B5567] text-[16px] leading-[145%] mb-6 max-w-[430px] mx-auto">
                             {enrollSuccessModal.isPending
                                 ? 'Your request is waiting for admin approval. We will notify you once it is approved.'
                                 : 'You can start learning immediately or come back later. Your progress will be saved.'}
                         </p>
 
-                        <div className="rounded-[12px] bg-[#EEF2FF] px-4 py-3 text-[#1F2A44] text-[14px] font-medium leading-[140%] mb-7">
+                        <div className="rounded-[10px] bg-[#ECF0FF] px-4 py-3 text-[#1F2A44] text-[14px] font-medium leading-[140%] mb-7 max-w-[470px] mx-auto">
                             {enrollSuccessModal.courseName}
                         </div>
 
@@ -698,14 +704,14 @@ export default function UserCoursesView() {
                                     closeEnrollSuccessModal();
                                     router.push(target);
                                 }}
-                                className="h-[46px] px-7 rounded-full bg-[#687EFF] text-white text-[16px] font-medium hover:bg-[#5C70EA] transition-colors min-w-[190px]"
+                                className="h-[50px] px-8 rounded-full bg-[linear-gradient(90deg,#6176FF_0%,#7087FF_100%)] text-white text-[18px] leading-none font-medium hover:brightness-105 transition-all min-w-[220px]"
                             >
                                 {enrollSuccessModal.isPending ? 'Go to My Learning' : 'Start Learning Now'}
                             </button>
                             <button
                                 type="button"
                                 onClick={closeEnrollSuccessModal}
-                                className="h-[46px] px-7 rounded-full border border-[#D5DDF5] text-[#5C6784] text-[16px] font-medium hover:bg-[#F8FAFF] transition-colors min-w-[150px]"
+                                className="h-[50px] px-8 rounded-full border border-[#C9D2F4] bg-white text-[#5C6784] text-[18px] leading-none font-medium hover:bg-[#F8FAFF] transition-colors min-w-[220px]"
                             >
                                 Learn Later
                             </button>
