@@ -207,6 +207,57 @@ function resolvePublicAppOrigin() {
     return 'https://example.invalid';
 }
 
+function toDateOnlyTime(value) {
+    const normalized = String(value || '').trim();
+    if (!normalized) return null;
+    const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!match) return null;
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+    const date = new Date(year, month - 1, day);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime();
+}
+
+function evaluateSectionLearnAccess(section) {
+    if (!section) {
+        return { allowed: false, reason: 'section_not_found' };
+    }
+    if (section?.isActive === false) {
+        return { allowed: false, reason: 'section_inactive' };
+    }
+    const learnDateUnlimit = section?.learnDateUnlimit !== false;
+    if (learnDateUnlimit) return { allowed: true, reason: null };
+
+    const toTime = toDateOnlyTime(section?.learnDateTo);
+    if (!Number.isFinite(toTime)) return { allowed: true, reason: null };
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (today.getTime() > toTime) {
+        return { allowed: false, reason: 'learn_window_expired' };
+    }
+    return { allowed: true, reason: null };
+}
+
+function evaluateCourseLearnAccess(course) {
+    const publishStatus = String(course?.publishStatus || '').trim().toLowerCase();
+    if (publishStatus && publishStatus !== 'published') {
+        return { allowed: false, reason: 'course_inactive' };
+    }
+    return { allowed: true, reason: null };
+}
+
+function getLearningAccessMessage(reason = '') {
+    const normalized = String(reason || '').trim().toLowerCase();
+    if (normalized === 'course_inactive') return 'หลักสูตรนี้ถูกปิดการใช้งานแล้ว ไม่สามารถเข้าเรียนได้';
+    if (normalized === 'section_inactive') return 'Section นี้ถูกปิดการใช้งานแล้ว ไม่สามารถเข้าเรียนได้';
+    if (normalized === 'learn_window_expired') return 'หมดระยะเวลาเรียนของ Section นี้แล้ว';
+    return 'คุณยังไม่มีสิทธิ์เข้าเรียนคอร์สนี้';
+}
+
 export default function LearnPage() {
     const params = useParams();
     const searchParams = useSearchParams();
@@ -233,6 +284,7 @@ export default function LearnPage() {
     const [resumeLoaded, setResumeLoaded] = useState(false);
     const [selectedActivityIndex, setSelectedActivityIndex] = useState(0);
     const [activeSectionId, setActiveSectionId] = useState(null);
+    const [cohortModuleEnabled, setCohortModuleEnabled] = useState(false);
     const [iframeSrc, setIframeSrc] = useState('');
     const [isTinCanFrameReady, setIsTinCanFrameReady] = useState(false);
     const [tinCanActivityStatus, setTinCanActivityStatus] = useState([]);
@@ -765,6 +817,50 @@ export default function LearnPage() {
         return false;
     }, [isAssessmentActivity, getAssessmentPassingScore]);
 
+    const isTinCanLessonCompleted = useCallback((item) => {
+        if (!item || typeof item !== 'object') return false;
+
+        const statusText = normalizeStatusText(
+            item.status
+            ?? item.result
+            ?? item.completionStatus
+            ?? item.successStatus
+            ?? ''
+        );
+        if (hasCompletionStatusSignal(statusText)) return true;
+
+        const explicitCompletion = typeof item.completion === 'boolean'
+            ? item.completion
+            : (typeof item?.result?.completion === 'boolean' ? item.result.completion : null);
+        if (explicitCompletion === true) return true;
+        if (explicitCompletion === false) return false;
+
+        if (isTruthyFlag(item.completed)) return true;
+
+        const percent = asFiniteNumber(item.percent ?? item.percentage ?? item.progressPercent);
+        if (percent !== null && percent >= 100) return true;
+
+        const score = asFiniteNumber(
+            item.score
+            ?? item.rawScore
+            ?? item.raw
+            ?? item.resultScore
+            ?? item.scoreRaw
+            ?? item?.result?.score?.raw
+        );
+        const scaled = asFiniteNumber(
+            item.scaledScore
+            ?? item.scaled
+            ?? item.scoreScaled
+            ?? item.normalizedScore
+            ?? item?.result?.score?.scaled
+        );
+        if (score !== null && (score <= 1 ? score * 100 : score) >= 100) return true;
+        if (scaled !== null && (scaled <= 1 ? scaled * 100 : scaled) >= 100) return true;
+
+        return false;
+    }, []);
+
     const isTinCanLessonClearedForAdvance = useCallback((item, activity = null) => {
         // Strict gating: previous lesson must be completed/passed before moving forward.
         return isTinCanLessonPassed(item, activity);
@@ -820,6 +916,13 @@ export default function LearnPage() {
         return false;
     }, [content?.completionPolicy?.requireAssessmentPass, content?.completionPolicy?.completedWhenDoAllMasteryscore, hasAssessmentActivities]);
 
+    const effectiveTinCanCondition = useMemo(() => {
+        const raw = String(course?.tincanCondition || '').trim().toLowerCase();
+        if (raw === 'all_completed_by_content_success') return 'all_completed_by_content_success';
+        if (raw === 'all_completed_by_content_completion_success') return 'all_completed_by_content_completion_success';
+        return 'all_completed';
+    }, [course?.tincanCondition]);
+
     const canFinalizeTinCanCompletion = useCallback(({
         completedByProgress: _completedByProgress = false,
         completedByPackage = false,
@@ -838,24 +941,49 @@ export default function LearnPage() {
             completedByPackage ||
             completedByActivities;
 
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        const hasActivitySignals = activities.some((_, idx) => {
+            const item = tinCanActivityStatus[idx];
+            return Boolean(item && typeof item === 'object');
+        });
+        const allActivitiesCompleted = activities.length > 0
+            && hasActivitySignals
+            && activities.every((_, idx) => isTinCanLessonCompleted(tinCanActivityStatus[idx]));
+        const allActivitiesSuccess = activities.length > 0
+            && hasActivitySignals
+            && activities.every((activity, idx) => isTinCanLessonPassed(tinCanActivityStatus[idx], activity));
+
+        let completionByCondition = allActivitiesCompleted;
+        if (effectiveTinCanCondition === 'all_completed_by_content_success') {
+            completionByCondition = allActivitiesSuccess;
+        } else if (effectiveTinCanCondition === 'all_completed_by_content_completion_success') {
+            completionByCondition = allActivitiesCompleted && allActivitiesSuccess;
+        }
+
+        const hasRuntimeCompletionSignal = hasMultipleActivities ? completionSignalForMulti : completionSignalForSingle;
+        const hasValidCompletionSignal = hasActivitySignals ? completionByCondition : hasRuntimeCompletionSignal;
+
         // Guard against instant false-positive completion on initial launch.
         const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
         if (studiedSeconds < 10) return false;
 
-        if (!requireAssessmentPass) {
-            if (hasMultipleActivities) {
-                return Boolean(completionSignalForMulti);
-            }
-            return Boolean(completionSignalForSingle);
-        }
-
-        // Strict policy for assessment packages: must satisfy completion signal and pass all assessments.
-        const hasValidCompletionSignal = hasMultipleActivities ? completionSignalForMulti : completionSignalForSingle;
         if (!hasValidCompletionSignal) return false;
-
-        if (hasAssessmentFailureSignals) return false;
-        return areAssessmentActivitiesPassed;
-    }, [requireAssessmentPass, areAssessmentActivitiesPassed, hasAssessmentFailureSignals, content?.activities]);
+        const requiresSuccessValidation =
+            effectiveTinCanCondition !== 'all_completed'
+            || requireAssessmentPass;
+        if (requiresSuccessValidation && hasAssessmentFailureSignals) return false;
+        if (requiresSuccessValidation && !areAssessmentActivitiesPassed) return false;
+        return true;
+    }, [
+        requireAssessmentPass,
+        areAssessmentActivitiesPassed,
+        hasAssessmentFailureSignals,
+        content?.activities,
+        tinCanActivityStatus,
+        isTinCanLessonCompleted,
+        isTinCanLessonPassed,
+        effectiveTinCanCondition,
+    ]);
 
     const resolveActivityUrl = useCallback((entryPoint, launch) => {
         if (!entryPoint) return '';
@@ -2146,6 +2274,7 @@ export default function LearnPage() {
                 setLoading(true);
                 setError('');
                 setActiveSectionId(null);
+                setCohortModuleEnabled(false);
                 setEnrollmentId(null);
                 progressWriteBlockRef.current = { disabled: false, reason: '' };
 
@@ -2201,6 +2330,12 @@ export default function LearnPage() {
                     return;
                 }
 
+                const courseAccess = evaluateCourseLearnAccess(selectedEnrollment?.course);
+                if (!courseAccess.allowed) {
+                    setError(getLearningAccessMessage(courseAccess.reason));
+                    return;
+                }
+
                 setEnrollmentId(selectedEnrollment.id || null);
                 setCourse(selectedEnrollment.course || null);
 
@@ -2223,6 +2358,13 @@ export default function LearnPage() {
                 };
 
                 let section = normalizedSelectedSection || null;
+                if (normalizedSelectedSection) {
+                    const assignedSectionAccess = evaluateSectionLearnAccess(normalizedSelectedSection);
+                    if (!assignedSectionAccess.allowed) {
+                        setError(getLearningAccessMessage(assignedSectionAccess.reason));
+                        return;
+                    }
+                }
                 if (requestedSectionId) {
                     const matchedSection = availableSections.find(
                         (candidate) => Number(candidate?.id || 0) === requestedSectionId
@@ -2234,6 +2376,12 @@ export default function LearnPage() {
                 if (!section && availableSections.length > 0) {
                     const preferred = availableSections.find((candidate) => candidate?.isActive) || availableSections[0];
                     section = mergeSectionWithNormalizedAsset(preferred);
+                }
+
+                const sectionAccess = evaluateSectionLearnAccess(section);
+                if (!sectionAccess.allowed) {
+                    setError(getLearningAccessMessage(sectionAccess.reason));
+                    return;
                 }
 
                 let asset = section?.asset || null;
@@ -2296,6 +2444,7 @@ export default function LearnPage() {
 
                 const resolvedSectionId = Number(section?.id || selectedEnrollment?.sectionId || 0);
                 setActiveSectionId(Number.isInteger(resolvedSectionId) && resolvedSectionId > 0 ? resolvedSectionId : null);
+                setCohortModuleEnabled(Boolean(section?.cohortModule || normalizedSelectedSection?.cohortModule));
 
                 const sectionType = String(section?.sectionType || '').toUpperCase();
                 const metadataType = String(metadata?.type || '').toLowerCase();
@@ -3473,6 +3622,7 @@ export default function LearnPage() {
     const getMaxUnlockedActivityIndex = useCallback(() => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         if (activities.length === 0) return 0;
+        if (!cohortModuleEnabled) return activities.length - 1;
 
         let runtimeUnlocked = -1;
         const frameWindow = iframeRef.current?.contentWindow;
@@ -3526,7 +3676,7 @@ export default function LearnPage() {
             )
         );
         return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
-    }, [content, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, getTinCanRuntimeIndexOffset]);
+    }, [content, cohortModuleEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, getTinCanRuntimeIndexOffset]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
@@ -3534,7 +3684,7 @@ export default function LearnPage() {
 
         const safeIndex = Math.max(0, Math.min(activities.length - 1, Number(idx) || 0));
         const maxUnlocked = getMaxUnlockedActivityIndex();
-        if (safeIndex > maxUnlocked) {
+        if (cohortModuleEnabled && safeIndex > maxUnlocked) {
             toast.warning('กรุณาเรียนบทก่อนหน้าให้ผ่านก่อน จึงจะไปบทถัดไปได้', LEARNER_TOAST);
             return;
         }
@@ -3572,7 +3722,41 @@ export default function LearnPage() {
                 // ignore manual select sync errors
             }
         }
-    }, [content, getMaxUnlockedActivityIndex, persistTincanResumeIndex, resolveActivityCandidateUrl, persistTincanResumePath, applyTincanResumeToIframe, progressContentId, progressUserId, activeSectionId, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime]);
+    }, [content, cohortModuleEnabled, getMaxUnlockedActivityIndex, persistTincanResumeIndex, resolveActivityCandidateUrl, persistTincanResumePath, applyTincanResumeToIframe, progressContentId, progressUserId, activeSectionId, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime]);
+
+    const getMaxUnlockedWebPageIndex = useCallback(() => {
+        const knownTotal = Math.max(
+            1,
+            Number(getLegacyWebPageTotal() || 0),
+            Number(duration || 0),
+            Number(currentTime || 0)
+        );
+        if (knownTotal <= 1) return 0;
+        if (!cohortModuleEnabled) return knownTotal - 1;
+
+        const runtimeSnapshot = getCurrentWebStatusSnapshot();
+        const savedSnapshot = readWebStatusSnapshot();
+        const snapshot = Array.isArray(runtimeSnapshot) && runtimeSnapshot.length > 0
+            ? runtimeSnapshot
+            : (Array.isArray(savedSnapshot) ? savedSnapshot : []);
+
+        let contiguousCompleted = 0;
+        for (let index = 0; index < knownTotal; index++) {
+            const row = snapshot[index];
+            if (row?.completed || row?.passed) {
+                contiguousCompleted = index + 1;
+                continue;
+            }
+            break;
+        }
+
+        const detectedIndex = detectLegacyWebPageIndex();
+        const inferredCurrentIndex = Math.max(0, Math.floor(Number(currentTime || 1) - 1));
+        const selectedIndex = Number.isInteger(Number(detectedIndex)) && Number(detectedIndex) >= 0
+            ? Number(detectedIndex)
+            : inferredCurrentIndex;
+        return Math.max(0, Math.min(knownTotal - 1, Math.max(contiguousCompleted, selectedIndex)));
+    }, [getLegacyWebPageTotal, duration, currentTime, cohortModuleEnabled, getCurrentWebStatusSnapshot, readWebStatusSnapshot, detectLegacyWebPageIndex]);
 
     const handleManualWebPageSelect = useCallback(async (idx) => {
         if (content?.type !== 'web') return;
@@ -3585,6 +3769,13 @@ export default function LearnPage() {
             Number(idx || 0) + 1
         );
         const safeIndex = Math.max(0, Math.min(knownTotal - 1, Number(idx) || 0));
+        if (cohortModuleEnabled) {
+            const maxUnlocked = getMaxUnlockedWebPageIndex();
+            if (safeIndex > maxUnlocked) {
+                toast.warning('กรุณาเรียนหน้าก่อนหน้าให้ผ่านก่อน จึงจะไปหน้าถัดไปได้', LEARNER_TOAST);
+                return;
+            }
+        }
 
         persistWebResumeIndex(safeIndex);
         setCurrentTime(safeIndex + 1);
@@ -3660,6 +3851,8 @@ export default function LearnPage() {
         getLegacyWebPageTotal,
         duration,
         currentTime,
+        cohortModuleEnabled,
+        getMaxUnlockedWebPageIndex,
         persistWebResumeIndex,
         canFinalizeLegacyWebCompletion,
         computeTinCanProgress,
@@ -4029,7 +4222,7 @@ export default function LearnPage() {
         <div className="min-h-screen bg-[#0f0f1a] font-['Outfit',sans-serif]">
             <Navbar />
 
-            <div className="max-w-[1400px] mx-auto px-6 pt-6 pb-20">
+            <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-5 sm:pt-6 pb-16 sm:pb-20">
                 {/* Breadcrumb */}
                 <div className="flex items-center gap-2 text-[14px] text-white/50 mb-6">
                     <a href={course ? `/courses/${course.id}` : '/courses'} className="hover:text-white transition-colors">

@@ -8,8 +8,12 @@ import {
     getCourseCompatMaps,
     getSectionCompatMaps,
 } from '@/lib/server/compat-db';
-import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
+import { ensureDefaultOrganization, listUserRoleCodes } from '@/lib/server/enterprise-context';
 import { createAdminNotification } from '@/lib/server/notifications';
+import {
+    findMissingPrerequisites,
+    resolvePrerequisiteCourses,
+} from '@/lib/server/enrollment-rules';
 
 function buildLoginRedirectUrl(requestUrl) {
     const loginUrl = new URL('/login', requestUrl.origin);
@@ -41,6 +45,33 @@ function isTruthyFlag(value) {
         if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
     }
     return Boolean(value);
+}
+
+function normalizeEnrollmentRoleCode(value) {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (!normalized) return '';
+    if (normalized === 'ADMIN' || normalized === 'ADMINISTRATOR') return 'ADMIN';
+    if (normalized === 'INSTRUCTOR' || normalized === 'INSTRUCTURE' || normalized === 'TEACHER') return 'INSTRUCTOR';
+    if (normalized === 'LEARNER' || normalized === 'USER' || normalized === 'STUDENT') return 'LEARNER';
+    return '';
+}
+
+function normalizeEnrollmentRoleCodes(input) {
+    const source = Array.isArray(input) ? input : [input];
+    const normalized = Array.from(new Set(source.map(normalizeEnrollmentRoleCode).filter(Boolean)));
+    if (normalized.length > 0) return normalized;
+    return ['LEARNER'];
+}
+
+function getAllowedRoleCodesForSection(sectionId, sectionSettingsBySectionId = {}) {
+    const key = String(sectionId || '').trim();
+    const sectionSettings = key ? (sectionSettingsBySectionId?.[key] || {}) : {};
+    return normalizeEnrollmentRoleCodes(sectionSettings?.groups || []);
+}
+
+function canRoleEnroll(roleCodes = [], allowedRoleCodes = []) {
+    const allowed = new Set(normalizeEnrollmentRoleCodes(allowedRoleCodes));
+    return normalizeEnrollmentRoleCodes(roleCodes).some((code) => allowed.has(code));
 }
 
 export async function GET(request) {
@@ -80,6 +111,11 @@ export async function GET(request) {
         const courseCompatMaps = await getCourseCompatMaps([course.id]);
         const courseAutoApprove = courseCompatMaps?.autoApproveByCourseId?.[String(course.id)] !== false;
         const courseSettings = courseCompatMaps?.courseSettingsByCourseId?.[String(course.id)] || {};
+        const prerequisiteCourses = await resolvePrerequisiteCourses({
+            organizationId,
+            prerequisites: courseSettings?.prerequisites || [],
+            excludeCourseId: course.id,
+        });
 
         const existing = await prisma.enrollment.findUnique({
             where: {
@@ -98,9 +134,18 @@ export async function GET(request) {
         const shouldReactivateEnrollment = Boolean(
             existing && ['dropped', 'cancelled'].includes(existingStatus)
         );
-        const shouldUpgradePendingEnrollment = Boolean(
-            existing && existingStatus === 'enrolled' && courseAutoApprove
-        );
+        let effectiveAutoApprove = courseAutoApprove;
+
+        if (prerequisiteCourses.length > 0 && !hasActiveExistingEnrollment) {
+            const missingPrerequisites = await findMissingPrerequisites({
+                userId: Number(session.uid),
+                organizationId,
+                prerequisiteCourses,
+            });
+            if (missingPrerequisites.length > 0) {
+                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'missing_prerequisites'), 307);
+            }
+        }
 
         if (!session.isAdmin) {
             const courseWindow = evaluateRegisterWindow(courseSettings);
@@ -116,20 +161,49 @@ export async function GET(request) {
         }
 
         let validSectionId = null;
+        let selectedSection = null;
+        let sectionSettingsBySectionId = {};
         if (sectionId) {
-            const section = await prisma.section.findFirst({
+            selectedSection = await prisma.section.findFirst({
                 where: {
                     id: sectionId,
                     courseId: course.id,
                 },
                 select: { id: true, isActive: true, maxLearner: true },
             });
-            if (!section?.id || section.isActive === false) {
+            if (!selectedSection?.id || selectedSection.isActive === false) {
                 return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'invalid_section'), 307);
             }
+        } else {
+            selectedSection = await prisma.section.findFirst({
+                where: {
+                    courseId: course.id,
+                    isActive: true,
+                },
+                select: { id: true, isActive: true, maxLearner: true },
+                orderBy: [{ orderNo: 'asc' }, { id: 'asc' }],
+            });
+        }
 
-            const sectionCompatMaps = await getSectionCompatMaps([section.id]);
-            const sectionSettings = sectionCompatMaps?.sectionSettingsBySectionId?.[String(section.id)] || {};
+        if (selectedSection?.id) {
+            const sectionCompatMaps = await getSectionCompatMaps([selectedSection.id]);
+            sectionSettingsBySectionId = sectionCompatMaps?.sectionSettingsBySectionId || {};
+            const sectionSettings = sectionSettingsBySectionId?.[String(selectedSection.id)] || {};
+
+            const targetRoleCodes = normalizeEnrollmentRoleCodes(
+                await listUserRoleCodes(Number(session.uid), organizationId)
+            );
+            const allowedRoleCodes = getAllowedRoleCodesForSection(
+                selectedSection.id,
+                sectionSettingsBySectionId
+            );
+            if (!canRoleEnroll(targetRoleCodes, allowedRoleCodes)) {
+                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'forbidden_by_role'), 307);
+            }
+
+            if (typeof sectionSettings?.autoApprove === 'boolean') {
+                effectiveAutoApprove = sectionSettings.autoApprove;
+            }
 
             if (!session.isAdmin) {
                 const sectionRegisterWindow = evaluateRegisterWindow(sectionSettings);
@@ -149,13 +223,13 @@ export async function GET(request) {
                 }
             }
 
-            const sectionMaxLearner = Number(section.maxLearner || 0);
+            const sectionMaxLearner = Number(selectedSection.maxLearner || 0);
             const hasSectionCapacity = Number.isFinite(sectionMaxLearner) && sectionMaxLearner > 0;
             const isSectionUnlimited = isTruthyFlag(sectionSettings?.registerUnlimit) || isTruthyFlag(sectionSettings?.maxLearnerUnlimit) || !hasSectionCapacity;
             if (sectionMaxLearner > 0 && !isSectionUnlimited && !hasActiveExistingEnrollment) {
                 const reservedSeats = await prisma.learningProgress.findMany({
                     where: {
-                        sectionId: section.id,
+                        sectionId: selectedSection.id,
                         enrollments: {
                             organization_id: organizationId,
                             status: { notIn: ['dropped', 'cancelled'] },
@@ -169,8 +243,12 @@ export async function GET(request) {
                 }
             }
 
-            validSectionId = section.id;
+            validSectionId = selectedSection.id;
         }
+
+        const shouldUpgradePendingEnrollment = Boolean(
+            existing && existingStatus === 'enrolled' && effectiveAutoApprove
+        );
 
         const courseMaxEnrollment = Number(course.maxEnrollment || 0);
         const hasCourseCapacity = Number.isFinite(courseMaxEnrollment) && courseMaxEnrollment > 0;
@@ -200,7 +278,7 @@ export async function GET(request) {
             },
             update: (shouldReactivateEnrollment || shouldUpgradePendingEnrollment)
                 ? {
-                    status: courseAutoApprove ? 'in_progress' : 'enrolled',
+                    status: effectiveAutoApprove ? 'in_progress' : 'enrolled',
                     progressPercent: 0,
                     startedAt: null,
                     completedAt: null,
@@ -211,7 +289,7 @@ export async function GET(request) {
                 userId: Number(session.uid),
                 courseId: course.id,
                 organization_id: organizationId,
-                status: courseAutoApprove ? 'in_progress' : 'enrolled',
+                status: effectiveAutoApprove ? 'in_progress' : 'enrolled',
                 progressPercent: 0,
             },
             select: { id: true, userId: true, courseId: true, status: true },
@@ -242,7 +320,7 @@ export async function GET(request) {
 
         const enrollmentStatus = String(enrollment?.status || '').toLowerCase();
 
-        if (!courseAutoApprove && !session.isAdmin && !hasActiveExistingEnrollment) {
+        if (!effectiveAutoApprove && !session.isAdmin && !hasActiveExistingEnrollment) {
             try {
                 const learner = await prisma.user.findUnique({
                     where: { id: Number(session.uid) },

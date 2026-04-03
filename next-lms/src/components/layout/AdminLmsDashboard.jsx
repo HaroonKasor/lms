@@ -47,7 +47,7 @@ const defaultActivityList = [
     { id: 2, name: 'Alisa Manama', detail: 'Finished Graphic Design Chapter 1', time: '2 days ago', img: DEFAULT_AVATAR_URL },
 ];
 
-const menuItems = [
+const baseMenuItems = [
     { name: 'Dashboard', path: '/admin-dashboard', matchPrefix: '/admin-dashboard' },
     { name: 'Group', path: '/admin-dashboard/group', matchPrefix: '/admin-dashboard/group' },
     {
@@ -163,9 +163,32 @@ export default function AdminLmsDashboard({ children }) {
         },
         recentStatements: [],
     });
+    const [auditNav, setAuditNav] = useState({ allowed: false, showInMenu: false });
 
     // Track multiple expanded menus
     const [expandedMenus, setExpandedMenus] = useState([]);
+
+    const menuItems = React.useMemo(() => {
+        const cloned = baseMenuItems.map((item) => ({
+            ...item,
+            subItems: Array.isArray(item.subItems) ? [...item.subItems] : item.subItems,
+        }));
+        if (!(auditNav.allowed && auditNav.showInMenu)) return cloned;
+
+        return cloned.map((item) => {
+            if (item.name !== 'Report') return item;
+            const subItems = Array.isArray(item.subItems) ? [...item.subItems] : [];
+            const exists = subItems.some((sub) => String(sub?.path || '') === '/admin-dashboard/report/audit-log');
+            if (!exists) {
+                subItems.push({
+                    name: 'Audit Log',
+                    path: '/admin-dashboard/report/audit-log',
+                    matchPrefix: '/admin-dashboard/report/audit-log',
+                });
+            }
+            return { ...item, subItems };
+        });
+    }, [auditNav.allowed, auditNav.showInMenu]);
 
     const isSubItemActive = React.useCallback((subItem) => {
         const rawPath = String(subItem?.path || '').trim();
@@ -198,7 +221,30 @@ export default function AdminLmsDashboard({ children }) {
         if (activeMenu) {
             setExpandedMenus(prev => prev.includes(activeMenu.name) ? prev : [...prev, activeMenu.name]);
         }
-    }, [isSubItemActive]); // Keep in sync with route + query changes
+    }, [isSubItemActive, menuItems]); // Keep in sync with route + query changes
+
+    React.useEffect(() => {
+        let active = true;
+        const loadAuditNav = async () => {
+            try {
+                const res = await fetch('/api/admin/audit/access', {
+                    cache: 'no-store',
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!active || !res.ok) return;
+                setAuditNav({
+                    allowed: Boolean(data?.allowed),
+                    showInMenu: Boolean(data?.showInMenu),
+                });
+            } catch {
+                // ignore menu failures
+            }
+        };
+        loadAuditNav();
+        return () => {
+            active = false;
+        };
+    }, []);
 
     React.useEffect(() => {
         if (!showDefaultDashboard) return undefined;

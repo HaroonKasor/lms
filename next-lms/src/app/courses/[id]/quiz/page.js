@@ -89,7 +89,7 @@ export default function QuizPage() {
         return (
             <div className="min-h-screen font-['Outfit',sans-serif]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
                 <Navbar />
-                <main className="max-w-[700px] mx-auto px-6 pt-12 pb-24">
+                <main className="max-w-[700px] mx-auto px-4 sm:px-6 pt-8 sm:pt-12 pb-20 sm:pb-24">
                     <FadeIn direction="up">
                         <div className="bg-white border border-[#D1E3FB] rounded-3xl p-8 text-center">
                             <div className="text-7xl mb-6">{result.passed ? '🎉' : '😕'}</div>
@@ -110,7 +110,7 @@ export default function QuizPage() {
                                 </div>
                             </div>
 
-                            <div className="flex items-center justify-center gap-4">
+                            <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-4">
                                 {result.passed ? (
                                     <>
                                         <Link href="/my-courses" className="bg-[#687EFF] hover:bg-[#5a6fe0] text-white px-6 py-3 rounded-full text-sm font-medium transition-colors">
@@ -149,7 +149,7 @@ export default function QuizPage() {
         return (
             <div className="min-h-screen font-['Outfit',sans-serif]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
                 <Navbar />
-                <main className="max-w-[800px] mx-auto px-6 pt-8 pb-24">
+                <main className="max-w-[800px] mx-auto px-4 sm:px-6 pt-8 pb-20 sm:pb-24">
                     <FadeIn direction="up">
                         <div className="flex items-center justify-between mb-6">
                             <h1 className="text-2xl font-bold text-[#052143]">{selectedQuiz.title}</h1>
@@ -202,7 +202,7 @@ export default function QuizPage() {
     return (
         <div className="min-h-screen font-['Outfit',sans-serif]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
             <Navbar />
-            <main className="max-w-[800px] mx-auto px-6 pt-8 pb-24">
+            <main className="max-w-[800px] mx-auto px-4 sm:px-6 pt-8 pb-20 sm:pb-24">
                 <FadeIn direction="up">
                     <div className="flex items-center justify-between mb-8">
                         <div>

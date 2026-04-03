@@ -53,6 +53,25 @@ function normalizeOptionalBoolean(value, fallback = null) {
     return isTruthyFlag(value);
 }
 
+function normalizeTinCanCondition(value, fallback = 'all_completed') {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'all_completed') return 'all_completed';
+    if (normalized === 'all_completed_by_content_success') return 'all_completed_by_content_success';
+    if (normalized === 'all_completed_by_content_completion_success') return 'all_completed_by_content_completion_success';
+    return String(fallback || 'all_completed').trim().toLowerCase() || 'all_completed';
+}
+
+function normalizeDeliveryMode(value, input = {}) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === 'self_learning' || normalized === 'online_classroom' || normalized === 'offline_classroom') {
+        return normalized;
+    }
+
+    if (isTruthyFlag(input?.onlineClassroom)) return 'online_classroom';
+    if (isTruthyFlag(input?.offlineClassroom)) return 'offline_classroom';
+    return 'self_learning';
+}
+
 function normalizeStringArray(value, fallback = []) {
     const source = Array.isArray(value)
         ? value
@@ -98,6 +117,12 @@ function normalizeCourseSettings(input = {}) {
         : false;
 
     const existingPrerequisites = Array.isArray(input?.prerequisites) ? input.prerequisites : [];
+    const deliveryMode = normalizeDeliveryMode(input?.deliveryMode, input);
+    const isOnlineClassroom = deliveryMode === 'online_classroom';
+    const isOfflineClassroom = deliveryMode === 'offline_classroom';
+    const isSelfLearning = deliveryMode === 'self_learning';
+    const liveChat = isOnlineClassroom ? isTruthyFlag(input?.liveChat) : false;
+    const collaborate = isTruthyFlag(input?.collaborate);
 
     return {
         registerDateFrom: normalizeDateOnly(input?.registerDateFrom),
@@ -111,9 +136,16 @@ function normalizeCourseSettings(input = {}) {
         durationHours: normalizeInteger(input?.durationHours, 0, 0),
         durationMinutes: normalizeInteger(input?.durationMinutes, 0, 0),
         instructor: normalizeStringValue(input?.instructor),
+        instructorExperience: normalizeStringValue(input?.instructorExperience),
         prerequisites: normalizeStringArray(input?.prerequisites, existingPrerequisites),
+        tincanCondition: normalizeTinCanCondition(input?.tincanCondition, 'all_completed'),
         webboard: normalizeOptionalBoolean(input?.webboard, null),
-        printCert: Boolean(input?.printCert),
+        deliveryMode,
+        selfLearning: isSelfLearning,
+        onlineClassroom: isOnlineClassroom,
+        offlineClassroom: isOfflineClassroom,
+        liveChat,
+        collaborate,
     };
 }
 
@@ -150,7 +182,6 @@ function normalizeSectionSettings(input = {}) {
         autoApprove: normalizeOptionalBoolean(input?.autoApprove, true),
         certificate: Boolean(input?.certificate),
         autoCert: Boolean(input?.autoCert),
-        printCert: Boolean(input?.printCert),
         cohortModule: Boolean(input?.cohortModule),
         groups: normalizedGroups,
     };

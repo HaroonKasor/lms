@@ -58,6 +58,7 @@ export default function GroupEditPage() {
                 description: group.description,
                 roleCode: String(group.roleCode || 'LEARNER').toUpperCase(),
                 isActive: group.isActive,
+                isSystemDefault: Boolean(group.isSystemDefault),
                 roles: group.roles,
             }}
             onSubmit={async (form) => {

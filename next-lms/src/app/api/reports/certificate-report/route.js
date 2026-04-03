@@ -4,6 +4,11 @@ import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
 import { ensureDefaultOrganization, getUserDisplayName } from '@/lib/server/enterprise-context';
 import { createNotification } from '@/lib/server/notifications';
+import { getSectionCompatMaps } from '@/lib/server/compat-db';
+import {
+    resolveEffectiveCertificateConfig,
+    resolveEnrollmentSectionId,
+} from '@/lib/server/section-runtime';
 
 function toSafeNumber(value, fallback = 0) {
     const n = Number(value);
@@ -135,7 +140,6 @@ export async function GET(request) {
                 where: {
                     organization_id: organizationId,
                     ...(courseId > 0 ? { courseId } : {}),
-                    courses: { hasCertificate: true },
                 },
                 include: {
                     courses: {
@@ -161,10 +165,36 @@ export async function GET(request) {
                             },
                         },
                     },
+                    learning_progress: {
+                        select: {
+                            id: true,
+                            sectionId: true,
+                            status: true,
+                            progressPercent: true,
+                        },
+                        orderBy: { id: 'desc' },
+                        take: 20,
+                    },
                 },
                 orderBy: { enrolledAt: 'desc' },
             }),
         ]);
+
+        const targetSectionIds = new Set();
+        for (const enrollment of enrollments) {
+            const progressRows = Array.isArray(enrollment?.learning_progress) ? enrollment.learning_progress : [];
+            for (const row of progressRows) {
+                const sectionId = Number(row?.sectionId || 0);
+                if (Number.isInteger(sectionId) && sectionId > 0) targetSectionIds.add(sectionId);
+            }
+            const sections = Array.isArray(enrollment?.courses?.sections) ? enrollment.courses.sections : [];
+            for (const section of sections) {
+                const sectionId = Number(section?.id || 0);
+                if (Number.isInteger(sectionId) && sectionId > 0) targetSectionIds.add(sectionId);
+            }
+        }
+        const sectionCompatMaps = await getSectionCompatMaps(Array.from(targetSectionIds));
+        const sectionSettingsBySectionId = sectionCompatMaps?.sectionSettingsBySectionId || {};
 
         const rows = enrollments
             .map((enrollment) => {
@@ -175,9 +205,21 @@ export async function GET(request) {
                 const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
                 const resolvedUserStatus = normalizeEnrollmentStatus(enrollment);
                 const resolvedCertStatus = certificate ? String(certificate.status || 'issued').toUpperCase() : 'PENDING';
-                const primarySection = Array.isArray(enrollment?.courses?.sections) && enrollment.courses.sections.length > 0
-                    ? enrollment.courses.sections[0]
+                const courseSections = Array.isArray(enrollment?.courses?.sections) ? enrollment.courses.sections : [];
+                const selectedSectionId = resolveEnrollmentSectionId({
+                    learningProgressRows: enrollment?.learning_progress || [],
+                    availableSections: courseSections,
+                });
+                const selectedSection = selectedSectionId
+                    ? courseSections.find((item) => Number(item?.id || 0) === Number(selectedSectionId))
                     : null;
+                const effectiveCertificate = resolveEffectiveCertificateConfig({
+                    courseHasCertificate: enrollment?.courses?.hasCertificate,
+                    courseCertificateMode: enrollment?.courses?.certificateMode,
+                    sectionId: selectedSectionId,
+                    sectionSettingsBySectionId,
+                });
+                if (!effectiveCertificate.required) return null;
                 const row = {
                     enrollmentId: Number(enrollment.id || 0),
                     userId: Number(enrollment.userId || 0),
@@ -185,7 +227,7 @@ export async function GET(request) {
                     categoryId: Number(enrollment?.courses?.categoryId || 0) || null,
                     categoryName: toSafeText(enrollment?.courses?.categories?.name) || '-',
                     courseName: toSafeText(enrollment?.courses?.title) || '-',
-                    sectionName: toSafeText(primarySection?.title) || '-',
+                    sectionName: toSafeText(selectedSection?.title) || '-',
                     username: toSafeText(user?.username) || toSafeText(user?.email) || '-',
                     firstName: firstName || '-',
                     lastName: lastName || '-',
@@ -204,6 +246,7 @@ export async function GET(request) {
                 row.searchText = buildSearchText(row);
                 return row;
             })
+            .filter(Boolean)
             .filter((row) => {
                 if (categoryId > 0 && Number(row.categoryId || 0) !== categoryId) return false;
                 if (courseId > 0 && Number(row.courseId || 0) !== courseId) return false;
@@ -320,6 +363,11 @@ export async function PATCH(request) {
                         id: true,
                         title: true,
                         hasCertificate: true,
+                        certificateMode: true,
+                        sections: {
+                            orderBy: [{ orderNo: 'asc' }, { id: 'asc' }],
+                            select: { id: true, title: true, isActive: true },
+                        },
                     },
                 },
                 organization_users: {
@@ -328,13 +376,37 @@ export async function PATCH(request) {
                     },
                 },
                 certificates: true,
+                learning_progress: {
+                    select: {
+                        id: true,
+                        sectionId: true,
+                        status: true,
+                        progressPercent: true,
+                    },
+                    orderBy: { id: 'desc' },
+                    take: 20,
+                },
             },
         });
         if (!enrollment) {
             return NextResponse.json({ error: 'Enrollment not found' }, { status: 404 });
         }
-        if (!enrollment?.courses?.hasCertificate) {
-            return NextResponse.json({ error: 'Course does not support certificate' }, { status: 400 });
+
+        const selectedSectionId = resolveEnrollmentSectionId({
+            learningProgressRows: enrollment?.learning_progress || [],
+            availableSections: enrollment?.courses?.sections || [],
+        });
+        const sectionCompatMaps = await getSectionCompatMaps(
+            Number.isInteger(Number(selectedSectionId)) && Number(selectedSectionId) > 0 ? [Number(selectedSectionId)] : []
+        );
+        const effectiveCertificate = resolveEffectiveCertificateConfig({
+            courseHasCertificate: enrollment?.courses?.hasCertificate,
+            courseCertificateMode: enrollment?.courses?.certificateMode,
+            sectionId: Number.isInteger(Number(selectedSectionId)) && Number(selectedSectionId) > 0 ? Number(selectedSectionId) : null,
+            sectionSettingsBySectionId: sectionCompatMaps?.sectionSettingsBySectionId || {},
+        });
+        if (!effectiveCertificate.required) {
+            return NextResponse.json({ error: 'Enrollment section does not support certificate' }, { status: 400 });
         }
 
         const learnerStatus = normalizeEnrollmentStatus(enrollment);
@@ -405,18 +477,22 @@ export async function PATCH(request) {
             });
         }
 
-        if (action === 'APPROVE') {
+        if (action === 'APPROVE' || action === 'REGENERATE') {
             await createNotification({
                 organizationId,
-                type: 'CERTIFICATE_APPROVED',
-                title: 'Certificate Approved',
-                message: `Your certificate for "${toSafeText(enrollment?.courses?.title) || 'Course'}" is approved and ready.`,
+                type: 'CERTIFICATE_ISSUED',
+                title: action === 'REGENERATE' ? 'Certificate Regenerated' : 'Certificate Issued',
+                message: action === 'REGENERATE'
+                    ? `Your certificate for "${toSafeText(enrollment?.courses?.title) || 'Course'}" has been regenerated and is ready.`
+                    : `Your certificate for "${toSafeText(enrollment?.courses?.title) || 'Course'}" is approved and ready.`,
                 payload: {
-                    kind: 'certificate_approved',
+                    kind: action === 'REGENERATE' ? 'certificate_regenerated' : 'certificate_issued',
                     enrollmentId: Number(enrollment.id || 0),
                     courseId: Number(enrollment.courseId || 0),
                     actionUrl: '/training-results',
                 },
+                severity: 'info',
+                category: 'COURSE',
                 createdBy: session.uid,
                 recipientUserIds: [Number(enrollment.userId || 0)],
             });
@@ -430,8 +506,11 @@ export async function PATCH(request) {
                     kind: 'certificate_not_approved',
                     enrollmentId: Number(enrollment.id || 0),
                     courseId: Number(enrollment.courseId || 0),
+                    courseName: toSafeText(enrollment?.courses?.title) || 'Course',
                     actionUrl: '/training-results',
                 },
+                severity: 'critical',
+                category: 'COURSE',
                 createdBy: session.uid,
                 recipientUserIds: [Number(enrollment.userId || 0)],
             });

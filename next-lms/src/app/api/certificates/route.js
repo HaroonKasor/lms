@@ -7,6 +7,7 @@ import {
     getUserDisplayName,
     resolveUserId,
 } from '@/lib/server/enterprise-context';
+import { createNotification } from '@/lib/server/notifications';
 
 function mapCertificate(certificate) {
     return {
@@ -72,7 +73,7 @@ export async function GET(request) {
  */
 export async function POST(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 
@@ -127,6 +128,23 @@ export async function POST(request) {
                     },
                 },
             },
+        });
+
+        await createNotification({
+            organizationId,
+            type: 'CERTIFICATE_ISSUED',
+            title: 'Certificate Issued',
+            message: `Your certificate for "${String(certificate?.enrollment?.courses?.title || 'Course').trim()}" is ready.`,
+            payload: {
+                kind: 'certificate_issued',
+                enrollmentId: Number(certificate?.enrollmentId || enrollment.id || 0),
+                courseId: Number(courseId || 0),
+                actionUrl: '/training-results',
+            },
+            severity: 'info',
+            category: 'COURSE',
+            createdBy: Number(session?.uid || 0),
+            recipientUserIds: [Number(userId || 0)],
         });
 
         return NextResponse.json({ success: true, certificate: mapCertificate(certificate) });

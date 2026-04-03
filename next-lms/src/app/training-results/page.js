@@ -314,13 +314,13 @@ export default function TrainingResultsPage() {
         <div className="min-h-screen font-['Outfit',sans-serif] bg-gradient-to-b from-white via-[#F6F8FF] to-[#F6F8FF] text-[#052143]">
             <Navbar />
 
-            <main className="w-full max-w-[1290px] mx-auto pt-10 pb-28 px-6">
+            <main className="w-full max-w-[1290px] mx-auto pt-8 sm:pt-10 pb-20 sm:pb-28 px-4 sm:px-6">
 
                 {/* ── Header ── */}
                 <div className={`mb-8 flex flex-col lg:flex-row lg:items-end justify-between gap-4 entry-fade ${animateIn ? 'is-visible' : ''}`} style={{ '--entry-delay': '40ms' }}>
                     <div>
                         <p className="text-[#687EFF] text-sm font-semibold uppercase tracking-widest mb-1">My Learning</p>
-                        <h1 className="text-[#052143] font-bold text-[38px] leading-[120%]">
+                        <h1 className="text-[#052143] font-bold text-[30px] sm:text-[38px] leading-[120%]">
                             Training <span style={{ background: 'linear-gradient(135deg,#687EFF 0%,#8C52FF 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>Results</span>
                         </h1>
                         <p className="text-[#6B778B] text-[15px] mt-2 leading-[150%]">

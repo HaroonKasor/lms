@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
 import {
     createXapiStatement,
     listXapiStatements,
@@ -7,6 +8,9 @@ import {
 } from '@/lib/server/learning-db';
 import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
+import { getSectionCompatMaps } from '@/lib/server/compat-db';
+import { resolveEffectiveCertificateConfig } from '@/lib/server/section-runtime';
+import { createNotification } from '@/lib/server/notifications';
 
 const VERB_ID_MAP = {
     initialized: 'http://adlnet.gov/expapi/verbs/initialized',
@@ -199,7 +203,7 @@ async function updateProgressFromStatement(statement, contentId) {
             (Number.isFinite(normalizedFromRawMax) && normalizedFromRawMax >= 0.8);
         const hasCompletionSignal = explicitCompletion === true || verbId.includes('completed');
         const shouldMarkCompleted = !hasExplicitFailure && hasCompletionSignal && (explicitSuccess === true || hasPassingScore);
-        await upsertLearningProgress({
+        return upsertLearningProgress({
             contentId,
             userKey,
             status: hasExplicitFailure ? 'FAILED' : (shouldMarkCompleted ? 'COMPLETED' : 'LEARNING'),
@@ -211,7 +215,6 @@ async function updateProgressFromStatement(statement, contentId) {
             success: explicitSuccess,
             completion: hasExplicitFailure ? false : (shouldMarkCompleted ? true : explicitCompletion),
         });
-        return;
     }
 
     if (verbId.includes('progressed') || verbId.includes('play') || verbId.includes('pause') || verbId.includes('seek')) {
@@ -221,7 +224,7 @@ async function updateProgressFromStatement(statement, contentId) {
             ? Number(progress)
             : 0;
         const hasVerifiedCompletionSignal = completion === true && success === true;
-        await upsertLearningProgress({
+        return upsertLearningProgress({
             contentId,
             userKey,
             status: hasExplicitFailure ? 'FAILED' : (hasVerifiedCompletionSignal ? 'COMPLETED' : 'LEARNING'),
@@ -234,6 +237,7 @@ async function updateProgressFromStatement(statement, contentId) {
             completion,
         });
     }
+    return null;
 }
 
 export async function POST(request) {
@@ -263,7 +267,7 @@ export async function POST(request) {
             storedAt: new Date().toISOString(),
         };
 
-        const savedStatement = await createXapiStatement({
+        const savedStatementResult = await createXapiStatement({
             statementId: normalized.id,
             actorKey: normalizeUserKey(normalized.actor?.mbox || ''),
             verbId: normalized.verb?.id,
@@ -272,11 +276,109 @@ export async function POST(request) {
             contentId,
             timestamp: normalized.timestamp,
         });
-        if (!savedStatement) {
-            return NextResponse.json({ error: 'Enrollment required' }, { status: 403 });
+        if (!savedStatementResult?.row) {
+            const reason = String(savedStatementResult?.reason || '');
+            const mapped = {
+                ENROLLMENT_REQUIRED: 'Enrollment required',
+                COURSE_INACTIVE: 'Course is inactive',
+                SECTION_INACTIVE: 'Section is inactive',
+                LEARN_WINDOW_EXPIRED: 'Learning period expired',
+            };
+            return NextResponse.json(
+                { error: mapped[reason] || 'Learning access denied', reason },
+                { status: 403 }
+            );
         }
 
-        await updateProgressFromStatement(normalized, contentId);
+        const progressResult = await updateProgressFromStatement(normalized, contentId);
+
+        if (progressResult?.meta?.transitionedToCompleted) {
+            const enrollmentId = Number(progressResult?.meta?.enrollmentId || 0);
+            const organizationId = Number(progressResult?.meta?.organizationId || 0);
+            if (enrollmentId > 0 && organizationId > 0) {
+                const enrollment = await prisma.enrollment.findUnique({
+                    where: { id: enrollmentId },
+                    include: {
+                        courses: {
+                            select: {
+                                id: true,
+                                title: true,
+                                hasCertificate: true,
+                                certificateMode: true,
+                            },
+                        },
+                        learning_progress: {
+                            select: {
+                                sectionId: true,
+                            },
+                            orderBy: { id: 'desc' },
+                            take: 10,
+                        },
+                    },
+                });
+
+                if (enrollment && Number(enrollment.userId || 0) === Number(session.uid || 0)) {
+                    await createNotification({
+                        organizationId,
+                        type: 'COURSE_COMPLETED',
+                        title: 'Course Completed',
+                        message: `You completed "${String(enrollment?.courses?.title || 'Course').trim()}". Great job!`,
+                        payload: {
+                            kind: 'course_completed',
+                            enrollmentId: Number(enrollment.id || 0),
+                            courseId: Number(enrollment.courseId || 0),
+                            actionUrl: '/training-results',
+                        },
+                        severity: 'info',
+                        category: 'COURSE',
+                        createdBy: Number(session.uid || 0),
+                        recipientUserIds: [Number(session.uid || 0)],
+                    });
+
+                    const selectedSectionId = Number(enrollment?.learning_progress?.[0]?.sectionId || 0);
+                    const sectionCompatMaps = await getSectionCompatMaps(
+                        Number.isInteger(selectedSectionId) && selectedSectionId > 0 ? [selectedSectionId] : []
+                    );
+                    const effectiveCertificate = resolveEffectiveCertificateConfig({
+                        courseHasCertificate: enrollment?.courses?.hasCertificate,
+                        courseCertificateMode: enrollment?.courses?.certificateMode,
+                        sectionId: Number.isInteger(selectedSectionId) && selectedSectionId > 0 ? selectedSectionId : null,
+                        sectionSettingsBySectionId: sectionCompatMaps?.sectionSettingsBySectionId || {},
+                    });
+
+                    if (effectiveCertificate.required && effectiveCertificate.mode === 'auto') {
+                        const verifyCode = `CERT-${Date.now().toString(36).toUpperCase()}`;
+                        await prisma.certificate.upsert({
+                            where: { enrollmentId: enrollment.id },
+                            update: {},
+                            create: {
+                                enrollmentId: enrollment.id,
+                                verifyCode,
+                                recipientName: String(session.user?.username || session.user?.email || `User ${session.uid}`),
+                                status: 'issued',
+                            },
+                        });
+
+                        await createNotification({
+                            organizationId,
+                            type: 'CERTIFICATE_ISSUED',
+                            title: 'Certificate Issued',
+                            message: `Your certificate for "${String(enrollment?.courses?.title || 'Course').trim()}" is ready.`,
+                            payload: {
+                                kind: 'certificate_issued',
+                                enrollmentId: Number(enrollment.id || 0),
+                                courseId: Number(enrollment.courseId || 0),
+                                actionUrl: '/training-results',
+                            },
+                            severity: 'info',
+                            category: 'COURSE',
+                            createdBy: Number(session.uid || 0),
+                            recipientUserIds: [Number(session.uid || 0)],
+                        });
+                    }
+                }
+            }
+        }
 
         return NextResponse.json({
             success: true,

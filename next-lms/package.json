@@ -11,7 +11,13 @@
     "test:security": "node scripts/security-check.cjs",
     "test:load": "node scripts/load-test.cjs",
     "e2e:click": "node scripts/e2e-click-all.cjs",
-    "migrate:json-db": "node scripts/migrate-json-to-mysql.cjs"
+    "health:check": "node -e \"fetch('http://127.0.0.1:8080/api/health').then(r=>r.text()).then(t=>{console.log(t);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})\"",
+    "backup:db": "node scripts/backup-db.cjs",
+    "restore:db": "node scripts/restore-db.cjs",
+    "migrate:json-db": "node scripts/migrate-json-to-mysql.cjs",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:pages": "node scripts/test-all-pages.cjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -33,6 +39,8 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -40,6 +48,8 @@
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
+    "jest": "^30.3.0",
+    "jest-environment-jsdom": "^30.3.0",
     "playwright": "^1.58.2",
     "tailwindcss": "^4",
     "typescript": "^5"

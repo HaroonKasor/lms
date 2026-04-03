@@ -10,6 +10,7 @@ import {
 import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
+import { writeAdminAudit } from '@/lib/server/admin-audit';
 
 function normalizeCourseCode(value, fallbackTitle = '') {
     const code = String(value || '').trim();
@@ -51,6 +52,11 @@ function mapLegacyStatusToPublishStatus(status) {
 
 function mapLegacyPublicToVisibility(isPublic) {
     if (typeof isPublic === 'boolean') return isPublic ? 'public' : 'private';
+    if (typeof isPublic === 'string') {
+        const normalized = isPublic.trim().toLowerCase();
+        if (['1', 'true', 'yes', 'y', 'on', 'public'].includes(normalized)) return 'public';
+        if (['0', 'false', 'no', 'n', 'off', 'private', 'unpublic'].includes(normalized)) return 'private';
+    }
     return 'organization';
 }
 
@@ -61,15 +67,25 @@ function normalizeLevel(level) {
 }
 
 function normalizePublishStatus(status, legacyStatus) {
+    const hasLegacyStatus = legacyStatus !== undefined
+        && legacyStatus !== null
+        && String(legacyStatus).trim() !== '';
+    if (hasLegacyStatus) return mapLegacyStatusToPublishStatus(legacyStatus);
+
     const value = String(status || '').toLowerCase();
     if (['draft', 'review', 'published', 'archived'].includes(value)) return value;
-    return mapLegacyStatusToPublishStatus(legacyStatus);
+    return 'draft';
 }
 
 function normalizeVisibility(visibility, legacyIsPublic) {
+    const hasLegacyVisibility = legacyIsPublic !== undefined
+        && legacyIsPublic !== null
+        && String(legacyIsPublic).trim() !== '';
+    if (hasLegacyVisibility) return mapLegacyPublicToVisibility(legacyIsPublic);
+
     const value = String(visibility || '').toLowerCase();
     if (['private', 'organization', 'public'].includes(value)) return value;
-    return mapLegacyPublicToVisibility(legacyIsPublic);
+    return 'organization';
 }
 
 function resolveCertificateMode(body = {}) {
@@ -158,6 +174,17 @@ function normalizeCourse(
 
     const hasMaxEnrollmentCapacity = Number.isFinite(Number(course.maxEnrollment)) && Number(course.maxEnrollment) > 0;
     const isMaxLearnerUnlimited = Boolean(settings?.maxLearnerUnlimit) || !hasMaxEnrollmentCapacity;
+    const normalizedDeliveryMode = String(settings?.deliveryMode || '').trim().toLowerCase();
+    const deliveryMode = ['self_learning', 'online_classroom', 'offline_classroom'].includes(normalizedDeliveryMode)
+        ? normalizedDeliveryMode
+        : (
+            settings?.onlineClassroom ? 'online_classroom'
+                : settings?.offlineClassroom ? 'offline_classroom'
+                    : 'self_learning'
+        );
+    const isOnlineClassroom = deliveryMode === 'online_classroom';
+    const isOfflineClassroom = deliveryMode === 'offline_classroom';
+    const isSelfLearning = deliveryMode === 'self_learning';
 
     return {
         ...course,
@@ -169,12 +196,19 @@ function normalizeCourse(
         certificate: Boolean(course.hasCertificate),
         certificateMode: String(course.certificateMode || 'none').toLowerCase(),
         autoCert: String(course.certificateMode || 'none').toLowerCase() === 'auto',
-        printCert: Boolean(settings?.printCert),
         autoApprove: typeof autoApprove === 'boolean' ? autoApprove : true,
         instructor: String(settings?.instructor || '').trim(),
+        instructorExperience: String(settings?.instructorExperience || '').trim(),
         lessons: Number(settings?.lessons || 0),
         durationHours: Number(settings?.durationHours || 0),
         durationMinutes: Number(settings?.durationMinutes || 0),
+        deliveryMode,
+        selfLearning: isSelfLearning,
+        onlineClassroom: isOnlineClassroom,
+        offlineClassroom: isOfflineClassroom,
+        liveChat: isOnlineClassroom ? Boolean(settings?.liveChat) : false,
+        collaborate: Boolean(settings?.collaborate),
+        tincanCondition: String(settings?.tincanCondition || 'all_completed').trim() || 'all_completed',
         webboard: settings?.webboard ?? null,
         prerequisites: Array.isArray(settings?.prerequisites) ? settings.prerequisites : [],
         price: 0,
@@ -272,7 +306,7 @@ export async function GET(request) {
  */
 export async function POST(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 
@@ -355,15 +389,42 @@ export async function POST(request) {
             durationHours: body.durationHours,
             durationMinutes: body.durationMinutes,
             instructor: body.instructor,
+            instructorExperience: body.instructorExperience,
             prerequisites: body.prerequisites,
+            tincanCondition: body.tincanCondition,
             webboard: body.webboard,
-            printCert: body.printCert,
+            deliveryMode: body.deliveryMode,
+            selfLearning: body.selfLearning,
+            onlineClassroom: body.onlineClassroom,
+            offlineClassroom: body.offlineClassroom,
+            liveChat: body.liveChat,
+            collaborate: body.collaborate,
         });
 
         const [compatMaps, reviewSummaryByCourseId] = await Promise.all([
             getCourseCompatMaps([course.id]),
             buildReviewSummaryByCourse([course.id]),
         ]);
+
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'CREATE',
+            entity: 'COURSE',
+            entityId: course?.id ?? null,
+            message: 'Created course',
+            severity: 'info',
+            details: {
+                courseCode: course?.courseCode || '',
+                title: course?.title || '',
+                categoryId: course?.categoryId ?? null,
+                publishStatus: course?.publishStatus || '',
+                visibility: course?.visibility || '',
+            },
+            request: { path: '/api/courses', method: 'POST' },
+        });
         return NextResponse.json({ success: true, course: normalizeCourse(course, compatMaps, reviewSummaryByCourseId) });
     } catch (err) {
         return toErrorResponse(err);
@@ -375,7 +436,7 @@ export async function POST(request) {
  */
 export async function PUT(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 
@@ -468,9 +529,16 @@ export async function PUT(request) {
             || body.durationHours !== undefined
             || body.durationMinutes !== undefined
             || body.instructor !== undefined
+            || body.instructorExperience !== undefined
             || body.prerequisites !== undefined
+            || body.tincanCondition !== undefined
             || body.webboard !== undefined
-            || body.printCert !== undefined
+            || body.deliveryMode !== undefined
+            || body.selfLearning !== undefined
+            || body.onlineClassroom !== undefined
+            || body.offlineClassroom !== undefined
+            || body.liveChat !== undefined
+            || body.collaborate !== undefined
         ) {
             await setCourseSettings(course.id, {
                 registerDateFrom: body.registerDateFrom,
@@ -482,9 +550,16 @@ export async function PUT(request) {
                 durationHours: body.durationHours,
                 durationMinutes: body.durationMinutes,
                 instructor: body.instructor,
+                instructorExperience: body.instructorExperience,
                 prerequisites: body.prerequisites,
+                tincanCondition: body.tincanCondition,
                 webboard: body.webboard,
-                printCert: body.printCert,
+                deliveryMode: body.deliveryMode,
+                selfLearning: body.selfLearning,
+                onlineClassroom: body.onlineClassroom,
+                offlineClassroom: body.offlineClassroom,
+                liveChat: body.liveChat,
+                collaborate: body.collaborate,
             });
         }
 
@@ -492,6 +567,27 @@ export async function PUT(request) {
             getCourseCompatMaps([course.id]),
             buildReviewSummaryByCourse([course.id]),
         ]);
+
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'UPDATE',
+            entity: 'COURSE',
+            entityId: course?.id ?? id,
+            message: 'Updated course',
+            severity: 'info',
+            details: {
+                courseCode: course?.courseCode || '',
+                title: course?.title || '',
+                categoryId: course?.categoryId ?? null,
+                publishStatus: course?.publishStatus || '',
+                visibility: course?.visibility || '',
+                maxEnrollment: course?.maxEnrollment ?? null,
+            },
+            request: { path: '/api/courses', method: 'PUT' },
+        });
         return NextResponse.json({ success: true, course: normalizeCourse(course, compatMaps, reviewSummaryByCourseId) });
     } catch (err) {
         return toErrorResponse(err);
@@ -503,7 +599,7 @@ export async function PUT(request) {
  */
 export async function DELETE(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 
@@ -519,6 +615,20 @@ export async function DELETE(request) {
             );
         }
 
+        const deletingCourse = await prisma.course.findUnique({
+            where: {
+                id_organization_id: {
+                    id,
+                    organization_id: organizationId,
+                },
+            },
+            select: {
+                id: true,
+                courseCode: true,
+                title: true,
+            },
+        });
+
         await prisma.course.delete({
             where: {
                 id_organization_id: {
@@ -531,6 +641,23 @@ export async function DELETE(request) {
         await setCourseThumbnail(id, null);
         await setCourseAutoApprove(id, null);
         await setCourseSettings(id, null);
+
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'DELETE',
+            entity: 'COURSE',
+            entityId: id,
+            message: 'Deleted course',
+            severity: 'critical',
+            details: {
+                courseCode: deletingCourse?.courseCode || '',
+                title: deletingCourse?.title || '',
+            },
+            request: { path: '/api/courses', method: 'DELETE' },
+        });
         return NextResponse.json({ success: true });
     } catch (err) {
         return toErrorResponse(err);

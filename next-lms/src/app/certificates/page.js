@@ -45,7 +45,7 @@ export default function CertificatesPage() {
         <div className="min-h-screen font-['Outfit',sans-serif]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
             <Navbar />
 
-            <main className="max-w-[1200px] mx-auto px-6 pt-8 pb-24">
+            <main className="max-w-[1200px] mx-auto px-4 sm:px-6 pt-8 pb-24">
                 <FadeIn direction="up">
                     <div className="flex items-center gap-4 mb-8">
                         <div className="text-4xl">🏆</div>

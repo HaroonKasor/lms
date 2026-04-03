@@ -7,7 +7,8 @@ import ChatPanel from '@/components/ui/ChatPanel';
 import { clearUser, getRememberMePreference, getUser, saveUser } from '@/lib/auth';
 
 const DEFAULT_AVATAR_URL = '/images/default-avatar.svg';
-const NOTIFICATION_POLLING_MS = 5000;
+const NOTIFICATION_POLLING_MS = 30000;
+const NOTIFICATION_REQUEST_TIMEOUT_MS = 4500;
 
 function formatRelativeTime(value, nowMs = Date.now()) {
     const date = new Date(value || 0);
@@ -26,7 +27,13 @@ function formatRelativeTime(value, nowMs = Date.now()) {
     return `${years}y ago`;
 }
 
-function getNotificationTone(type) {
+function getNotificationTone(input) {
+    const type = typeof input === 'object' ? input?.type : input;
+    const severity = String(
+        (typeof input === 'object' ? (input?.severity || input?.payload?.severity) : '') || 'info'
+    ).toLowerCase();
+    if (severity === 'critical') return { color: 'bg-[#FEE2E2]', icon: '🚨' };
+    if (severity === 'warning') return { color: 'bg-[#FFF7ED]', icon: '⚠️' };
     const key = String(type || '').toUpperCase();
     if (key.includes('CERTIFICATE')) return { color: 'bg-[#FFF3E0]', icon: '🏆' };
     if (key.includes('ENROLLMENT')) return { color: 'bg-[#E3E7FF]', icon: '📘' };
@@ -58,6 +65,7 @@ export default function Navbar() {
     const chatRef = useRef(null);
     const notificationSnapshotRef = useRef({ initialized: false, ids: new Set() });
     const toastTimersRef = useRef(new Map());
+    const notificationRequestInFlightRef = useRef(false);
     const userSyncAttemptedRef = useRef(false);
 
     const readStoredUser = React.useCallback(() => {
@@ -166,9 +174,24 @@ export default function Navbar() {
             notificationSnapshotRef.current = { initialized: false, ids: new Set() };
             return;
         }
+        if (notificationRequestInFlightRef.current) return;
+        notificationRequestInFlightRef.current = true;
+
+        const controller = new AbortController();
+        const abortTimer = setTimeout(() => {
+            try {
+                controller.abort();
+            } catch {
+                // ignore abort errors
+            }
+        }, NOTIFICATION_REQUEST_TIMEOUT_MS);
+
         try {
             if (showLoader) setLoadingNotifications(true);
-            const res = await fetch('/api/notifications?limit=20', { cache: 'no-store' });
+            const res = await fetch('/api/notifications?limit=20', {
+                cache: 'no-store',
+                signal: controller.signal,
+            });
             const data = await res.json().catch(() => ({}));
             if (!res.ok) return;
             const items = Array.isArray(data?.items) ? data.items : [];
@@ -192,6 +215,8 @@ export default function Navbar() {
         } catch {
             // ignore notification fetch failure
         } finally {
+            clearTimeout(abortTimer);
+            notificationRequestInFlightRef.current = false;
             if (showLoader) setLoadingNotifications(false);
         }
     }, [user, pushNotificationToasts]);
@@ -559,7 +584,17 @@ export default function Navbar() {
                                 className="flex items-center gap-3 cursor-pointer shrink-0 group"
                                 onClick={() => setShowUserMenu(!showUserMenu)}
                             >
-                                <img src={avatarUrl} alt={shortName} className="w-[40px] h-[40px] rounded-full object-cover border border-[#052143]" />
+                                <img
+                                    src={avatarUrl}
+                                    alt={shortName}
+                                    className="w-[40px] h-[40px] rounded-full object-cover border border-[#052143]"
+                                    onError={(event) => {
+                                        const image = event.currentTarget;
+                                        if (image.dataset.fallbackApplied === '1') return;
+                                        image.dataset.fallbackApplied = '1';
+                                        image.src = DEFAULT_AVATAR_URL;
+                                    }}
+                                />
                                 <span className="text-[#052143] font-medium text-lg hidden sm:block group-hover:text-[#687EFF] transition-colors">{shortName}</span>
                                 <svg className="w-[10.5px] h-[6px] ml-1 hidden sm:block shrink-0" viewBox="0 0 11 6" fill="none">
                                     <path d="M1 1L5.5 5L10 1" stroke="#052143" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -659,8 +694,8 @@ export default function Navbar() {
                                             <div className="p-5 text-sm text-[#6B778B]">No notifications yet</div>
                                         )}
                                         {!loadingNotifications && notifications.map((notification) => {
-                                            const tone = getNotificationTone(notification?.type);
-                                            const actionUrl = String(notification?.payload?.actionUrl || '').trim();
+                                            const tone = getNotificationTone(notification);
+                                            const actionUrl = String(notification?.actionUrl || notification?.payload?.actionUrl || '').trim();
                                             return (
                                                 <button
                                                     key={notification.id}
@@ -691,13 +726,22 @@ export default function Navbar() {
                                         })}
                                     </div>
                                     <div className="p-4 text-center border-t border-dashed border-[#D1E3FB]">
-                                        <button
-                                            type="button"
-                                            onClick={markAllNotificationsRead}
-                                            className="text-xs font-medium text-[#687EFF] hover:text-[#5a6ee6] transition-colors"
-                                        >
-                                            Mark all as read
-                                        </button>
+                                        <div className="flex items-center justify-between gap-3">
+                                            <button
+                                                type="button"
+                                                onClick={markAllNotificationsRead}
+                                                className="text-xs font-medium text-[#687EFF] hover:text-[#5a6ee6] transition-colors"
+                                            >
+                                                Mark all as read
+                                            </button>
+                                            <Link
+                                                href="/notifications"
+                                                onClick={() => setShowNotifications(false)}
+                                                className="text-xs font-medium text-[#687EFF] hover:text-[#5a6ee6] transition-colors"
+                                            >
+                                                View all
+                                            </Link>
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -722,9 +766,9 @@ export default function Navbar() {
             {!isPublicPage && notificationToasts.length > 0 && (
                 <div className="fixed top-24 right-6 z-[70] flex w-[360px] max-w-[calc(100vw-2rem)] flex-col gap-3 pointer-events-none">
                     {notificationToasts.slice().reverse().map((toast) => {
-                        const tone = getNotificationTone(toast?.type);
+                        const tone = getNotificationTone(toast);
                         const toastId = Number(toast?.id || 0);
-                        const actionUrl = String(toast?.payload?.actionUrl || '').trim();
+                        const actionUrl = String(toast?.actionUrl || toast?.payload?.actionUrl || '').trim();
                         return (
                             <div
                                 key={toastId}

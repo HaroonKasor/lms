@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+:root {
+  --font-outfit: "Inter", "Segoe UI", Arial, sans-serif;
+  --font-noto-sans-thai: "Noto Sans Thai", "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif;
+}
+
 /* Root scrolling */
 html {
   scroll-behavior: smooth;

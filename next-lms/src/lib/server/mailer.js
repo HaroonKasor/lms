@@ -155,6 +155,18 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
+export function parseEmailList(value) {
+    return Array.from(
+        new Set(
+            String(value || '')
+                .split(/[,\n;]+/)
+                .map((item) => item.trim())
+                .filter(Boolean)
+                .map((item) => item.toLowerCase())
+        )
+    );
+}
+
 export async function sendPasswordResetEmail({ to, name, resetUrl, ttlMinutes = 30 } = {}) {
     const safeTo = String(to || '').trim();
     if (!safeTo) {
@@ -448,6 +460,120 @@ export async function sendCourseExpiryReminderEmail({
               Continue Learning
             </a>
           </p>`
+        : ''}
+        </div>
+    `;
+
+    await sendEmail({
+        to: safeTo,
+        subject,
+        text,
+        html,
+    });
+}
+
+export async function sendCriticalNotificationEmail({
+    to,
+    userName = '',
+    title = '',
+    message = '',
+    type = 'SYSTEM_CRITICAL',
+    category = 'SYSTEM',
+    actionUrl = '',
+    payload = null,
+} = {}) {
+    const safeTo = String(to || '').trim();
+    if (!safeTo) {
+        throw new Error('Missing recipient email');
+    }
+
+    const appName = String(process.env.APP_NAME || 'SkillUp').trim();
+    const displayName = String(userName || '').trim() || 'User';
+    const safeTitle = String(title || '').trim() || 'Critical notification';
+    const safeMessage = String(message || '').trim() || '-';
+    const safeType = String(type || 'SYSTEM_CRITICAL').trim();
+    const safeCategory = String(category || 'SYSTEM').trim().toUpperCase();
+    const safeActionUrl = String(actionUrl || '').trim();
+    const safePayload = payload && typeof payload === 'object' ? payload : {};
+    const safeCourseName = String(safePayload?.courseName || '').trim();
+    const safeDaysLeft = Number(safePayload?.daysLeft);
+    const safeLearnDateTo = String(safePayload?.learnDateTo || '').trim();
+    const safeKind = String(safePayload?.kind || '').trim().toLowerCase();
+
+    let subject = `[${appName}][CRITICAL] ${safeTitle}`;
+    let bodyTitle = safeTitle;
+    let bodyMessage = safeMessage;
+    let ctaLabel = 'Open Notification';
+
+    if (safeType.includes('ENROLLMENT_REJECTED') || safeKind === 'enrollment_rejected') {
+        subject = `[${appName}][CRITICAL] Enrollment Rejected${safeCourseName ? `: ${safeCourseName}` : ''}`;
+        bodyTitle = 'Enrollment Request Rejected';
+        bodyMessage = safeCourseName
+            ? `Your enrollment request for "${safeCourseName}" was rejected by an administrator.`
+            : 'Your enrollment request was rejected by an administrator.';
+        ctaLabel = 'View My Learning';
+    } else if (safeType.includes('COURSE_EXPIR') || safeKind === 'course_expiring_soon') {
+        const daysPart = Number.isInteger(safeDaysLeft) && safeDaysLeft > 0
+            ? `${safeDaysLeft} day${safeDaysLeft === 1 ? '' : 's'}`
+            : 'a few days';
+        subject = `[${appName}][CRITICAL] Course Near Expiry${safeCourseName ? `: ${safeCourseName}` : ''}`;
+        bodyTitle = 'Course Access Near Expiry';
+        bodyMessage = safeCourseName
+            ? `Your access to "${safeCourseName}" will expire in ${daysPart}.${safeLearnDateTo ? ` Expiry date: ${safeLearnDateTo}.` : ''}`
+            : `Your course access will expire in ${daysPart}.${safeLearnDateTo ? ` Expiry date: ${safeLearnDateTo}.` : ''}`;
+        ctaLabel = 'Continue Learning';
+    } else if (
+        safeType.includes('CERTIFICATE') ||
+        safeKind.includes('certificate_')
+    ) {
+        subject = `[${appName}][CRITICAL] Certificate Action Required${safeCourseName ? `: ${safeCourseName}` : ''}`;
+        bodyTitle = 'Certificate Status Update';
+        bodyMessage = safeCourseName
+            ? `Your certificate request for "${safeCourseName}" requires attention. Please review the latest status in your training results.`
+            : 'Your certificate request requires attention. Please review the latest status in your training results.';
+        ctaLabel = 'View Training Results';
+    }
+
+    const text = [
+        `Hi ${displayName},`,
+        '',
+        `Priority: CRITICAL`,
+        `Category: ${safeCategory}`,
+        `Type: ${safeType}`,
+        '',
+        bodyTitle,
+        bodyMessage,
+        ...(safeMessage && safeMessage !== bodyMessage ? ['', `Details: ${safeMessage}`] : []),
+        ...(safeActionUrl ? ['', `Open: ${safeActionUrl}`] : []),
+    ].join('\n');
+
+    const escapedDisplayName = escapeHtml(displayName);
+    const escapedBodyTitle = escapeHtml(bodyTitle);
+    const escapedBodyMessage = escapeHtml(bodyMessage);
+    const escapedMessage = escapeHtml(safeMessage);
+    const escapedType = escapeHtml(safeType);
+    const escapedCategory = escapeHtml(safeCategory);
+    const escapedActionUrl = escapeHtml(safeActionUrl);
+    const escapedCtaLabel = escapeHtml(ctaLabel);
+
+    const html = `
+        <div style="font-family: 'Noto Sans Thai', 'Segoe UI', Tahoma, Arial, sans-serif; color: #1f2937; line-height: 1.6;">
+          <p>Hi ${escapedDisplayName},</p>
+          <p><strong style="color:#b91c1c;">Critical notification</strong></p>
+          <p style="margin: 0 0 8px 0;"><strong>Title:</strong> ${escapedBodyTitle}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Category:</strong> ${escapedCategory}</p>
+          <p style="margin: 0 0 8px 0;"><strong>Type:</strong> ${escapedType}</p>
+          <div style="padding: 12px; border-radius: 8px; background: #fef2f2; border: 1px solid #fecaca; white-space: pre-wrap;">${escapedBodyMessage}</div>
+          ${safeMessage && safeMessage !== bodyMessage
+            ? `<p style="margin: 10px 0 0 0; color: #64748b;"><strong>Details:</strong> ${escapedMessage}</p>`
+            : ''
+        }
+          ${safeActionUrl
+        ? `<p style="margin-top: 14px;">
+              <a href="${escapedActionUrl}" style="display: inline-block; padding: 10px 18px; border-radius: 999px; background: #b91c1c; color: #fff; text-decoration: none; font-weight: 600;">
+                ${escapedCtaLabel}
+              </a>
+            </p>`
         : ''}
         </div>
     `;

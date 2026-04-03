@@ -16,10 +16,25 @@ export async function GET(request) {
         const organizationId = await ensureDefaultOrganization();
         const { searchParams } = new URL(request.url);
         const limit = Number(searchParams.get('limit') || 20);
+        const page = Number(searchParams.get('page') || 1);
+        const filter = String(searchParams.get('filter') || '').trim().toUpperCase();
+        const status = String(searchParams.get('status') || '').trim().toUpperCase();
+        const category = String(searchParams.get('category') || '').trim().toUpperCase();
+
+        const resolvedStatus = status || (filter === 'UNREAD' ? 'UNREAD' : 'ALL');
+        const resolvedCategory = category || (
+            filter === 'COURSE' || filter === 'SYSTEM'
+                ? filter
+                : 'ALL'
+        );
+
         const data = await listUserNotifications({
             organizationId,
             userId: session.uid,
             limit,
+            page,
+            status: resolvedStatus,
+            category: resolvedCategory,
         });
 
         return NextResponse.json(data);

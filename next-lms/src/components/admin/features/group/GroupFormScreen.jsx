@@ -38,6 +38,7 @@ export default function GroupFormScreen({
     const normalizedRoleCode = normalizeEnterpriseRoleCode(form?.roleCode);
     const roleName = roleLabelFromEnterpriseRoleCode(normalizedRoleCode);
     const roleGroupCode = GROUP_ROLE_OPTIONS.find((item) => item.code === normalizedRoleCode)?.groupCode || normalizedRoleCode;
+    const isSystemDefault = Boolean(form?.isSystemDefault);
 
     const handleSubmit = async (event) => {
         event.preventDefault();
@@ -86,6 +87,7 @@ export default function GroupFormScreen({
                                     onChange={(event) => setForm((current) => ({ ...current, code: event.target.value.toUpperCase() }))}
                                     placeholder="GROUP_CODE"
                                     className={adminInputClass}
+                                    disabled={isSystemDefault}
                                 />
                             </div>
                         </div>
@@ -115,11 +117,13 @@ export default function GroupFormScreen({
                                             checked={form.isActive === option.value}
                                             onChange={() => setForm((current) => ({ ...current, isActive: option.value }))}
                                             className="h-4 w-4 border-[#B8C4EE] text-[#687EFF] focus:ring-[#687EFF]"
+                                            disabled={isSystemDefault}
                                         />
                                         <span>{option.label}</span>
                                     </label>
                                 ))}
                             </div>
+                            {isSystemDefault ? <div className="text-[12px] text-[#64748B]">System role groups are always active.</div> : null}
                         </div>
 
                         <div className="space-y-2">
@@ -136,6 +140,7 @@ export default function GroupFormScreen({
                                                 checked={normalizedRoleCode === option.code}
                                                 onChange={() => setForm((current) => ({ ...current, roleCode: option.code, code: option.groupCode, roles: [option.label] }))}
                                                 className="h-4 w-4 border-[#B8C4EE] text-[#687EFF] focus:ring-[#687EFF]"
+                                                disabled={isSystemDefault}
                                             />
                                             <div className="flex flex-col">
                                                 <span className="font-semibold">{option.label}</span>

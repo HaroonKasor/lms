@@ -3,7 +3,9 @@ import prisma from '@/lib/prisma';
 import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
-import { createAdminNotification } from '@/lib/server/notifications';
+import { createAdminNotification, createNotification } from '@/lib/server/notifications';
+import { getSectionCompatMaps } from '@/lib/server/compat-db';
+import { resolveEffectiveCertificateConfig } from '@/lib/server/section-runtime';
 
 function toNumber(value, fallback = 0) {
     const n = Number(value);
@@ -238,9 +240,18 @@ export async function POST(request) {
             },
         });
 
+        const sectionCompatMaps = await getSectionCompatMaps(
+            Number.isInteger(Number(quiz?.sectionId)) && Number(quiz.sectionId) > 0 ? [Number(quiz.sectionId)] : []
+        );
+        const effectiveCertificate = resolveEffectiveCertificateConfig({
+            courseHasCertificate: quiz?.course?.hasCertificate,
+            courseCertificateMode: quiz?.course?.certificateMode,
+            sectionId: Number.isInteger(Number(quiz?.sectionId)) && Number(quiz.sectionId) > 0 ? Number(quiz.sectionId) : null,
+            sectionSettingsBySectionId: sectionCompatMaps?.sectionSettingsBySectionId || {},
+        });
         let certificateState = {
-            required: Boolean(quiz.course?.hasCertificate),
-            mode: String(quiz.course?.certificateMode || 'none').toLowerCase(),
+            required: effectiveCertificate.required,
+            mode: effectiveCertificate.mode,
             status: 'NONE',
         };
 
@@ -255,8 +266,26 @@ export async function POST(request) {
                 },
             });
 
-            const certMode = String(quiz.course?.certificateMode || 'none').toLowerCase();
-            if (quiz.course?.hasCertificate && certMode === 'auto') {
+            if (!wasCompletedBefore) {
+                await createNotification({
+                    organizationId: quiz.course.organization_id,
+                    type: 'COURSE_COMPLETED',
+                    title: 'Course Completed',
+                    message: `You completed "${String(quiz.course?.title || 'Course').trim()}". Great job!`,
+                    payload: {
+                        kind: 'course_completed',
+                        enrollmentId: Number(enrollment.id || 0),
+                        courseId: Number(quiz.course?.id || 0),
+                        actionUrl: '/training-results',
+                    },
+                    severity: 'info',
+                    category: 'COURSE',
+                    createdBy: numericUserId,
+                    recipientUserIds: [Number(numericUserId || 0)],
+                });
+            }
+
+            if (effectiveCertificate.required && effectiveCertificate.mode === 'auto') {
                 const verifyCode = `CERT-${Date.now().toString(36).toUpperCase()}`;
                 const user = await prisma.user.findUnique({
                     where: { id: numericUserId },
@@ -275,12 +304,28 @@ export async function POST(request) {
                         status: 'issued',
                     },
                 });
+                await createNotification({
+                    organizationId: quiz.course.organization_id,
+                    type: 'CERTIFICATE_ISSUED',
+                    title: 'Certificate Issued',
+                    message: `Your certificate for "${String(quiz.course?.title || 'Course').trim()}" is ready.`,
+                    payload: {
+                        kind: 'certificate_issued',
+                        enrollmentId: Number(enrollment.id || 0),
+                        courseId: Number(quiz.course?.id || 0),
+                        actionUrl: '/training-results',
+                    },
+                    severity: 'info',
+                    category: 'COURSE',
+                    createdBy: numericUserId,
+                    recipientUserIds: [Number(numericUserId || 0)],
+                });
                 certificateState = {
                     required: true,
-                    mode: certMode,
+                    mode: effectiveCertificate.mode,
                     status: 'ISSUED',
                 };
-            } else if (quiz.course?.hasCertificate && certMode === 'manual') {
+            } else if (effectiveCertificate.required && effectiveCertificate.mode === 'manual') {
                 if (!wasCompletedBefore) {
                     const user = await prisma.user.findUnique({
                         where: { id: numericUserId },
@@ -299,12 +344,14 @@ export async function POST(request) {
                             userId: Number(numericUserId || 0),
                             actionUrl: '/admin-dashboard/report/certificate-report',
                         },
+                        severity: 'info',
+                        category: 'COURSE',
                         createdBy: numericUserId,
                     });
                 }
                 certificateState = {
                     required: true,
-                    mode: certMode,
+                    mode: effectiveCertificate.mode,
                     status: 'PENDING_APPROVAL',
                 };
             }

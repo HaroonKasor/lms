@@ -71,6 +71,10 @@ export async function POST(request) {
                 USER_NOT_FOUND: { status: 404, error: 'User not found' },
                 COURSE_NOT_FOUND: { status: 404, error: 'Course not found' },
                 SECTION_NOT_FOUND: { status: 404, error: 'Section not found' },
+                COURSE_INACTIVE: { status: 403, error: 'Course is inactive' },
+                SECTION_INACTIVE: { status: 403, error: 'Section is inactive' },
+                LEARN_WINDOW_EXPIRED: { status: 403, error: 'Learning period expired' },
+                LEARNING_ACCESS_DENIED: { status: 403, error: 'Learning access denied' },
             };
             const mapped = reasonConfig[reason] || { status: 400, error: 'Unable to update progress' };
             return NextResponse.json(

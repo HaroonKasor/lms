@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma';
 import { findCourseIdByContentId } from '@/lib/server/compat-db';
 import { randomUUID } from 'crypto';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
+import { evaluateEnrollmentLearningAccess } from '@/lib/server/learning-access';
 
 function createRegistrationUuid() {
     try {
@@ -170,6 +171,7 @@ async function resolveEnrollment(userId, courseId) {
             id: true,
             userId: true,
             courseId: true,
+            organization_id: true,
             status: true,
             progressPercent: true,
             completedAt: true,
@@ -276,17 +278,24 @@ async function upsertLearningProgress({
     const user = await resolveUser(userKey);
     const courseId = await resolveCourseId(contentId, sectionId);
     if (!user || !courseId) {
-        return { row: null, reason: !user ? 'USER_NOT_FOUND' : 'COURSE_NOT_FOUND' };
+        return { row: null, reason: !user ? 'USER_NOT_FOUND' : 'COURSE_NOT_FOUND', meta: null };
     }
 
     const enrollment = await resolveEnrollment(user.id, courseId);
     if (!enrollment?.id) {
-        return { row: null, reason: 'ENROLLMENT_REQUIRED' };
+        return { row: null, reason: 'ENROLLMENT_REQUIRED', meta: null };
     }
 
     const resolvedSectionId = await ensureSectionIdForCourse(courseId, sectionId);
     if (!resolvedSectionId) {
-        return { row: null, reason: 'SECTION_NOT_FOUND' };
+        return { row: null, reason: 'SECTION_NOT_FOUND', meta: null };
+    }
+    const access = await evaluateEnrollmentLearningAccess({
+        enrollmentId: enrollment.id,
+        preferredSectionId: resolvedSectionId,
+    });
+    if (!access?.allowed) {
+        return { row: null, reason: access?.reason || 'LEARNING_ACCESS_DENIED', meta: null };
     }
 
     const existing = await prisma.learningProgress.findFirst({
@@ -439,8 +448,10 @@ async function upsertLearningProgress({
     enrollmentUpdate.lastActivityAt = now;
 
     const wasEnrollmentCompleted = String(enrollment.status || '').toLowerCase() === 'completed';
+    const shouldBeCompletedAfterUpdate = nextStatus === 'completed' || (wasEnrollmentCompleted && !hasExplicitFailureSignal);
+    const transitionedToCompleted = !wasEnrollmentCompleted && shouldBeCompletedAfterUpdate;
 
-    if (nextStatus === 'completed' || (wasEnrollmentCompleted && !hasExplicitFailureSignal)) {
+    if (shouldBeCompletedAfterUpdate) {
         enrollmentUpdate.status = 'completed';
         enrollmentUpdate.progressPercent = 100;
         if (!enrollment.completedAt) enrollmentUpdate.completedAt = now;
@@ -470,7 +481,17 @@ async function upsertLearningProgress({
     }
 
     const userMap = new Map([[String(user.id), user]]);
-    return { row: serializeProgressRow(row, String(contentId || ''), userMap), reason: null };
+    return {
+        row: serializeProgressRow(row, String(contentId || ''), userMap),
+        reason: null,
+        meta: {
+            transitionedToCompleted,
+            enrollmentId: Number(enrollment.id || 0),
+            userId: Number(user.id || 0),
+            courseId: Number(courseId || 0),
+            organizationId: Number(enrollment.organization_id || 0),
+        },
+    };
 }
 
 async function listLearningProgress({ contentId, userKey, sectionId = null }) {
@@ -549,7 +570,14 @@ async function createXapiStatement({
     const courseId = await resolveCourseId(contentId);
     const enrollment = user && courseId ? await resolveEnrollment(user.id, courseId) : null;
     if (!user || !courseId || !enrollment?.id) {
-        return null;
+        return { row: null, reason: 'ENROLLMENT_REQUIRED' };
+    }
+
+    const access = await evaluateEnrollmentLearningAccess({
+        enrollmentId: enrollment.id,
+    });
+    if (!access?.allowed) {
+        return { row: null, reason: access?.reason || 'LEARNING_ACCESS_DENIED' };
     }
 
     if (contentId) {
@@ -584,7 +612,7 @@ async function createXapiStatement({
         },
     });
 
-    return row;
+    return { row, reason: null };
 }
 
 function normalizeStatementFromRow(row) {

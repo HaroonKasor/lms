@@ -349,7 +349,7 @@ export default function UserCoursesView() {
         <div className="min-h-screen font-['Outfit',sans-serif] text-[#052143] flex flex-col" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
             <Navbar />
 
-            <main className="flex-1 w-full max-w-[1780px] mx-auto px-6 py-12 flex flex-col lg:flex-row gap-12 relative z-10">
+            <main className="flex-1 w-full max-w-[1780px] mx-auto px-4 sm:px-6 py-8 sm:py-12 flex flex-col lg:flex-row gap-8 lg:gap-12 relative z-10">
                 <aside className="w-full lg:w-[408px] shrink-0 flex flex-col gap-12">
                     <div className={`entry-fade ${animateIn ? 'is-visible' : ''}`} style={{ '--entry-delay': '40ms' }}>
                         <h3 className="font-medium text-[#052143] text-[20px] mb-2 leading-[130%]">Search Now</h3>
@@ -423,10 +423,10 @@ export default function UserCoursesView() {
                 </aside>
 
                 <div className="flex-1 flex flex-col gap-8">
-                    <div className={`bg-white rounded-[16px] border border-[#D1E3FB] px-5 h-[68px] flex items-center justify-between shadow-sm entry-fade ${animateIn ? 'is-visible' : ''}`} style={{ '--entry-delay': '180ms' }}>
+                    <div className={`bg-white rounded-[16px] border border-[#D1E3FB] px-4 sm:px-5 py-3 sm:h-[68px] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm entry-fade ${animateIn ? 'is-visible' : ''}`} style={{ '--entry-delay': '180ms' }}>
                         <p className="text-[#6B778B] text-[14px] leading-[130%]">Showing <span className="text-[#052143]">{pagedCourses.length} Courses</span> of {filteredCourses.length}</p>
 
-                        <div className="flex items-center gap-8">
+                        <div className="flex items-center gap-4 sm:gap-8">
                             <div className="flex gap-2">
                                 <button
                                     onClick={() => setViewMode('grid')}
@@ -467,7 +467,7 @@ export default function UserCoursesView() {
                     ) : pagedCourses.length === 0 ? (
                         <div className="bg-white border border-[#D1E3FB] rounded-xl p-10 text-center text-[#6B778B]">No courses found</div>
                     ) : (
-                        <div className={`w-full max-w-[1272px] ${viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-x-[24px] gap-y-[48px]' : 'flex flex-col gap-6'}`}>
+                        <div className={`w-full ${viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-x-[24px] gap-y-[48px]' : 'flex flex-col gap-6'}`}>
                             {pagedCourses.map((item, index) => {
                                 const course = item.course;
                                 const enrolled = item.enrolled;
@@ -492,16 +492,26 @@ export default function UserCoursesView() {
                                 const isPendingApproval = item.enrollmentStatus === 'PENDING';
                                 const statusLabel = isPendingApproval ? 'Pending' : (enrolled ? 'Enrolled' : 'Available');
                                 const statusClass = isPendingApproval ? 'text-[#F59E0B]' : (enrolled ? 'text-[#8E8E93]' : 'text-[#687EFF]');
+                                const instructorExperience = String(course?.instructorExperience || '').trim();
+                                const sectionLabel = String(
+                                    item?.enrollment?.section?.name
+                                    || item?.enrollment?.section?.title
+                                    || item?.enrollment?.sectionName
+                                    || ''
+                                ).trim();
+                                const instructorName = String(course?.instructor || '').trim();
+                                const displayInstructor = instructorName || 'Instructor';
+                                const displayInstructorMeta = sectionLabel ? `Section: ${sectionLabel}` : (instructorExperience || '-');
 
                                 return (
                                     <div
                                         key={course.id}
-                                        className={`bg-white rounded-[20px] border border-[#eaedf5] hover:shadow-[0_12px_32px_rgba(0,0,0,0.08)] transition-all duration-300 box-border p-[20px] flex entry-fade course-card ${animateIn ? 'is-visible' : ''} ${viewMode === 'grid' ? 'w-full flex-col' : 'w-full flex-row gap-5 items-start'}`}
+                                        className={`bg-white rounded-[20px] border border-[#eaedf5] hover:shadow-[0_12px_32px_rgba(0,0,0,0.08)] transition-all duration-300 box-border p-[20px] flex entry-fade course-card ${animateIn ? 'is-visible' : ''} ${viewMode === 'grid' ? 'w-full flex-col' : 'w-full flex-col sm:flex-row gap-5 sm:items-start'}`}
                                         style={{ '--entry-delay': cardDelay }}
                                     >
                                         <Link
                                             href={`/courses/${course.id}`}
-                                            className={`${viewMode === 'grid' ? 'w-full h-[230px]' : 'w-[260px] h-[160px] shrink-0'} rounded-[16px] bg-[#D9D9D9] overflow-hidden block cursor-pointer shrink-0`}
+                                            className={`${viewMode === 'grid' ? 'w-full h-[230px]' : 'w-full sm:w-[260px] h-[190px] sm:h-[160px] shrink-0'} rounded-[16px] bg-[#D9D9D9] overflow-hidden block cursor-pointer shrink-0`}
                                             aria-label={`View course detail: ${course.name}`}
                                         >
                                             <img
@@ -541,7 +551,7 @@ export default function UserCoursesView() {
                                             </div>
 
                                             {/* Action & Instructor */}
-                                            <div className="flex items-center justify-between mb-[24px]">
+                                            <div className="flex flex-col gap-3 sm:gap-0 sm:flex-row sm:items-center sm:justify-between mb-[24px]">
                                                 {canStart ? (
                                                     <Link
                                                         href={learnHref}
@@ -576,19 +586,19 @@ export default function UserCoursesView() {
                                                     </button>
                                                 )}
 
-                                                <div className="flex items-center gap-[10px] shrink-0 text-right">
+                                                <div className="flex items-center gap-[10px] shrink-0 sm:text-right">
                                                     <div className="w-[42px] h-[42px] box-border rounded-full object-cover border-2 border-[#eaedf5] shrink-0 bg-[#eef1fa] text-[#687EFF] flex items-center justify-center font-bold text-[18px]">
                                                         {(course.instructor || 'I').charAt(0).toUpperCase()}
                                                     </div>
-                                                    <div className="flex flex-col justify-center items-end">
-                                                        <span className={`text-[#052143] font-medium text-[14px] leading-[130%] truncate max-w-[120px] ${containsThai(course.instructor) ? 'font-thai-sarabun' : ''}`}>{course.instructor || 'Instructor Name'}</span>
-                                                        <span className="text-[#8E8E93] font-normal text-[11px] leading-[130%] truncate max-w-[120px] mt-0.5">8+ Years Experience</span>
+                                                    <div className="flex flex-col justify-center sm:items-end">
+                                                        <span className={`text-[#052143] font-medium text-[14px] leading-[130%] truncate max-w-[180px] ${containsThai(displayInstructor) ? 'font-thai-sarabun' : ''}`}>{displayInstructor}</span>
+                                                        <span className="text-[#8E8E93] font-normal text-[11px] leading-[130%] truncate max-w-[180px] mt-0.5">{displayInstructorMeta}</span>
                                                     </div>
                                                 </div>
                                             </div>
 
                                             {/* Footer */}
-                                            <div className="flex items-center justify-between pt-[20px] border-t border-dashed border-[#eaedf5] mt-auto">
+                                            <div className="flex flex-wrap items-center justify-between gap-y-2 pt-[20px] border-t border-dashed border-[#eaedf5] mt-auto">
                                                 <div className="flex items-center gap-[6px]">
                                                     <svg className="w-[14px] h-[14px] text-[#FF3EA5]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
                                                     <span className="text-[#6B778B] font-medium text-[13px]">{formatDate(course.createdAt)}</span>
@@ -609,7 +619,7 @@ export default function UserCoursesView() {
                         </div>
                     )}
 
-                    <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-between w-full mt-10 gap-8 h-[47px]">
+                    <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-between w-full mt-10 gap-6 sm:gap-8 min-h-[47px]">
                         <div className="hidden lg:block flex-1"></div>
 
                         <div className="flex items-center gap-3 shrink-0">
@@ -643,7 +653,7 @@ export default function UserCoursesView() {
                             </button>
                         </div>
 
-                        <div className="flex-1 flex justify-end shrink-0">
+                        <div className="hidden md:flex flex-1 justify-end shrink-0">
                             <div className="w-[180px] h-[47px] relative flex items-center cursor-pointer group hover:opacity-90 transition-opacity" onClick={() => setCurrentPage((p) => Math.min(pageCount, p + 1))}>
                                 <div className="absolute left-0 w-[142px] h-[47px] rounded-full bg-[#F87A53] flex items-center justify-center z-0">
                                     <span className="font-medium text-[18px] text-white leading-[150%] relative left-[-8px]">More Course</span>

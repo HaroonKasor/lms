@@ -88,6 +88,13 @@ function buildRatingSummary(items = []) {
     };
 }
 
+async function getCourseSettings(courseId) {
+    const numericCourseId = Number(courseId);
+    if (!Number.isInteger(numericCourseId) || numericCourseId <= 0) return {};
+    const compatMaps = await getCourseCompatMaps([numericCourseId]);
+    return compatMaps?.courseSettingsByCourseId?.[String(numericCourseId)] || {};
+}
+
 export async function GET(request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -99,6 +106,10 @@ export async function GET(request) {
         if (courseId) {
             const organizationId = await ensureDefaultOrganization();
             const session = await getRequestSession(request);
+            const courseSettings = await getCourseSettings(courseId);
+            if (courseSettings?.webboard === false) {
+                return NextResponse.json({ error: 'Webboard is disabled for this course' }, { status: 403 });
+            }
 
             const reviews = await prisma.course_reviews.findMany({
                 where: {
@@ -225,6 +236,7 @@ export async function GET(request) {
             reviews.map((item) => [Number(item.enrollment_id || 0), item])
         );
         const thumbnailByCourseId = compatMaps?.thumbnailByCourseId || {};
+        const courseSettingsByCourseId = compatMaps?.courseSettingsByCourseId || {};
 
         const rows = completedEnrollments
             .map((enrollment) => {
@@ -242,6 +254,10 @@ export async function GET(request) {
                     reviewText: String(review?.review_text || ''),
                     reviewedAt: review?.created_at || null,
                 };
+            })
+            .filter((row) => {
+                const settings = courseSettingsByCourseId[String(Number(row?.courseId || 0))] || {};
+                return settings?.webboard !== false;
             })
             .filter((row) => (pendingOnly ? !row.hasReview : true));
 
@@ -307,6 +323,11 @@ export async function POST(request) {
 
         if (!enrollment) {
             return NextResponse.json({ error: 'Completed enrollment not found' }, { status: 404 });
+        }
+
+        const courseSettings = await getCourseSettings(enrollment.courseId);
+        if (courseSettings?.webboard === false) {
+            return NextResponse.json({ error: 'Webboard is disabled for this course' }, { status: 403 });
         }
 
         const saved = await prisma.course_reviews.upsert({

@@ -58,29 +58,29 @@ export default function LandingPage() {
             <Header />
 
             {/* 02. Hero Section */}
-            <section className="w-full relative z-10 overflow-hidden min-h-[680px]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
+            <section className="relative z-10 w-full overflow-hidden min-h-[620px] lg:min-h-[680px]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
                 {/* Decorative background elements */}
                 <div className="absolute left-0 top-0 w-full h-full pointer-events-none">
                     {/* Pink/purple gradient blobs */}
-                    <div className="absolute left-[-5%] bottom-[5%] w-[350px] h-[350px] rounded-full opacity-25" style={{ background: 'radial-gradient(circle, rgba(248,83,212,0.4) 0%, transparent 70%)' }}></div>
-                    <div className="absolute right-[15%] top-[5%] w-[200px] h-[200px] rounded-full opacity-10" style={{ background: 'radial-gradient(circle, rgba(248,83,212,0.3) 0%, transparent 70%)' }}></div>
-                    <div className="absolute left-[30%] top-[10%] w-[150px] h-[150px] rounded-full opacity-10" style={{ background: 'radial-gradient(circle, rgba(255,194,36,0.3) 0%, transparent 70%)' }}></div>
+                    <div className="absolute left-[-15%] bottom-[5%] h-[260px] w-[260px] rounded-full opacity-25 sm:left-[-5%] sm:h-[350px] sm:w-[350px]" style={{ background: 'radial-gradient(circle, rgba(248,83,212,0.4) 0%, transparent 70%)' }}></div>
+                    <div className="absolute right-[15%] top-[5%] h-[140px] w-[140px] rounded-full opacity-10 sm:h-[200px] sm:w-[200px]" style={{ background: 'radial-gradient(circle, rgba(248,83,212,0.3) 0%, transparent 70%)' }}></div>
+                    <div className="absolute left-[30%] top-[10%] h-[100px] w-[100px] rounded-full opacity-10 sm:h-[150px] sm:w-[150px]" style={{ background: 'radial-gradient(circle, rgba(255,194,36,0.3) 0%, transparent 70%)' }}></div>
                     {/* Bottom pink stripe */}
-                    <div className="absolute bottom-0 left-[-100px] right-[-100px] h-[132px] bg-[rgba(248,83,212,0.07)] border-t-2 border-b-2 border-[rgba(248,83,212,0.26)]"></div>
+                    <div className="absolute bottom-0 left-[-100px] right-[-100px] hidden h-[132px] border-y-2 border-[rgba(248,83,212,0.26)] bg-[rgba(248,83,212,0.07)] sm:block"></div>
                 </div>
 
-                <div className="w-full max-w-[1290px] mx-auto px-6 pt-12 lg:pt-16 pb-0 flex flex-col lg:flex-row items-end relative z-10">
+                <div className="relative z-10 mx-auto flex w-full max-w-[1290px] flex-col items-center px-4 pb-0 pt-10 sm:px-6 lg:flex-row lg:items-end lg:pt-16">
 
                     {/* Left Content */}
-                    <div className="flex-1 flex flex-col items-start pb-16 lg:pb-24">
+                    <div className="flex flex-1 flex-col items-center pb-8 text-center lg:items-start lg:pb-24 lg:text-left">
                         {/* Light bulb icon */}
-                        <FadeIn direction="right" delay={80} className="mb-8 mix-blend-multiply">
-                            <img src="/images/idea-icon.png" alt="idea" className="w-[80px] h-[80px] object-contain mix-blend-multiply" />
+                        <FadeIn direction="right" delay={80} className="mb-6 mix-blend-multiply lg:mb-8">
+                            <img src="/images/idea-icon.png" alt="idea" className="h-[64px] w-[64px] object-contain mix-blend-multiply sm:h-[80px] sm:w-[80px]" />
                         </FadeIn>
 
-                        <FadeIn direction="right" className="flex flex-col items-start">
+                        <FadeIn direction="right" className="flex flex-col items-center lg:items-start">
                             {/* Headline */}
-                            <h1 className="text-[#052143] font-bold italic text-[52px] lg:text-[68px] leading-[115%] mb-6" style={{ fontFamily: "'Outfit', sans-serif" }}>
+                            <h1 className="mb-5 text-[40px] font-bold italic leading-[112%] text-[#052143] sm:text-[48px] lg:mb-6 lg:text-[68px]" style={{ fontFamily: "'Outfit', sans-serif" }}>
                                 All-In-One<br />
                                 Platform For<br />
                                 <span className="relative inline-block">
@@ -93,31 +93,43 @@ export default function LandingPage() {
                             </h1>
 
                             {/* Description */}
-                            <p className="text-[#6B778B] text-[16px] leading-[170%] max-w-[480px] mb-10 not-italic">
+                            <p className="mb-7 max-w-[520px] text-[15px] leading-[170%] text-[#6B778B] not-italic sm:mb-10 sm:text-[16px]">
                                 ผู้เชี่ยวชาญด้านระบบการเรียนรู้และบริหารสถาบัน (LMS, LRS) มากกว่า 10 ปี
                                 ช่วยให้องค์กรของคุณเรียนรู้อย่างมีประสิทธิภาพ ด้วยระบบที่ออกแบบเพื่อคุณ
                             </p>
 
                             {/* Buttons */}
-                            <div className="flex flex-wrap items-center gap-4 not-italic">
-                                <Link href="/register" className="flex items-center gap-2 px-7 py-3.5 bg-[#F87A53] text-white rounded-full text-[16px] font-medium hover:opacity-90 transition-opacity relative overflow-hidden shadow-[0_4px_15px_rgba(248,122,83,0.3)]">
+                            <div className="flex flex-wrap items-center justify-center gap-3 not-italic lg:justify-start lg:gap-4">
+                                <Link href="/register" className="relative flex min-w-[180px] items-center justify-center gap-2 overflow-hidden rounded-full bg-[#F87A53] px-6 py-3.5 text-[15px] font-medium text-white shadow-[0_4px_15px_rgba(248,122,83,0.3)] transition-opacity hover:opacity-90 sm:min-w-0 sm:px-7 sm:text-[16px]">
                                     <span className="relative z-10 text-lg">»</span>
                                     <span className="relative z-10">Get Started</span>
                                     <div className="absolute right-[6px] top-1/2 -translate-y-1/2 w-[36px] h-[36px] bg-white/20 rounded-full"></div>
                                 </Link>
 
-                                <button className="flex items-center gap-2 px-5 py-3.5 bg-white border border-[#D1E3FB] rounded-full text-[#052143] text-[16px] font-medium hover:border-[#687EFF] transition-colors shadow-sm">
+                                <button className="flex items-center gap-2 rounded-full border border-[#D1E3FB] bg-white px-4 py-3 text-[14px] font-medium text-[#052143] shadow-sm transition-colors hover:border-[#687EFF] sm:px-5 sm:py-3.5 sm:text-[16px]">
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="#FFC224"><path d="M12 2l2.09 6.26L20.5 9.27l-4.91 3.82L17.18 20 12 16.77 6.82 20l1.59-6.91L3.5 9.27l6.41-1.01L12 2z"/></svg>
                                     <span className="font-semibold italic">Quality Course</span>
                                 </button>
 
-                                <button className="flex items-center gap-2 px-5 py-3.5 bg-white border border-[#D1E3FB] rounded-full text-[#052143] text-[16px] font-medium hover:border-[#687EFF] transition-colors shadow-sm">
+                                <button className="flex items-center gap-2 rounded-full border border-[#D1E3FB] bg-white px-4 py-3 text-[14px] font-medium text-[#052143] shadow-sm transition-colors hover:border-[#687EFF] sm:px-5 sm:py-3.5 sm:text-[16px]">
                                     <svg width="18" height="18" fill="none" stroke="#F87A53" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
                                     <span className="font-semibold italic">Suitable Price</span>
                                 </button>
                             </div>
                         </FadeIn>
                     </div>
+
+                    <FadeIn direction="up" delay={220} className="relative mb-8 w-full max-w-[420px] lg:hidden">
+                        <img
+                            src="/images/hero-student.png"
+                            alt="Student"
+                            className="mx-auto w-full max-w-[320px] object-contain"
+                        />
+                        <div className="absolute right-2 top-2 rounded-xl bg-white/95 px-3 py-2 shadow-[0_6px_20px_rgba(0,0,0,0.12)]">
+                            <p className="text-[12px] font-bold text-[#052143]">2000+</p>
+                            <p className="text-[10px] text-[#687EFF]">Enrolled Students</p>
+                        </div>
+                    </FadeIn>
 
                     {/* Right Image & Decorations */}
                     <div className="flex-1 relative w-full min-h-[550px] lg:min-h-[620px] hidden lg:flex items-end justify-center">
@@ -177,14 +189,14 @@ export default function LandingPage() {
 
 
             {/* Discover the Platform Section */}
-            <section className="w-full relative z-20 py-20 bg-[#F6F8FF]">
-                <div className="max-w-[1290px] mx-auto px-6">
+            <section className="w-full relative z-20 bg-[#F6F8FF] py-14 sm:py-20">
+                <div className="mx-auto max-w-[1290px] px-4 sm:px-6">
                     <FadeIn direction="up">
                         <div className="flex flex-col lg:flex-row items-center gap-16">
                             {/* Left Content */}
                             <div className="flex-1">
                                 <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">About us</span>
-                                <h2 className="text-[#052143] font-bold italic text-[36px] lg:text-[42px] leading-[130%] mb-10">
+                                <h2 className="mb-8 text-[30px] font-bold italic leading-[130%] text-[#052143] sm:mb-10 sm:text-[36px] lg:text-[42px]">
                                     Discover the Platform That<br />
                                     Redefines <span className="text-[#F87A53] relative inline-block">Learning
                                         <svg className="absolute -bottom-2 left-0 w-full" height="6" viewBox="0 0 200 6" fill="none" preserveAspectRatio="none"><path d="M1 4C40 1 80 1 100 3C140 5 180 4 199 2" stroke="#3C59FC" strokeWidth="2" strokeLinecap="round" /></svg>
@@ -223,21 +235,21 @@ export default function LandingPage() {
             </section>
 
             {/* Our Story Section */}
-            <section className="w-full relative z-20 py-20 bg-white">
-                <div className="max-w-[1290px] mx-auto px-6">
+            <section className="w-full relative z-20 bg-white py-14 sm:py-20">
+                <div className="mx-auto max-w-[1290px] px-4 sm:px-6">
                     <FadeIn direction="up">
                         <div className="flex flex-col lg:flex-row items-center gap-16">
                             {/* Left - Image with Stats */}
-                            <div className="flex-1 relative">
-                                <div className="rounded-[20px] overflow-hidden w-[340px] h-[400px]">
+                            <div className="relative flex-1">
+                                <div className="h-[320px] w-full max-w-[340px] overflow-hidden rounded-[20px] sm:h-[400px]">
                                     <img src="https://images.unsplash.com/photo-1543269865-cbf427effbad?w=340&h=400&fit=crop" alt="Our Story" className="w-full h-full object-cover rounded-[20px] border-4 border-[#687EFF]" />
                                 </div>
                                 {/* Stats badges */}
-                                <div className="absolute -bottom-4 left-[50px] bg-white shadow-[0_4px_20px_rgba(0,0,0,0.08)] rounded-2xl px-6 py-4 flex items-center gap-3 z-10">
+                                <div className="absolute -bottom-4 left-3 z-10 flex items-center gap-3 rounded-2xl bg-white px-4 py-3 shadow-[0_4px_20px_rgba(0,0,0,0.08)] sm:left-[50px] sm:px-6 sm:py-4">
                                     <span className="text-[#687EFF] font-bold text-[32px]">10+</span>
                                     <span className="text-[#6B778B] text-[14px] leading-tight">Years of<br />Experience</span>
                                 </div>
-                                <div className="absolute top-[30px] -right-[20px] bg-white shadow-[0_4px_20px_rgba(0,0,0,0.08)] rounded-2xl px-6 py-4 flex items-center gap-3 z-10">
+                                <div className="absolute -right-2 top-3 z-10 hidden items-center gap-3 rounded-2xl bg-white px-5 py-3 shadow-[0_4px_20px_rgba(0,0,0,0.08)] sm:flex sm:-right-[20px] sm:top-[30px] sm:px-6 sm:py-4">
                                     <span className="text-[#F87A53] font-bold text-[32px]">30+</span>
                                     <span className="text-[#6B778B] text-[14px] leading-tight">Expert<br />Instructors</span>
                                 </div>
@@ -246,14 +258,14 @@ export default function LandingPage() {
                             {/* Right Content */}
                             <div className="flex-1">
                                 <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">Our Story</span>
-                                <h2 className="text-[#052143] font-bold italic text-[36px] lg:text-[42px] leading-[130%] mb-6">
+                                <h2 className="mb-6 text-[30px] font-bold italic leading-[130%] text-[#052143] sm:text-[36px] lg:text-[42px]">
                                     Our Story: Built On Values,<br />
                                     Driven By <span className="text-[#F87A53] relative inline-block">Innovation
                                         <svg className="absolute -bottom-2 left-0 w-full" height="6" viewBox="0 0 200 6" fill="none" preserveAspectRatio="none"><path d="M1 4C40 1 80 1 100 3C140 5 180 4 199 2" stroke="#3C59FC" strokeWidth="2" strokeLinecap="round" /></svg>
                                     </span>
                                 </h2>
 
-                                <div className="grid grid-cols-2 gap-6 mb-8">
+                                <div className="mb-8 grid grid-cols-1 gap-6 sm:grid-cols-2">
                                     <div>
                                         <h4 className="text-[#052143] font-medium text-[16px] mb-2 flex items-center gap-1.5">
                                             <svg width="15" height="15" fill="none" stroke="#687EFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -281,8 +293,8 @@ export default function LandingPage() {
             </section>
 
             {/* SkillUp's Courses Section */}
-            <section className="w-full relative z-20 py-20" style={{ background: 'linear-gradient(180deg, #F6F8FF 0%, #FFFFFF 100%)' }}>
-                <div className="max-w-[1290px] mx-auto px-6">
+            <section className="w-full relative z-20 py-14 sm:py-20" style={{ background: 'linear-gradient(180deg, #F6F8FF 0%, #FFFFFF 100%)' }}>
+                <div className="mx-auto max-w-[1290px] px-4 sm:px-6">
                     <FadeIn direction="up">
                         <div className="text-center mb-14">
                             <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">Our Courses</span>
@@ -327,7 +339,7 @@ export default function LandingPage() {
             </section>
 
             {/* Our Clients */}
-            <section className="w-full relative z-20 py-20 bg-white overflow-hidden">
+            <section className="w-full relative z-20 overflow-hidden bg-white py-14 sm:py-20">
                 <style>{`
                     @keyframes infinite-scroll {
                         0% { transform: translateX(0); }
@@ -358,10 +370,10 @@ export default function LandingPage() {
                             <div className="absolute left-0 top-0 bottom-0 w-[100px] md:w-[200px] z-10 bg-gradient-to-r from-white to-transparent pointer-events-none"></div>
                             <div className="absolute right-0 top-0 bottom-0 w-[100px] md:w-[200px] z-10 bg-gradient-to-l from-white to-transparent pointer-events-none"></div>
 
-                            <div className="flex items-center gap-[100px] animate-marquee">
+                            <div className="flex items-center gap-[48px] md:gap-[100px] animate-marquee">
                                 {/* Duplicate list for seamless scrolling */}
                                 {[...Array(3)].map((_, i) => (
-                                    <div key={i} className="flex items-center gap-[100px] pl-[100px]">
+                                    <div key={i} className="flex items-center gap-[48px] pl-[48px] md:gap-[100px] md:pl-[100px]">
                                         {[
                                             'client_logo_02_bluepeak.png',
                                             'client_logo_01_novalearn.png',
@@ -371,7 +383,7 @@ export default function LandingPage() {
                                             'client_logo_04_cloudmint.png',
                                             'client_logo_03_atlasworks.png'
                                         ].map((img, idx) => (
-                                            <div key={idx} className="flex-none w-[213px] h-[80px] grayscale-[50%] hover:grayscale-0 opacity-80 hover:opacity-100 transition-all duration-300">
+                                            <div key={idx} className="h-[68px] w-[170px] flex-none opacity-80 grayscale-[50%] transition-all duration-300 hover:grayscale-0 hover:opacity-100 sm:h-[80px] sm:w-[213px]">
                                                 <img
                                                     src={`/${img}`}
                                                     alt={`Client ${idx + 1}`}
@@ -388,13 +400,13 @@ export default function LandingPage() {
             </section>
 
             {/* Pick A Course Section */}
-            <section className="w-full relative z-20 py-20 bg-[#F6F8FF]">
-                <div className="max-w-[1290px] mx-auto px-6">
+            <section className="w-full relative z-20 bg-[#F6F8FF] py-14 sm:py-20">
+                <div className="mx-auto max-w-[1290px] px-4 sm:px-6">
                     <FadeIn direction="up">
-                        <div className="flex items-end justify-between mb-14">
+                        <div className="mb-10 flex flex-col items-start justify-between gap-4 sm:mb-14 md:flex-row md:items-end">
                             <div>
                                 <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">Featured</span>
-                                <h2 className="text-[#052143] font-bold italic text-[36px] lg:text-[42px] leading-[130%]">
+                                <h2 className="text-[30px] font-bold italic leading-[130%] text-[#052143] sm:text-[36px] lg:text-[42px]">
                                     Pick A Course To Get Started
                                 </h2>
                             </div>
@@ -432,12 +444,12 @@ export default function LandingPage() {
             </section>
 
             {/* Stats Bar - Blue Gradient */}
-            <section className="w-full relative z-20 py-16 bg-[#687EFF] overflow-hidden">
+            <section className="w-full relative z-20 overflow-hidden bg-[#687EFF] py-12 sm:py-16">
                 <div className="absolute inset-0 opacity-20">
                     <div className="absolute top-0 left-[10%] w-[200px] h-[200px] rounded-full bg-white/20 blur-[80px]"></div>
                     <div className="absolute bottom-0 right-[20%] w-[300px] h-[300px] rounded-full bg-white/10 blur-[100px]"></div>
                 </div>
-                <div className="max-w-[1290px] mx-auto px-6 relative z-10">
+                <div className="relative z-10 mx-auto max-w-[1290px] px-4 sm:px-6">
                     <FadeIn direction="up">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
                             {[
@@ -447,7 +459,7 @@ export default function LandingPage() {
                                 { value: 100, suffix: '%', label: 'Satisfaction Rate' },
                             ].map((stat, i) => (
                                 <div key={i} className="text-center">
-                                    <div className="text-white text-[42px] md:text-[52px] font-bold leading-[100%] mb-2">
+                                    <div className="mb-2 text-[34px] font-bold leading-[100%] text-white sm:text-[42px] md:text-[52px]">
                                         <NumberCounter end={stat.value} suffix={stat.suffix} />
                                     </div>
                                     <p className="text-white/80 text-[16px] font-normal">{stat.label}</p>
@@ -459,12 +471,12 @@ export default function LandingPage() {
             </section>
 
             {/* Testimonials */}
-            <section className="w-full relative z-20 py-20 bg-white">
-                <div className="max-w-[1290px] mx-auto px-6">
+            <section className="w-full relative z-20 bg-white py-14 sm:py-20">
+                <div className="mx-auto max-w-[1290px] px-4 sm:px-6">
                     <FadeIn direction="up">
                         <div className="text-center mb-14">
                             <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">Testimonials</span>
-                            <h2 className="text-[#052143] font-bold italic text-[36px] lg:text-[42px] leading-[130%]">
+                            <h2 className="text-[30px] font-bold italic leading-[130%] text-[#052143] sm:text-[36px] lg:text-[42px]">
                                 What They Say About Us
                             </h2>
                         </div>
@@ -472,7 +484,7 @@ export default function LandingPage() {
 
                     <FadeIn direction="up" delay={120}>
                         <div className="max-w-[800px] mx-auto">
-                            <div className="bg-white border border-[#D1E3FB] rounded-[20px] p-10 relative">
+                            <div className="relative rounded-[20px] border border-[#D1E3FB] bg-white p-6 sm:p-10">
                             <div className="text-[#687EFF] mb-6">
                                 <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24"><path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10h-9.983zm-14.017 0v-7.391c0-5.704 3.748-9.57 9-10.609l.996 2.151c-2.433.917-3.996 3.638-3.996 5.849h3.983v10h-9.983z" /></svg>
                             </div>

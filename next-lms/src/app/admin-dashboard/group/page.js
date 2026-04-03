@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import AdminShell from '@/components/admin/layout/AdminShell';
 import { consumeAdminFlash } from '@/lib/admin/flash';
-import { listGroups, deleteGroup } from '@/services/admin/groupService';
+import { listGroups } from '@/services/admin/groupService';
 import {
     AdminCard,
     AdminEntriesControl,
@@ -115,31 +115,13 @@ export default function GroupPage() {
     const startRow = filteredGroups.length === 0 ? 0 : (currentPage - 1) * entries + 1;
     const endRow = Math.min(currentPage * entries, filteredGroups.length);
 
-    const handleDelete = async (groupId) => {
-        const target = groups.find((group) => group.id === groupId);
-        if (!target) return;
-        if (target.isSystemDefault) {
-            pushToast('error', 'Default role groups cannot be deleted.', 'Protected');
-            return;
-        }
-        if (!window.confirm(`Delete group ${target.name}?`)) return;
-        try {
-            await deleteGroup(groupId);
-            pushToast('success', `Deleted ${target.name} successfully.`, 'Deleted');
-            await loadGroupDirectory();
-        } catch (error) {
-            console.error(error);
-            pushToast('error', error?.message || 'Unable to delete group.', 'Delete failed');
-        }
-    };
-
     return (
         <AdminShell>
             <AdminToastStack toasts={toasts} onDismiss={dismissToast} />
             <div className="flex w-full flex-col gap-6 font-outfit">
                 <AdminPageHeader
                     title="Group Management"
-                    description="Manage role groups and connect them with User Management."
+                    description="System role groups are fixed (Administrator, Instructor, Learner) and connected with User Management."
                 />
 
                 <AdminCard
@@ -172,7 +154,7 @@ export default function GroupPage() {
                                     <AdminTh className="w-[220px]">Description</AdminTh>
                                     <AdminTh className="w-[120px] text-center">Status</AdminTh>
                                     <AdminTh className="w-[200px]">Role</AdminTh>
-                                    <AdminTh className="w-[140px] text-center">Tools</AdminTh>
+                                    <AdminTh className="w-[90px] text-center">Tools</AdminTh>
                                 </tr>
                             </AdminTableHead>
                             <tbody>
@@ -198,7 +180,7 @@ export default function GroupPage() {
                                             </div>
                                         </AdminTd>
                                         <AdminTd>
-                                            <div className="flex items-center justify-center gap-2">
+                                            <div className="flex items-center justify-center">
                                                 <Link
                                                     href={`/admin-dashboard/manage-user/users?groupCode=${encodeURIComponent(row.code)}&groupName=${encodeURIComponent(row.name)}`}
                                                     className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-sky-200 bg-white text-[#5BC0DE] transition hover:bg-sky-50 hover:text-[#46b8da]"
@@ -211,26 +193,6 @@ export default function GroupPage() {
                                                         <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                                                     </svg>
                                                 </Link>
-                                                <Link
-                                                    href={`/admin-dashboard/group/edit/${row.id}`}
-                                                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#DDE4FF] bg-white text-[#687EFF] transition hover:bg-[#F3F5FF] hover:text-[#5A6FE0]"
-                                                    title="Edit"
-                                                >
-                                                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" /></svg>
-                                                </Link>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleDelete(row.id)}
-                                                    className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition ${
-                                                        row.isSystemDefault
-                                                            ? 'cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400'
-                                                            : 'border-rose-200 bg-white text-rose-500 hover:bg-rose-50 hover:text-rose-700'
-                                                    }`}
-                                                    title={row.isSystemDefault ? 'Default role groups cannot be deleted' : 'Delete'}
-                                                    disabled={row.isSystemDefault}
-                                                >
-                                                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2"><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
-                                                </button>
                                             </div>
                                         </AdminTd>
                                     </tr>

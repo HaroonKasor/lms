@@ -2,7 +2,6 @@ import prisma from '@/lib/prisma';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
 import {
     defaultGroupCodeFromEnterpriseRoleCode,
-    getRoleOptionByEnterpriseRoleCode,
     GROUP_ROLE_OPTIONS,
     inferEnterpriseRoleCodeFromGroup,
     normalizeEnterpriseRoleCode,
@@ -166,20 +165,6 @@ async function ensureDefaultRoleGroupsInDb(organizationId) {
     return groups;
 }
 
-function ensureUniqueRoleOrThrow(groups, roleCode, excludeId = null) {
-    const normalizedRoleCode = normalizeRoleCode(roleCode);
-    const duplicated = groups.find((group) => (
-        normalizeRoleCode(group?.roleCode) === normalizedRoleCode
-        && String(group?.id || '') !== String(excludeId || '')
-    ));
-    if (duplicated) {
-        const option = getRoleOptionByEnterpriseRoleCode(normalizedRoleCode);
-        const err = new Error(`${option.label} default group already exists`);
-        err.status = 409;
-        throw err;
-    }
-}
-
 function ensureUniqueCodeOrThrow(groups, code, excludeId = null) {
     const normalized = String(code || '').trim().toUpperCase();
     if (!normalized) return;
@@ -226,7 +211,8 @@ function uniqueRoleList(values = []) {
 
 export async function listGroupsFromDb() {
     const organizationId = await ensureDefaultOrganization();
-    const groups = await ensureDefaultRoleGroupsInDb(organizationId);
+    const groups = (await ensureDefaultRoleGroupsInDb(organizationId))
+        .filter((group) => Boolean(group?.isSystemDefault));
     return { organizationId, groups };
 }
 
@@ -274,42 +260,10 @@ export async function getGroupByIdFromDb(id) {
 }
 
 export async function createGroupInDb(payload) {
-    const organizationId = await ensureDefaultOrganization();
-    const existingGroups = await ensureDefaultRoleGroupsInDb(organizationId);
-
-    const group = toGroupShape(payload);
-    if (!group.name) {
-        const err = new Error('Group name is required');
-        err.status = 400;
-        throw err;
-    }
-    if (!group.description) {
-        const err = new Error('Description is required');
-        err.status = 400;
-        throw err;
-    }
-    if (!group.roleCode) {
-        const err = new Error('Role is required');
-        err.status = 400;
-        throw err;
-    }
-
-    ensureUniqueCodeOrThrow(existingGroups, group.code);
-    ensureUniqueRoleOrThrow(existingGroups, group.roleCode);
-    group.id = nextGroupId(existingGroups);
-    group.isSystemDefault = false;
-
-    await prisma.learningAsset.create({
-        data: {
-            organization_id: organizationId,
-            assetType: GROUP_ASSET_TYPE,
-            title: group.name,
-            storagePath: `${GROUP_STORAGE_PREFIX}${group.id}`,
-            metadataJson: group,
-        },
-    });
-
-    return group;
+    void payload;
+    const err = new Error('Creating additional groups is disabled. System role groups are fixed.');
+    err.status = 403;
+    throw err;
 }
 
 export async function updateGroupInDb(id, payload) {
@@ -329,9 +283,15 @@ export async function updateGroupInDb(id, payload) {
         err.status = 404;
         throw err;
     }
+    if (!current.isSystemDefault) {
+        const err = new Error('Only system role groups can be managed.');
+        err.status = 403;
+        throw err;
+    }
 
     const nextGroup = toGroupShape(payload, current);
     nextGroup.id = targetId;
+    nextGroup.isActive = true;
 
     if (!nextGroup.name) {
         const err = new Error('Group name is required');
@@ -360,7 +320,6 @@ export async function updateGroupInDb(id, payload) {
     }
 
     ensureUniqueCodeOrThrow(groups, nextGroup.code, targetId);
-    ensureUniqueRoleOrThrow(groups, nextGroup.roleCode, targetId);
     nextGroup.isSystemDefault = Boolean(current.isSystemDefault);
 
     const storagePath = `${GROUP_STORAGE_PREFIX}${targetId}`;

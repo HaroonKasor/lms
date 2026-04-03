@@ -127,6 +127,19 @@ function normalizeSectionGroupsValue(value = '') {
     return 'LEARNER';
 }
 
+function mapLegacyStatusToPublishStatus(status = '') {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'active') return 'published';
+    if (normalized === 'inactive') return 'draft';
+    if (normalized === 'archived') return 'archived';
+    return 'draft';
+}
+
+function mapLegacyPublicToVisibility(isPublic) {
+    if (typeof isPublic === 'boolean') return isPublic ? 'public' : 'private';
+    return 'organization';
+}
+
 export default function CourseManagementPage() {
     const searchParams = useSearchParams();
     const thumbnailInputRef = useRef(null);
@@ -134,14 +147,12 @@ export default function CourseManagementPage() {
     const getDefaultCourseForm = () => ({
         courseCode: '', name: '', nameEn: '', thumbnail: '', detail: '',
         registerDateFrom: '', registerDateTo: '', registerUnlimit: false,
-        isModule: false, selfLearning: true, onlineClassroom: false,
-        liveChat: false, offlineClassroom: false, collaborate: false,
-        tincanId: '', tincanCondition: '',
+        tincanId: '', tincanCondition: 'all_completed',
         durationHours: 0, durationMinutes: 0,
         maxLearner: 1, maxLearnerUnlimit: false, lessons: 0,
         status: '', isPublic: null, webboard: null,
         autoApprove: null, certificate: null, autoCert: null,
-        printCert: null, category: '', categoryId: '', prerequisites: [], instructor: '',
+        category: '', categoryId: '', prerequisites: [], instructor: '', instructorExperience: '',
     });
     const getDefaultSectionForm = () => ({
         sessionCode: '', name: '', detail: '',
@@ -149,7 +160,7 @@ export default function CourseManagementPage() {
         learnDateTo: '', learnDateUnlimit: true,
         maxLearner: 0, maxLearnerUnlimit: true,
         status: '', isPublic: null, autoApprove: null,
-        certificate: null, autoCert: null, printCert: null,
+        certificate: null, autoCert: null,
         cohortModule: false, groups: 'LEARNER',
     });
 
@@ -203,7 +214,6 @@ export default function CourseManagementPage() {
         return {
             certificate: hasCertificate,
             autoCert: hasCertificate ? Boolean(resolvedAutoCert) : false,
-            printCert: hasCertificate ? Boolean(selectedCourse?.printCert) : false,
         };
     }, [selectedCourse]);
 
@@ -489,7 +499,6 @@ export default function CourseManagementPage() {
                 : (section?.status === 'public' ? true : false),
             certificate: certificateDefaults.certificate,
             autoCert: certificateDefaults.autoCert,
-            printCert: certificateDefaults.printCert,
         });
         setView('SECTION_CREATE');
     };
@@ -500,6 +509,7 @@ export default function CourseManagementPage() {
             ...getDefaultCourseForm(),
             ...course,
             categoryId: course.categoryId ? String(course.categoryId) : '',
+            tincanCondition: String(course?.tincanCondition || 'all_completed').trim() || 'all_completed',
             prerequisites: Array.isArray(course.prerequisites)
                 ? course.prerequisites
                 : String(course.prerequisites || '').split('|').map((v) => v.trim()).filter(Boolean),
@@ -532,7 +542,14 @@ export default function CourseManagementPage() {
         setLoading(true);
         try {
             const isEditMode = Boolean(editingCourseId);
-            const payloadBase = { ...courseForm, courseCode: normalizedCourseCode };
+            const publishStatus = mapLegacyStatusToPublishStatus(courseForm.status);
+            const visibility = mapLegacyPublicToVisibility(courseForm.isPublic);
+            const payloadBase = {
+                ...courseForm,
+                courseCode: normalizedCourseCode,
+                publishStatus,
+                visibility,
+            };
             const payload = isEditMode ? { ...payloadBase, id: editingCourseId } : payloadBase;
             const res = await fetch('/api/courses', {
                 method: isEditMode ? 'PUT' : 'POST',
@@ -865,67 +882,9 @@ export default function CourseManagementPage() {
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-center mb-0.5">
                     <label className="sm:w-[220px] text-right shrink-0">Module</label>
-                    <input
-                        type="checkbox"
-                        checked={courseForm.isModule}
-                        onChange={(e) => setCourseForm({ ...courseForm, isModule: e.target.checked })}
-                        disabled
-                        className="w-4 h-4 accent-[#2EB89B] border-gray-300 cursor-not-allowed opacity-50"
-                    />
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-4 sm:items-center mb-0.5">
-                    <label className="sm:w-[220px] text-right shrink-0">Self learning</label>
-                    <input
-                        type="checkbox"
-                        checked={courseForm.selfLearning}
-                        onChange={(e) => setCourseForm({ ...courseForm, selfLearning: e.target.checked })}
-                        className="w-4 h-4 accent-[#68A1A2] text-[#68A1A2] cursor-pointer appearance-none rounded-sm border border-gray-300 checked:bg-transparent checked:border-[#68A1A2] relative before:content-['✓'] before:absolute before:text-white before:font-bold before:-translate-y-[2px] before:translate-x-[1px] checked:before:text-[#68A1A2]"
-                    />
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-4 sm:items-center mb-0.5">
-                    <label className="sm:w-[220px] text-right shrink-0">Online classroom</label>
-                    <input
-                        type="checkbox"
-                        checked={courseForm.onlineClassroom}
-                        onChange={(e) => setCourseForm({ ...courseForm, onlineClassroom: e.target.checked })}
-                        disabled
-                        className="w-4 h-4 accent-[#2EB89B] border-gray-300 cursor-not-allowed opacity-50"
-                    />
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-4 sm:items-center mb-0.5">
-                    <label className="sm:w-[220px] text-right shrink-0">Live chat classroom</label>
-                    <input
-                        type="checkbox"
-                        checked={courseForm.liveChat}
-                        onChange={(e) => setCourseForm({ ...courseForm, liveChat: e.target.checked })}
-                        disabled
-                        className="w-4 h-4 accent-[#2EB89B] border-gray-300 cursor-not-allowed opacity-50"
-                    />
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-4 sm:items-center mb-0.5">
-                    <label className="sm:w-[220px] text-right shrink-0">Offline classroom</label>
-                    <input
-                        type="checkbox"
-                        checked={courseForm.offlineClassroom}
-                        onChange={(e) => setCourseForm({ ...courseForm, offlineClassroom: e.target.checked })}
-                        disabled
-                        className="w-4 h-4 accent-[#2EB89B] border-gray-300 cursor-not-allowed opacity-50"
-                    />
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-4 sm:items-center mb-2">
-                    <label className="sm:w-[220px] text-right shrink-0">Collaborate</label>
-                    <input
-                        type="checkbox"
-                        checked={courseForm.collaborate}
-                        onChange={(e) => setCourseForm({ ...courseForm, collaborate: e.target.checked })}
-                        disabled
-                        className="w-4 h-4 accent-[#2EB89B] border-gray-300 cursor-not-allowed opacity-50"
-                    />
+                    <p className="text-[12px] text-gray-500">
+                        Configure per section via <span className="font-medium text-[#334155]">Cohort Module</span>.
+                    </p>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-center mb-2">
@@ -1087,7 +1046,7 @@ export default function CourseManagementPage() {
                             <input type="radio" name="c_cert" checked={courseForm.certificate === true} onChange={() => setCourseForm({ ...courseForm, certificate: true })} className="accent-[#68A1A2] w-3.5 h-3.5" /> Yes
                         </label>
                         <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input type="radio" name="c_cert" checked={courseForm.certificate === false} onChange={() => setCourseForm({ ...courseForm, certificate: false, autoCert: false, printCert: false })} className="accent-[#68A1A2] w-3.5 h-3.5" /> No
+                            <input type="radio" name="c_cert" checked={courseForm.certificate === false} onChange={() => setCourseForm({ ...courseForm, certificate: false, autoCert: false })} className="accent-[#68A1A2] w-3.5 h-3.5" /> No
                         </label>
                     </div>
                 </div>
@@ -1100,18 +1059,6 @@ export default function CourseManagementPage() {
                         </label>
                         <label className="flex items-center gap-1.5 cursor-pointer">
                             <input type="radio" name="c_aacert" checked={courseForm.autoCert === false} onChange={() => setCourseForm({ ...courseForm, autoCert: false })} className="accent-[#68A1A2] w-3.5 h-3.5" /> No
-                        </label>
-                    </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-4 sm:items-center mt-1 mb-2">
-                    <label className="sm:w-[220px] text-right shrink-0 pb-2">Print The Certificate From<br />Learning Page</label>
-                    <div className="flex gap-4 text-[13px] font-normal">
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input type="radio" name="c_ptc" checked={courseForm.printCert === true} onChange={() => setCourseForm({ ...courseForm, printCert: true, certificate: true })} className="accent-[#68A1A2] w-3.5 h-3.5" /> Yes
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input type="radio" name="c_ptc" checked={courseForm.printCert === false} onChange={() => setCourseForm({ ...courseForm, printCert: false })} className="accent-[#68A1A2] w-3.5 h-3.5" /> No
                         </label>
                     </div>
                 </div>
@@ -1168,12 +1115,19 @@ export default function CourseManagementPage() {
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-start pt-1 pb-10">
                     <label className="sm:w-[220px] text-right shrink-0 pt-2">Instructor</label>
-                    <div className="w-[300px] max-w-full">
+                    <div className="w-[300px] max-w-full space-y-2">
                         <input
                             type="text"
                             value={courseForm.instructor}
                             onChange={(e) => setCourseForm({ ...courseForm, instructor: e.target.value })}
                             placeholder="Instructor name"
+                            className="w-full border border-gray-300 rounded px-2 py-[5px] outline-none bg-white text-[13px]"
+                        />
+                        <input
+                            type="text"
+                            value={courseForm.instructorExperience}
+                            onChange={(e) => setCourseForm({ ...courseForm, instructorExperience: e.target.value })}
+                            placeholder="Instructor experience (e.g. 8+ Years Experience)"
                             className="w-full border border-gray-300 rounded px-2 py-[5px] outline-none bg-white text-[13px]"
                         />
                     </div>
@@ -1382,16 +1336,6 @@ export default function CourseManagementPage() {
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-center mt-1">
-                    <label className="sm:w-[220px] text-right shrink-0">Question set</label>
-                    <div className="flex flex-col gap-1 w-[300px]">
-                        <select className="w-full border border-gray-300 rounded px-2 py-[5px] outline-none bg-gray-100 text-gray-500">
-                            <option>-- Question set --</option>
-                        </select>
-                        <div className="h-[2px] w-full bg-[#ccc] mt-5 mb-1" />
-                    </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-4 sm:items-center mt-1">
                     <label className="sm:w-[220px] text-right shrink-0">Max Learner(Unlimit)</label>
                     <div className="flex flex-col gap-1 w-[300px]">
                         <input
@@ -1455,7 +1399,7 @@ export default function CourseManagementPage() {
                             <input type="radio" name="s_cert" checked={sectionForm.certificate === true} onChange={() => setSectionForm({ ...sectionForm, certificate: true })} className="accent-[#68A1A2] w-3.5 h-3.5" /> Yes
                         </label>
                         <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input type="radio" name="s_cert" checked={sectionForm.certificate === false} onChange={() => setSectionForm({ ...sectionForm, certificate: false, autoCert: false, printCert: false })} className="accent-[#68A1A2] w-3.5 h-3.5" /> No
+                            <input type="radio" name="s_cert" checked={sectionForm.certificate === false} onChange={() => setSectionForm({ ...sectionForm, certificate: false, autoCert: false })} className="accent-[#68A1A2] w-3.5 h-3.5" /> No
                         </label>
                     </div>
                 </div>
@@ -1468,18 +1412,6 @@ export default function CourseManagementPage() {
                         </label>
                         <label className="flex items-center gap-1.5 cursor-pointer">
                             <input type="radio" name="s_aacert" checked={sectionForm.autoCert === false} onChange={() => setSectionForm({ ...sectionForm, autoCert: false })} className="accent-[#68A1A2] w-3.5 h-3.5" /> No
-                        </label>
-                    </div>
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-4 sm:items-center mt-1.5">
-                    <label className="sm:w-[220px] text-right shrink-0 pb-2">Print The Certificate From<br />Learning Page</label>
-                    <div className="flex gap-4 text-[13px] font-normal">
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input type="radio" name="s_ptc" checked={sectionForm.printCert === true} onChange={() => setSectionForm({ ...sectionForm, printCert: true, certificate: true })} className="accent-[#68A1A2] w-3.5 h-3.5" /> Yes
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input type="radio" name="s_ptc" checked={sectionForm.printCert === false} onChange={() => setSectionForm({ ...sectionForm, printCert: false })} className="accent-[#68A1A2] w-3.5 h-3.5" /> No
                         </label>
                     </div>
                 </div>

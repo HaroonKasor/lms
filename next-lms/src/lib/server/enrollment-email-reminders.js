@@ -2,6 +2,7 @@ import prisma from '@/lib/prisma';
 import { getSectionCompatMaps } from '@/lib/server/compat-db';
 import { ensureDefaultOrganization, getUserDisplayName } from '@/lib/server/enterprise-context';
 import { hasMailConfig, sendCourseExpiryReminderEmail } from '@/lib/server/mailer';
+import { createNotification } from '@/lib/server/notifications';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REMINDER_DAYS_LEFT = 3;
@@ -118,16 +119,7 @@ function buildReminderStoragePath(enrollmentId, learnDateTo) {
 }
 
 export async function runEnrollmentExpiryReminderSweep() {
-    if (!hasMailConfig()) {
-        return {
-            success: true,
-            skipped: true,
-            reason: 'mail_not_configured',
-            scanned: 0,
-            matched: 0,
-            sent: 0,
-        };
-    }
+    const mailEnabled = hasMailConfig();
 
     const organizationId = await ensureDefaultOrganization();
     const activeEnrollments = await prisma.enrollment.findMany({
@@ -248,17 +240,40 @@ export async function runEnrollmentExpiryReminderSweep() {
     );
 
     let sent = 0;
+    let notificationsSent = 0;
     for (const item of candidates) {
         if (!item.storagePath || sentStoragePaths.has(item.storagePath)) continue;
         try {
-            await sendCourseExpiryReminderEmail({
-                to: item.learnerEmail,
-                learnerName: item.learnerName,
-                courseName: item.courseName,
-                daysLeft: item.daysLeft,
-                learnDateTo: item.learnDateTo,
-                myLearningUrl,
+            await createNotification({
+                organizationId,
+                type: 'COURSE_EXPIRING_SOON',
+                title: 'Course Near Expiry',
+                message: `"${item.courseName}" will expire in ${item.daysLeft} day${item.daysLeft === 1 ? '' : 's'}.`,
+                payload: {
+                    kind: 'course_expiring_soon',
+                    enrollmentId: item.enrollmentId,
+                    courseName: item.courseName,
+                    daysLeft: item.daysLeft,
+                    learnDateTo: item.learnDateTo,
+                    actionUrl: '/my-learning',
+                },
+                severity: 'critical',
+                category: 'COURSE',
+                recipientUserIds: [item.userId],
             });
+            notificationsSent += 1;
+
+            if (mailEnabled) {
+                await sendCourseExpiryReminderEmail({
+                    to: item.learnerEmail,
+                    learnerName: item.learnerName,
+                    courseName: item.courseName,
+                    daysLeft: item.daysLeft,
+                    learnDateTo: item.learnDateTo,
+                    myLearningUrl,
+                });
+                sent += 1;
+            }
 
             await prisma.learningAsset.create({
                 data: {
@@ -272,13 +287,13 @@ export async function runEnrollmentExpiryReminderSweep() {
                         userId: item.userId,
                         learnDateTo: item.learnDateTo,
                         daysLeft: item.daysLeft,
+                        hasEmail: mailEnabled,
                         sentAt: new Date().toISOString(),
                     },
                 },
                 select: { id: true },
             });
             sentStoragePaths.add(item.storagePath);
-            sent += 1;
         } catch (mailErr) {
             console.error('[enrollment-expiry-reminder] send failed', {
                 enrollmentId: item.enrollmentId,
@@ -293,8 +308,10 @@ export async function runEnrollmentExpiryReminderSweep() {
         success: true,
         skipped: false,
         reason: null,
+        mailEnabled,
         scanned: activeEnrollments.length,
         matched: candidates.length,
+        notificationsSent,
         sent,
     };
 }

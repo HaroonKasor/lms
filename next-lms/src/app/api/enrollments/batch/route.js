@@ -4,6 +4,11 @@ import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
 import { ensureDefaultOrganization, resolveUserId } from '@/lib/server/enterprise-context';
 import { getCourseCompatMaps, getSectionCompatMaps } from '@/lib/server/compat-db';
+import {
+    buildPrerequisiteBlockedMessage,
+    resolvePrerequisiteCourses,
+    toDisplayCourseName,
+} from '@/lib/server/enrollment-rules';
 
 const DB_ACTIVE_STATUSES = new Set(['enrolled', 'in_progress', 'completed']);
 
@@ -157,7 +162,7 @@ export async function POST(request) {
                 courseId: course.id,
                 isActive: true,
             },
-            select: { id: true },
+            select: { id: true, maxLearner: true },
             orderBy: [{ orderNo: 'asc' }, { id: 'asc' }],
         });
         const sectionCompatMaps = fallbackSection?.id
@@ -168,6 +173,9 @@ export async function POST(request) {
             fallbackSection?.id,
             sectionSettingsBySectionId
         );
+        const fallbackSectionSettings = fallbackSection?.id
+            ? (sectionSettingsBySectionId?.[String(fallbackSection.id)] || {})
+            : {};
 
         const rows = rawKeys.map((raw, index) => ({
             rowNo: index + 1,
@@ -268,6 +276,62 @@ export async function POST(request) {
         const limitEnabled = hasCourseCapacity
             && !isTruthyFlag(courseSettings?.registerUnlimit)
             && !isTruthyFlag(courseSettings?.maxLearnerUnlimit);
+        const maxSectionEnrollment = Number(fallbackSection?.maxLearner || 0);
+        const hasSectionCapacity = Number.isInteger(maxSectionEnrollment) && maxSectionEnrollment > 0;
+        const sectionLimitEnabled = hasSectionCapacity
+            && !isTruthyFlag(fallbackSectionSettings?.registerUnlimit)
+            && !isTruthyFlag(fallbackSectionSettings?.maxLearnerUnlimit);
+        const prerequisiteCourses = await resolvePrerequisiteCourses({
+            organizationId,
+            prerequisites: courseSettings?.prerequisites || [],
+            excludeCourseId: course.id,
+        });
+        const prerequisiteCourseIds = Array.from(
+            new Set(
+                prerequisiteCourses
+                    .map((item) => Number(item?.id || 0))
+                    .filter((id) => Number.isInteger(id) && id > 0)
+            )
+        );
+        const completedPrerequisiteRows = (resolvedUserIds.length > 0 && prerequisiteCourseIds.length > 0)
+            ? await prisma.enrollment.findMany({
+                where: {
+                    organization_id: organizationId,
+                    userId: { in: resolvedUserIds },
+                    courseId: { in: prerequisiteCourseIds },
+                    status: 'completed',
+                },
+                select: {
+                    userId: true,
+                    courseId: true,
+                },
+            })
+            : [];
+        const completedPrerequisiteMap = new Map();
+        for (const row of completedPrerequisiteRows) {
+            const userId = Number(row?.userId || 0);
+            const courseId = Number(row?.courseId || 0);
+            if (!Number.isInteger(userId) || userId <= 0) continue;
+            if (!Number.isInteger(courseId) || courseId <= 0) continue;
+            const current = completedPrerequisiteMap.get(userId) || new Set();
+            current.add(courseId);
+            completedPrerequisiteMap.set(userId, current);
+        }
+        let sectionActiveCount = 0;
+        if (sectionLimitEnabled && fallbackSection?.id) {
+            const activeSectionReservations = await prisma.learningProgress.findMany({
+                where: {
+                    sectionId: Number(fallbackSection.id),
+                    enrollments: {
+                        organization_id: organizationId,
+                        status: { in: Array.from(DB_ACTIVE_STATUSES) },
+                    },
+                },
+                distinct: ['enrollmentId'],
+                select: { enrollmentId: true },
+            });
+            sectionActiveCount = activeSectionReservations.length;
+        }
 
         const processedUserIds = new Set();
         const updatePayload = toEnrollmentUpdatePayload(targetStatus);
@@ -330,6 +394,32 @@ export async function POST(request) {
                 continue;
             }
 
+            const existing = existingMap.get(Number(userId)) || null;
+            const existingStatus = String(existing?.status || '').toLowerCase();
+            const hasActiveExistingEnrollment = Boolean(existing && DB_ACTIVE_STATUSES.has(existingStatus));
+            if (prerequisiteCourses.length > 0 && !hasActiveExistingEnrollment) {
+                const completedCourseIdSet = completedPrerequisiteMap.get(Number(userId)) || new Set();
+                const missingPrerequisites = prerequisiteCourses.filter((item) => !completedCourseIdSet.has(Number(item?.id || 0)));
+                if (missingPrerequisites.length > 0) {
+                    failedCount += 1;
+                    const user = userMap.get(Number(userId));
+                    results.push({
+                        rowNo: row.rowNo,
+                        input: row.input,
+                        userId: Number(userId),
+                        username: user?.username || '',
+                        fullName: getDisplayName(user),
+                        success: false,
+                        message: buildPrerequisiteBlockedMessage(missingPrerequisites),
+                        missingPrerequisites: missingPrerequisites.map((courseItem) => ({
+                            id: Number(courseItem?.id || 0),
+                            name: toDisplayCourseName(courseItem),
+                        })),
+                    });
+                    continue;
+                }
+            }
+
             if (processedUserIds.has(Number(userId))) {
                 skippedCount += 1;
                 const user = userMap.get(Number(userId));
@@ -346,8 +436,8 @@ export async function POST(request) {
                 continue;
             }
 
-            const existing = existingMap.get(Number(userId)) || null;
             const consumesSeat = limitEnabled && (!existing || !DB_ACTIVE_STATUSES.has(String(existing.status || '').toLowerCase()));
+            const consumesSectionSeat = sectionLimitEnabled && (!existing || !DB_ACTIVE_STATUSES.has(String(existing.status || '').toLowerCase()));
             if (consumesSeat && activeCount >= maxEnrollment) {
                 failedCount += 1;
                 const user = userMap.get(Number(userId));
@@ -359,6 +449,20 @@ export async function POST(request) {
                     fullName: getDisplayName(user),
                     success: false,
                     message: `Course is full (${maxEnrollment} seats)`,
+                });
+                continue;
+            }
+            if (consumesSectionSeat && sectionActiveCount >= maxSectionEnrollment) {
+                failedCount += 1;
+                const user = userMap.get(Number(userId));
+                results.push({
+                    rowNo: row.rowNo,
+                    input: row.input,
+                    userId: Number(userId),
+                    username: user?.username || '',
+                    fullName: getDisplayName(user),
+                    success: false,
+                    message: `Section is full (${maxSectionEnrollment} seats)`,
                 });
                 continue;
             }
@@ -390,6 +494,9 @@ export async function POST(request) {
 
                 if (consumesSeat) {
                     activeCount += 1;
+                }
+                if (consumesSectionSeat) {
+                    sectionActiveCount += 1;
                 }
 
                 processedUserIds.add(Number(userId));

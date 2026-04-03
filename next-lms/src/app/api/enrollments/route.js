@@ -12,6 +12,17 @@ import { readJsonBody } from '@/lib/server/request-validation';
 import { ensureDefaultOrganization, listUserRoleCodes, resolveUserId } from '@/lib/server/enterprise-context';
 import { createAdminNotification, createNotification } from '@/lib/server/notifications';
 import { hasMailConfig, sendEnrollmentSuccessEmail } from '@/lib/server/mailer';
+import {
+    buildPrerequisiteBlockedMessage,
+    findMissingPrerequisites,
+    resolvePrerequisiteCourses,
+    toDisplayCourseName,
+} from '@/lib/server/enrollment-rules';
+import {
+    resolveEffectiveCertificateConfig,
+    resolveEnrollmentSectionId,
+} from '@/lib/server/section-runtime';
+import { evaluateEnrollmentLearningAccess } from '@/lib/server/learning-access';
 
 const ENROLLMENT_STATUS_RANK = {
     COMPLETED: 5,
@@ -191,6 +202,7 @@ function normalizeSection(section, sectionSettingsBySectionId = {}) {
         registerUnlimit: Boolean(settings?.registerUnlimit),
         learnDateTo: String(settings?.learnDateTo || '').trim(),
         learnDateUnlimit: settings?.learnDateUnlimit !== false,
+        autoApprove: typeof settings?.autoApprove === 'boolean' ? settings.autoApprove : null,
         groups: normalizeEnrollmentRoleCodes(settings?.groups || []).join(','),
         asset: section.asset
             ? {
@@ -237,7 +249,19 @@ function normalizeEnrollmentCourse(
     const mappedContentId = String(contentByCourseId?.[courseKey] || '').trim() || null;
     const mappedContent = mappedContentId ? (contentById.get(mappedContentId) || null) : null;
 
-    const primarySection = pickPrimarySection(enrollment?.courses?.sections || []);
+    const availableSections = Array.isArray(enrollment?.courses?.sections) ? enrollment.courses.sections : [];
+    const learningProgressRows = Array.isArray(enrollment?.learning_progress)
+        ? enrollment.learning_progress
+        : [];
+    const selectedSectionId = resolveEnrollmentSectionId({
+        explicitSectionId: enrollment?.sectionId,
+        learningProgressRows,
+        availableSections,
+    });
+    const selectedSection = selectedSectionId
+        ? availableSections.find((item) => Number(item?.id || 0) === Number(selectedSectionId))
+        : null;
+    const primarySection = selectedSection || pickPrimarySection(availableSections);
     let section = normalizeSection(primarySection, sectionSettingsBySectionId);
 
     const virtualAsset = toVirtualAssetFromContent(mappedContent);
@@ -271,11 +295,8 @@ function normalizeEnrollmentCourse(
     const firstName = String(profile?.firstName || '').trim();
     const lastName = String(profile?.lastName || '').trim();
     const fullName = [firstName, lastName].filter(Boolean).join(' ').trim() || username || email || `User ${enrollment.userId}`;
-    const learningProgressRows = Array.isArray(enrollment?.learning_progress)
-        ? enrollment.learning_progress
-        : [];
-    const sectionProgressRows = section?.id
-        ? learningProgressRows.filter((row) => Number(row?.sectionId || 0) === Number(section.id))
+    const sectionProgressRows = selectedSectionId
+        ? learningProgressRows.filter((row) => Number(row?.sectionId || 0) === Number(selectedSectionId))
         : learningProgressRows;
     const latestProgressRow = (sectionProgressRows[0] || learningProgressRows[0] || null);
     const progressStatus = String(latestProgressRow?.status || '').toLowerCase();
@@ -304,12 +325,34 @@ function normalizeEnrollmentCourse(
 
     const legacyStatus = resolveLegacyStatus(effectiveEnrollment, compatMaps?.autoApproveByCourseId || {});
     const courseAutoApprove = compatMaps?.autoApproveByCourseId?.[courseKey];
+    const sectionAutoApprove = typeof section?.autoApprove === 'boolean' ? section.autoApprove : null;
+    const effectiveAutoApprove = typeof sectionAutoApprove === 'boolean'
+        ? sectionAutoApprove
+        : (typeof courseAutoApprove === 'boolean' ? courseAutoApprove : true);
+    const effectiveCertificate = resolveEffectiveCertificateConfig({
+        courseHasCertificate: enrollment?.courses?.hasCertificate,
+        courseCertificateMode: enrollment?.courses?.certificateMode,
+        sectionId: selectedSectionId || section?.id || null,
+        sectionSettingsBySectionId,
+    });
+    const courseSettings = compatMaps?.courseSettingsByCourseId?.[courseKey] || {};
     const courseReviewSummary = reviewSummaryByCourseId?.[courseKey] || {};
     const reviewCount = Number(courseReviewSummary?.reviewCount || 0);
     const averageRating = Number(courseReviewSummary?.averageRating || 0);
     const normalizedSections = (Array.isArray(enrollment?.courses?.sections) ? enrollment.courses.sections : [])
         .map((item) => normalizeSection(item, sectionSettingsBySectionId))
         .filter(Boolean);
+    const normalizedDeliveryMode = String(courseSettings?.deliveryMode || '').trim().toLowerCase();
+    const deliveryMode = ['self_learning', 'online_classroom', 'offline_classroom'].includes(normalizedDeliveryMode)
+        ? normalizedDeliveryMode
+        : (
+            courseSettings?.onlineClassroom ? 'online_classroom'
+                : courseSettings?.offlineClassroom ? 'offline_classroom'
+                    : 'self_learning'
+        );
+    const isOnlineClassroom = deliveryMode === 'online_classroom';
+    const isOfflineClassroom = deliveryMode === 'offline_classroom';
+    const isSelfLearning = deliveryMode === 'self_learning';
 
     return {
         ...enrollment,
@@ -328,7 +371,7 @@ function normalizeEnrollmentCourse(
                     Number(latestProgressRow?.progressPercent || 0)
                 )
         ),
-        sectionId: section?.id ?? null,
+        sectionId: selectedSectionId || section?.id || null,
         learner: {
             userId: Number(enrollment.userId),
             username,
@@ -344,11 +387,22 @@ function normalizeEnrollmentCourse(
             detail: '',
             category: enrollment.courses.categories?.name || '',
             categoryId: enrollment.courses.categoryId ?? null,
-            certificate: Boolean(enrollment.courses.hasCertificate),
-            certificateMode: String(enrollment.courses.certificateMode || 'none').toLowerCase(),
-            autoApprove: typeof courseAutoApprove === 'boolean' ? courseAutoApprove : true,
+            certificate: effectiveCertificate.required,
+            certificateMode: effectiveCertificate.mode,
+            autoCert: effectiveCertificate.mode === 'auto',
+            autoApprove: effectiveAutoApprove,
             thumbnail: normalizeThumbnail(thumbnailByCourseId?.[courseKey]),
             tincanId: mappedContentId,
+            instructorExperience: String(courseSettings?.instructorExperience || '').trim(),
+            deliveryMode,
+            selfLearning: isSelfLearning,
+            onlineClassroom: isOnlineClassroom,
+            offlineClassroom: isOfflineClassroom,
+            liveChat: isOnlineClassroom ? Boolean(courseSettings?.liveChat) : false,
+            collaborate: Boolean(courseSettings?.collaborate),
+            tincanCondition: String(courseSettings?.tincanCondition || 'all_completed').trim() || 'all_completed',
+            webboard: courseSettings?.webboard ?? null,
+            prerequisites: Array.isArray(courseSettings?.prerequisites) ? courseSettings.prerequisites : [],
             reviewCount: Number.isFinite(reviewCount) && reviewCount > 0 ? reviewCount : 0,
             averageRating: Number.isFinite(averageRating) && averageRating > 0 ? Number(averageRating.toFixed(1)) : 0,
         },
@@ -419,6 +473,11 @@ function collectSectionIds(enrollments = []) {
         const selectedSectionId = Number(enrollment?.section?.id || enrollment?.sectionId || 0);
         if (Number.isInteger(selectedSectionId) && selectedSectionId > 0) {
             ids.add(selectedSectionId);
+        }
+        const progressRows = Array.isArray(enrollment?.learning_progress) ? enrollment.learning_progress : [];
+        for (const row of progressRows) {
+            const progressSectionId = Number(row?.sectionId || 0);
+            if (Number.isInteger(progressSectionId) && progressSectionId > 0) ids.add(progressSectionId);
         }
         const sections = Array.isArray(enrollment?.courses?.sections) ? enrollment.courses.sections : [];
         for (const section of sections) {
@@ -583,9 +642,31 @@ export async function POST(request) {
         const courseCompatMaps = await getCourseCompatMaps([course.id]);
         const courseAutoApprove = courseCompatMaps?.autoApproveByCourseId?.[String(course.id)] !== false;
         const courseSettings = courseCompatMaps?.courseSettingsByCourseId?.[String(course.id)] || {};
-        const shouldUpgradePendingEnrollment = Boolean(
-            existingEnrollment && existingStatus === 'enrolled' && courseAutoApprove
-        );
+        const prerequisiteCourses = await resolvePrerequisiteCourses({
+            organizationId,
+            prerequisites: courseSettings?.prerequisites || [],
+            excludeCourseId: course.id,
+        });
+        if (prerequisiteCourses.length > 0 && !hasActiveExistingEnrollment) {
+            const missingPrerequisites = await findMissingPrerequisites({
+                userId: numericUserId,
+                organizationId,
+                prerequisiteCourses,
+            });
+            if (missingPrerequisites.length > 0) {
+                return NextResponse.json(
+                    {
+                        error: buildPrerequisiteBlockedMessage(missingPrerequisites),
+                        missingPrerequisites: missingPrerequisites.map((courseItem) => ({
+                            id: Number(courseItem?.id || 0),
+                            name: toDisplayCourseName(courseItem),
+                        })),
+                    },
+                    { status: 400 }
+                );
+            }
+        }
+        let effectiveAutoApprove = courseAutoApprove;
 
         if (!session.isAdmin) {
             const courseWindow = evaluateRegisterWindow(courseSettings);
@@ -721,6 +802,17 @@ export async function POST(request) {
             }
         }
 
+        if (validatedSection?.id) {
+            const selectedSectionSettings = sectionSettingsBySectionId?.[String(validatedSection.id)] || {};
+            if (typeof selectedSectionSettings?.autoApprove === 'boolean') {
+                effectiveAutoApprove = selectedSectionSettings.autoApprove;
+            }
+        }
+
+        const shouldUpgradePendingEnrollment = Boolean(
+            existingEnrollment && existingStatus === 'enrolled' && effectiveAutoApprove
+        );
+
         const targetRoleCodes = normalizeEnrollmentRoleCodes(
             await listUserRoleCodes(numericUserId, organizationId)
         );
@@ -765,7 +857,7 @@ export async function POST(request) {
             },
             update: (shouldReactivateEnrollment || shouldUpgradePendingEnrollment)
                 ? {
-                    status: courseAutoApprove ? 'in_progress' : 'enrolled',
+                    status: effectiveAutoApprove ? 'in_progress' : 'enrolled',
                     progressPercent: 0,
                     startedAt: null,
                     completedAt: null,
@@ -776,7 +868,7 @@ export async function POST(request) {
                 userId: numericUserId,
                 courseId: course.id,
                 organization_id: organizationId,
-                status: courseAutoApprove ? 'in_progress' : 'enrolled',
+                status: effectiveAutoApprove ? 'in_progress' : 'enrolled',
                 progressPercent: 0,
             },
             include: {
@@ -830,7 +922,7 @@ export async function POST(request) {
         };
 
         const isFirstActiveEnrollment = !hasActiveExistingEnrollment || shouldReactivateEnrollment || shouldUpgradePendingEnrollment;
-        const shouldNotifyAdminForApproval = !courseAutoApprove && !session.isAdmin && !hasActiveExistingEnrollment;
+        const shouldNotifyAdminForApproval = !effectiveAutoApprove && !session.isAdmin && !hasActiveExistingEnrollment;
         const shouldSendEnrollmentEmail = isFirstActiveEnrollment && hasMailConfig();
         let learner = null;
 
@@ -872,6 +964,8 @@ export async function POST(request) {
                     userId: Number(numericUserId || 0),
                     actionUrl: '/admin-dashboard/learn/enrollment',
                 },
+                severity: 'info',
+                category: 'COURSE',
                 createdBy: session.uid,
             });
         }
@@ -1058,6 +1152,22 @@ export async function PATCH(request) {
             return NextResponse.json({ error: 'Awaiting admin approval' }, { status: 403 });
         }
         const incomingStatus = status ? String(status).toUpperCase() : '';
+        if (!session.isAdmin) {
+            const access = await evaluateEnrollmentLearningAccess({ enrollmentId });
+            if (!access?.allowed) {
+                const reason = String(access?.reason || '');
+                const mapped = {
+                    COURSE_INACTIVE: 'Course is inactive',
+                    SECTION_INACTIVE: 'Section is inactive',
+                    LEARN_WINDOW_EXPIRED: 'Learning period expired',
+                };
+                return NextResponse.json(
+                    { error: mapped[reason] || 'Learning access denied', reason },
+                    { status: 403 }
+                );
+            }
+        }
+
         const existingProgress = Number(existing.progressPercent || 0);
         const incomingProgress = progress !== undefined ? Number(progress) : undefined;
         const safeIncomingProgress = Number.isFinite(incomingProgress)
@@ -1135,17 +1245,71 @@ export async function PATCH(request) {
                     courseId: Number(enrollment.courseId || 0),
                     actionUrl: `/courses/${Number(enrollment.courseId || 0)}`,
                 },
+                severity: 'info',
+                category: 'COURSE',
+                createdBy: session.uid,
+                recipientUserIds: [Number(enrollment.userId || 0)],
+            });
+        }
+        if (session.isAdmin && existingStatus === 'PENDING' && (incomingStatus === 'FAILED' || incomingStatus === 'CANCELLED')) {
+            await createNotification({
+                organizationId,
+                type: 'ENROLLMENT_REJECTED',
+                title: 'Enrollment Rejected',
+                message: `Your enrollment for "${String(enrollment?.courses?.title || 'Course').trim()}" was rejected by admin.`,
+                payload: {
+                    kind: 'enrollment_rejected',
+                    enrollmentId: Number(enrollment.id || 0),
+                    courseId: Number(enrollment.courseId || 0),
+                    courseName: String(enrollment?.courses?.title || 'Course').trim(),
+                    actionUrl: '/my-learning',
+                },
+                severity: 'critical',
+                category: 'COURSE',
                 createdBy: session.uid,
                 recipientUserIds: [Number(enrollment.userId || 0)],
             });
         }
 
-        const certMode = String(enrollment.courses?.certificateMode || 'none').toLowerCase();
-        if (
-            String(enrollment.status || '').toLowerCase() === 'completed'
-            && enrollment.courses?.hasCertificate
-            && certMode === 'auto'
-        ) {
+        const updatedLegacyStatus = String(
+            resolveLegacyStatus(enrollment, patchCompatMaps?.autoApproveByCourseId || {})
+        ).toUpperCase();
+        const transitionedToCompleted = existingStatus !== 'COMPLETED' && updatedLegacyStatus === 'COMPLETED';
+        if (transitionedToCompleted) {
+            await createNotification({
+                organizationId,
+                type: 'COURSE_COMPLETED',
+                title: 'Course Completed',
+                message: `You completed "${String(enrollment?.courses?.title || 'Course').trim()}". Great job!`,
+                payload: {
+                    kind: 'course_completed',
+                    enrollmentId: Number(enrollment.id || 0),
+                    courseId: Number(enrollment.courseId || 0),
+                    actionUrl: '/training-results',
+                },
+                severity: 'info',
+                category: 'COURSE',
+                createdBy: session.uid,
+                recipientUserIds: [Number(enrollment.userId || 0)],
+            });
+        }
+        const selectedProgressRow = await prisma.learningProgress.findFirst({
+            where: { enrollmentId: enrollment.id },
+            orderBy: { id: 'desc' },
+            select: { sectionId: true },
+        });
+        const selectedSectionId = Number(selectedProgressRow?.sectionId || 0);
+        const sectionCompatMaps = await getSectionCompatMaps(
+            Number.isInteger(selectedSectionId) && selectedSectionId > 0 ? [selectedSectionId] : []
+        );
+        const effectiveCertificate = resolveEffectiveCertificateConfig({
+            courseHasCertificate: enrollment?.courses?.hasCertificate,
+            courseCertificateMode: enrollment?.courses?.certificateMode,
+            sectionId: Number.isInteger(selectedSectionId) && selectedSectionId > 0 ? selectedSectionId : null,
+            sectionSettingsBySectionId: sectionCompatMaps?.sectionSettingsBySectionId || {},
+        });
+
+        if (transitionedToCompleted && updatedLegacyStatus === 'COMPLETED' && effectiveCertificate.required && effectiveCertificate.mode === 'auto') {
             const user = await prisma.user.findUnique({
                 where: { id: enrollment.userId },
                 include: { profile: true },
@@ -1164,13 +1328,56 @@ export async function PATCH(request) {
                     status: 'issued',
                 },
             });
+            await createNotification({
+                organizationId,
+                type: 'CERTIFICATE_ISSUED',
+                title: 'Certificate Issued',
+                message: `Your certificate for "${String(enrollment?.courses?.title || 'Course').trim()}" is ready.`,
+                payload: {
+                    kind: 'certificate_issued',
+                    enrollmentId: Number(enrollment.id || 0),
+                    courseId: Number(enrollment.courseId || 0),
+                    actionUrl: '/training-results',
+                },
+                severity: 'info',
+                category: 'COURSE',
+                createdBy: session.uid,
+                recipientUserIds: [Number(enrollment.userId || 0)],
+            });
+        } else if (
+            transitionedToCompleted
+            && effectiveCertificate.required
+            && effectiveCertificate.mode === 'manual'
+            && !session.isAdmin
+        ) {
+            const learner = await prisma.user.findUnique({
+                where: { id: enrollment.userId },
+                include: { profile: true },
+            });
+            const learnerName = resolveDisplayName(learner);
+            await createAdminNotification({
+                organizationId,
+                type: 'CERTIFICATE_APPROVAL_REQUESTED',
+                title: 'Certificate Approval Requested',
+                message: `${learnerName} requested certificate approval for "${String(enrollment?.courses?.title || 'Course').trim()}".`,
+                payload: {
+                    kind: 'certificate_approval_requested',
+                    enrollmentId: Number(enrollment.id || 0),
+                    courseId: Number(enrollment.courseId || 0),
+                    userId: Number(enrollment.userId || 0),
+                    actionUrl: '/admin-dashboard/report/certificate-report',
+                },
+                severity: 'info',
+                category: 'COURSE',
+                createdBy: session.uid,
+            });
         }
 
         return NextResponse.json({
             success: true,
             enrollment: {
                 ...enrollment,
-                status: resolveLegacyStatus(enrollment, patchCompatMaps?.autoApproveByCourseId || {}),
+                status: updatedLegacyStatus,
                 progress: toProgressNumber(enrollment.progressPercent),
             },
         });

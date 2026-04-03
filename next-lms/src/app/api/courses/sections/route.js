@@ -3,6 +3,8 @@ import prisma from '@/lib/prisma';
 import { getSectionCompatMaps, setSectionSettings } from '@/lib/server/compat-db';
 import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
+import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
+import { writeAdminAudit } from '@/lib/server/admin-audit';
 
 function isTruthyFlag(value) {
     if (value === true) return true;
@@ -47,7 +49,6 @@ function normalizeSection(section, sectionSettingsBySectionId = {}) {
         autoApprove: settings?.autoApprove ?? true,
         certificate: Boolean(settings?.certificate),
         autoCert: Boolean(settings?.autoCert),
-        printCert: Boolean(settings?.printCert),
         cohortModule: Boolean(settings?.cohortModule),
         groups: groups.join(','),
     };
@@ -89,8 +90,9 @@ export async function GET(request) {
  */
 export async function POST(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
+        const organizationId = await ensureDefaultOrganization();
 
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);
         if (invalidBodyResponse) return invalidBodyResponse;
@@ -137,12 +139,28 @@ export async function POST(request) {
             autoApprove: body.autoApprove,
             certificate: body.certificate,
             autoCert: body.autoCert,
-            printCert: body.printCert,
             cohortModule: body.cohortModule,
             groups: body.groups,
         });
 
         const sectionCompatMaps = await getSectionCompatMaps([section.id]);
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'CREATE',
+            entity: 'SECTION',
+            entityId: section?.id ?? null,
+            message: 'Created section',
+            severity: 'info',
+            details: {
+                courseId,
+                title: section?.title || '',
+                sectionType: section?.sectionType || '',
+            },
+            request: { path: '/api/courses/sections', method: 'POST' },
+        });
         return NextResponse.json({
             success: true,
             section: normalizeSection(section, sectionCompatMaps?.sectionSettingsBySectionId || {}),
@@ -161,8 +179,9 @@ export async function POST(request) {
  */
 export async function PUT(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
+        const organizationId = await ensureDefaultOrganization();
 
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);
         if (invalidBodyResponse) return invalidBodyResponse;
@@ -229,7 +248,6 @@ export async function PUT(request) {
             || body.autoApprove !== undefined
             || body.certificate !== undefined
             || body.autoCert !== undefined
-            || body.printCert !== undefined
             || body.cohortModule !== undefined
             || body.groups !== undefined
         ) {
@@ -245,13 +263,30 @@ export async function PUT(request) {
                 autoApprove: body.autoApprove,
                 certificate: body.certificate,
                 autoCert: body.autoCert,
-                printCert: body.printCert,
                 cohortModule: body.cohortModule,
                 groups: body.groups,
             });
         }
 
         const sectionCompatMaps = await getSectionCompatMaps([section.id]);
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'UPDATE',
+            entity: 'SECTION',
+            entityId: section?.id ?? id,
+            message: 'Updated section',
+            severity: 'info',
+            details: {
+                title: section?.title || '',
+                sectionType: section?.sectionType || '',
+                isActive: Boolean(section?.isActive),
+                isPublic: Boolean(section?.isPublic),
+            },
+            request: { path: '/api/courses/sections', method: 'PUT' },
+        });
         return NextResponse.json({
             success: true,
             section: normalizeSection(section, sectionCompatMaps?.sectionSettingsBySectionId || {}),
@@ -270,8 +305,9 @@ export async function PUT(request) {
  */
 export async function DELETE(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
+        const organizationId = await ensureDefaultOrganization();
 
         const { searchParams } = new URL(request.url);
         const id = parseInt(searchParams.get('id'), 10);
@@ -288,8 +324,29 @@ export async function DELETE(request) {
             );
         }
 
+        const deletingSection = await prisma.section.findUnique({
+            where: { id },
+            select: { id: true, courseId: true, title: true, sectionType: true },
+        });
         await prisma.section.delete({ where: { id } });
         await setSectionSettings(id, null);
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'DELETE',
+            entity: 'SECTION',
+            entityId: id,
+            message: 'Deleted section',
+            severity: 'warning',
+            details: {
+                courseId: deletingSection?.courseId ?? null,
+                title: deletingSection?.title || '',
+                sectionType: deletingSection?.sectionType || '',
+            },
+            request: { path: '/api/courses/sections', method: 'DELETE' },
+        });
         return NextResponse.json({ success: true });
     } catch (err) {
         if (err?.code === 'P2025') {

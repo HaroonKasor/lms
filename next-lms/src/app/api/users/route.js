@@ -21,7 +21,9 @@ import {
     getDefaultGroupCodeByRoleFromDb,
     getGroupMapByCodesFromDb,
 } from '@/lib/server/group-directory-db';
+import { writeAdminAudit } from '@/lib/server/admin-audit';
 import {
+    defaultGroupCodeFromEnterpriseRoleCode,
     inferEnterpriseRoleCodeFromGroup,
     normalizeEnterpriseRoleCode,
 } from '@/lib/shared/role-directory';
@@ -100,6 +102,16 @@ function mapUser(user, roleCodes = [], groups = []) {
     };
 }
 
+function withRoleFallbackGroups(roleCodes = [], groups = []) {
+    const normalizedGroups = Array.isArray(groups) ? groups.filter(Boolean) : [];
+    if (normalizedGroups.length > 0) return normalizedGroups;
+
+    const primaryRoleCode = Array.isArray(roleCodes) && roleCodes.length > 0
+        ? normalizeEnterpriseRoleCode(roleCodes[0])
+        : normalizeEnterpriseRoleCode('LEARNER');
+    return [defaultGroupCodeFromEnterpriseRoleCode(primaryRoleCode)];
+}
+
 async function getRoleMapByUserIds(userIds, organizationId) {
     const ids = (userIds || []).filter(Boolean);
     if (ids.length === 0) return new Map();
@@ -150,7 +162,10 @@ export async function GET(request) {
         const mappedUsers = users.map((user) => mapUser(
             user,
             roleMap.get(String(user.id)) || [],
-            groupMap.get(Number(user.id)) || []
+            withRoleFallbackGroups(
+                roleMap.get(String(user.id)) || [],
+                groupMap.get(Number(user.id)) || []
+            )
         ));
         const filteredUsers = groupCodeFilter
             ? mappedUsers.filter((user) => (user.groups || []).includes(groupCodeFilter))
@@ -169,7 +184,7 @@ export async function GET(request) {
  */
 export async function POST(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
 
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);
@@ -246,6 +261,26 @@ export async function POST(request) {
             return created;
         });
 
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'CREATE',
+            entity: 'USER',
+            entityId: user?.id ?? null,
+            message: 'Created user account',
+            severity: 'info',
+            details: {
+                username: user?.username || '',
+                email: user?.email || '',
+                roleCode,
+                groups: assignedGroups,
+                status: userStatus,
+            },
+            request: { path: '/api/users', method: 'POST' },
+        });
+
         return NextResponse.json({ success: true, user: mapUser(user, [roleCode], assignedGroups) });
     } catch (err) {
         console.error('[users/POST] failed', err);
@@ -259,7 +294,7 @@ export async function POST(request) {
  */
 export async function PUT(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
 
         const { searchParams } = new URL(request.url);
@@ -345,9 +380,29 @@ export async function PUT(request) {
         }
 
         const groupMap = await getUserGroupMapByUserIds([user.id], organizationId);
+        const resolvedGroups = groupMap.get(Number(user.id)) || assignedGroups;
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'UPDATE',
+            entity: 'USER',
+            entityId: user?.id ?? id,
+            message: 'Updated user account',
+            severity: 'info',
+            details: {
+                username: user?.username || '',
+                email: user?.email || '',
+                roleCode,
+                groups: resolvedGroups,
+                status: userStatus,
+            },
+            request: { path: '/api/users', method: 'PUT' },
+        });
         return NextResponse.json({
             success: true,
-            user: mapUser(user, [roleCode], groupMap.get(Number(user.id)) || assignedGroups),
+            user: mapUser(user, [roleCode], resolvedGroups),
         });
     } catch (err) {
         if (err?.code === 'P2002') {
@@ -367,7 +422,7 @@ export async function PUT(request) {
  */
 export async function PATCH(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
 
         const { searchParams } = new URL(request.url);
@@ -387,6 +442,20 @@ export async function PATCH(request) {
             data: { passwordHash: hashed },
         });
 
+        const organizationId = await ensureDefaultOrganization();
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'PASSWORD_RESET',
+            entity: 'USER',
+            entityId: id,
+            message: 'Admin reset user password',
+            severity: 'warning',
+            request: { path: '/api/users', method: 'PATCH' },
+        });
+
         return NextResponse.json({ success: true });
     } catch (err) {
         if (err?.code === 'P2025') {
@@ -403,7 +472,7 @@ export async function PATCH(request) {
  */
 export async function DELETE(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true });
         if (response) return response;
 
         const { searchParams } = new URL(request.url);
@@ -424,12 +493,33 @@ export async function DELETE(request) {
         }
 
         const organizationId = await ensureDefaultOrganization();
+        const deletingUser = await prisma.user.findUnique({
+            where: { id },
+            include: { profile: true },
+        });
         await prisma.$transaction(async (tx) => {
             await deleteUserGroups(tx, {
                 organizationId,
                 userId: id,
             });
             await tx.user.delete({ where: { id } });
+        });
+        await writeAdminAudit({
+            organizationId,
+            actorUserId: session.uid,
+            actorUsername: session.user?.username || '',
+            actorEmail: session.user?.email || '',
+            action: 'DELETE',
+            entity: 'USER',
+            entityId: id,
+            message: 'Deleted user account',
+            severity: 'critical',
+            details: {
+                username: deletingUser?.username || '',
+                email: deletingUser?.email || '',
+                status: deletingUser?.status || '',
+            },
+            request: { path: '/api/users', method: 'DELETE' },
         });
         return NextResponse.json({ success: true });
     } catch (err) {

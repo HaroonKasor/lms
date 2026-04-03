@@ -52,6 +52,7 @@ function resolveEnrollmentStatus(enrollment) {
 const STAR_VALUES = [1, 2, 3, 4, 5];
 const ENROLLMENTS_TIMEOUT_MS = 15000;
 const REVIEWS_TIMEOUT_MS = 10000;
+const COURSES_PER_PAGE = 6;
 
 export default function MyLearning() {
     const [enrollments, setEnrollments] = useState([]);
@@ -304,6 +305,34 @@ export default function MyLearning() {
         const matchesSearch = !searchQuery || e.course?.name?.toLowerCase().includes(searchQuery.toLowerCase());
         return matchesTab && matchesCategory && matchesSearch;
     });
+    const totalPages = Math.max(1, Math.ceil(filteredCourses.length / COURSES_PER_PAGE));
+    const pagedCourses = useMemo(() => {
+        const start = (currentPage - 1) * COURSES_PER_PAGE;
+        return filteredCourses.slice(start, start + COURSES_PER_PAGE);
+    }, [filteredCourses, currentPage]);
+    const pageNumbers = useMemo(() => {
+        const windowSize = 5;
+        if (totalPages <= windowSize) {
+            return Array.from({ length: totalPages }, (_, index) => index + 1);
+        }
+        const half = Math.floor(windowSize / 2);
+        let start = Math.max(1, currentPage - half);
+        let end = Math.min(totalPages, start + windowSize - 1);
+        if (end - start + 1 < windowSize) {
+            start = Math.max(1, end - windowSize + 1);
+        }
+        return Array.from({ length: end - start + 1 }, (_, index) => start + index);
+    }, [currentPage, totalPages]);
+
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [activeTab, activeCategory, searchQuery]);
+
+    useEffect(() => {
+        if (currentPage > totalPages) {
+            setCurrentPage(totalPages);
+        }
+    }, [currentPage, totalPages]);
 
     const tabIcons = {
         Enrolled: (
@@ -340,16 +369,16 @@ export default function MyLearning() {
                 <div className="absolute w-[1428px] h-[107px] bg-white/10 -rotate-45 right-[-200px] -top-[60px] pointer-events-none"></div>
                 <div className="absolute w-[369px] h-[369px] rounded-full border border-white/20 right-[200px] -top-[32px] opacity-60 pointer-events-none"></div>
                 <div className="absolute w-[388px] h-[388px] rounded-full border border-white/15 right-[190px] -top-[41px] opacity-60 pointer-events-none"></div>
-                <div className="max-w-[1840px] mx-auto px-6 lg:px-20 py-10 relative z-10">
-                    <h1 className="text-white font-semibold text-[40px] leading-[110%] mb-4">Good morning, {user?.fullName || user?.username || 'Learner'}!</h1>
-                    <p className="text-white font-medium text-xl leading-[110%]">Let&apos;s start learning! Explore our courses and find what inspires you.</p>
+                <div className="max-w-[1840px] mx-auto px-4 sm:px-6 lg:px-20 py-8 sm:py-10 relative z-10">
+                    <h1 className="text-white font-semibold text-[30px] sm:text-[40px] leading-[110%] mb-3 sm:mb-4">Good morning, {user?.fullName || user?.username || 'Learner'}!</h1>
+                    <p className="text-white font-medium text-[16px] sm:text-xl leading-[120%]">Let&apos;s start learning! Explore our courses and find what inspires you.</p>
                 </div>
             </div>
 
-            <div className="absolute w-[104px] h-[104px] right-16 top-[548px] rounded-full pointer-events-none" style={{ background: 'linear-gradient(134.15deg, rgba(247, 13, 197, 0.099) 15.4%, rgba(247, 13, 197, 0) 73.27%)' }}></div>
+            <div className="absolute hidden md:block w-[104px] h-[104px] right-16 top-[548px] rounded-full pointer-events-none" style={{ background: 'linear-gradient(134.15deg, rgba(247, 13, 197, 0.099) 15.4%, rgba(247, 13, 197, 0) 73.27%)' }}></div>
 
-            <main className="w-full max-w-[1840px] mx-auto relative z-10 pt-8 pb-24 px-6 lg:px-20 flex flex-col lg:flex-row gap-8">
-                <FadeIn direction="right" className="w-full lg:w-[408px] shrink-0 h-fit sticky top-24">
+            <main className="w-full max-w-[1840px] mx-auto relative z-10 pt-8 pb-24 px-4 sm:px-6 lg:px-20 flex flex-col lg:flex-row gap-8">
+                <FadeIn direction="right" className="w-full lg:w-[408px] shrink-0 h-fit lg:sticky lg:top-24">
                     <div className="bg-white border border-[#D1E3FB] rounded-[20px] p-6 pb-8">
                         <div className="flex items-center gap-2.5 pb-4 mb-6 border-b border-dashed border-[#D1E3FB]">
                             <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">
@@ -416,7 +445,7 @@ export default function MyLearning() {
                             ))}
                         </div>
                         <span className="text-[#6B778B] text-sm font-normal">
-                            Showing {filteredCourses.length} Courses of {enrollments.length}
+                            Showing {pagedCourses.length} Courses (Page {currentPage}/{totalPages}) of {filteredCourses.length} in this view
                         </span>
                     </div>
 
@@ -424,7 +453,7 @@ export default function MyLearning() {
                         <>
                             {/* Course Cards */}
                             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {filteredCourses.map((enrollment) => (
+                                {pagedCourses.map((enrollment) => (
                                     <CourseCard
                                         key={enrollment.id}
                                         enrollment={enrollment}
@@ -452,22 +481,32 @@ export default function MyLearning() {
                             {filteredCourses.length > 0 && (
                                 <div className="flex items-center justify-end gap-4 mt-4">
                                     <div className="flex items-center gap-3">
-                                        <button className="w-10 h-10 rounded-full bg-white border border-[#D1E3FB] flex items-center justify-center text-[#6B778B] hover:bg-[#F6F8FF] transition-colors">
+                                        <button
+                                            type="button"
+                                            onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                                            disabled={currentPage === 1}
+                                            className="w-10 h-10 rounded-full bg-white border border-[#D1E3FB] flex items-center justify-center text-[#6B778B] hover:bg-[#F6F8FF] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
                                             <svg className="w-2.5 h-3" fill="currentColor" viewBox="0 0 320 512"><path d="M9.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l192 192c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L77.3 256 246.6 86.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-192 192z" /></svg>
                                         </button>
-                                        {[1, 2, 3].map(page => (
+                                        {pageNumbers.map(page => (
                                             <button key={page} onClick={() => setCurrentPage(page)}
                                                 className={`w-10 h-10 rounded-full flex items-center justify-center text-base font-normal transition-colors
                                                     ${currentPage === page ? 'bg-[#687EFF] text-white' : 'bg-white border border-[#D1E3FB] text-[#6B778B] hover:bg-[#F6F8FF]'}`}>
                                                 {String(page).padStart(2, '0')}
                                             </button>
                                         ))}
-                                        <button className="w-10 h-10 rounded-full bg-white border border-[#D1E3FB] flex items-center justify-center text-[#6B778B] hover:bg-[#F6F8FF] transition-colors">
+                                        <button
+                                            type="button"
+                                            onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                                            disabled={currentPage === totalPages}
+                                            className="w-10 h-10 rounded-full bg-white border border-[#D1E3FB] flex items-center justify-center text-[#6B778B] hover:bg-[#F6F8FF] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
                                             <svg className="w-2.5 h-3" fill="currentColor" viewBox="0 0 320 512"><path d="M310.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L242.7 256 73.4 86.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l192 192z" /></svg>
                                         </button>
                                     </div>
                                     <div className="bg-white border border-[#D1E3FB] rounded-lg flex items-center px-5 py-2.5 gap-2">
-                                        <span className="text-[#052143] text-sm font-normal">20 items</span>
+                                        <span className="text-[#052143] text-sm font-normal">{COURSES_PER_PAGE} items/page</span>
                                         <svg className="w-3 h-3" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="#6B778B" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                                     </div>
                                 </div>
@@ -657,6 +696,16 @@ function CourseCard({ enrollment, formatDuration, currentUser }) {
     const certificateIssuedDateValue = enrollment?.certificate?.issuedAt || enrollment?.updatedAt || enrollment?.createdAt || new Date();
     const certificateIssuedDate = formatCertificateDate(certificateIssuedDateValue);
     const certificateNo = enrollment?.certificate?.verifyCode || `CERT-${course?.id || 'N/A'}`;
+    const instructorExperience = String(course?.instructorExperience || '').trim();
+    const sectionLabel = String(
+        enrollment?.section?.name
+        || enrollment?.section?.title
+        || enrollment?.sectionName
+        || ''
+    ).trim();
+    const instructorName = String(course?.instructor || '').trim();
+    const displayInstructor = instructorName || 'Instructor';
+    const displayInstructorMeta = sectionLabel ? `Section: ${sectionLabel}` : (instructorExperience || '-');
 
     const openCertificatePrint = useCallback(() => {
         const templateUrl = `${window.location.origin}${certificateImage}`;
@@ -773,7 +822,7 @@ function CourseCard({ enrollment, formatDuration, currentUser }) {
                             {course?.name}
                         </h3>
                     </Link>
-                    {isCompleted && (
+                    {(isCompleted || isLearning) && (
                         <div className="relative shrink-0">
                             <button
                                 onClick={(e) => {
@@ -791,14 +840,18 @@ function CourseCard({ enrollment, formatDuration, currentUser }) {
                                 <>
                                     <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)}></div>
                                     <div className="absolute right-0 top-full mt-1 bg-white border border-[#D1E3FB] rounded-2xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] z-50 py-2 min-w-[160px] overflow-hidden">
-                                        <Link
-                                            href={learnHref}
-                                            onClick={() => setMenuOpen(false)}
-                                            className="block w-full text-left px-5 py-3 text-[#052143] text-base font-normal hover:bg-[#F6F8FF] transition-colors"
-                                        >
-                                            Learn again
-                                        </Link>
-                                        <button onClick={(e) => { e.preventDefault(); setMenuOpen(false); }} className="w-full text-left px-5 py-3 text-[#052143] text-base font-normal hover:bg-[#F6F8FF] transition-colors" type="button">Rate course</button>
+                                        {isCompleted ? (
+                                            <>
+                                                <Link
+                                                    href={learnHref}
+                                                    onClick={() => setMenuOpen(false)}
+                                                    className="block w-full text-left px-5 py-3 text-[#052143] text-base font-normal hover:bg-[#F6F8FF] transition-colors"
+                                                >
+                                                    Learn again
+                                                </Link>
+                                                <button onClick={(e) => { e.preventDefault(); setMenuOpen(false); }} className="w-full text-left px-5 py-3 text-[#052143] text-base font-normal hover:bg-[#F6F8FF] transition-colors" type="button">Rate course</button>
+                                            </>
+                                        ) : null}
                                         <button onClick={(e) => { e.preventDefault(); setMenuOpen(false); window.location.href = `/courses/${course?.id}/report`; }} className="w-full text-left px-5 py-3 text-[#052143] text-base font-normal hover:bg-[#F6F8FF] transition-colors" type="button">Report</button>
                                     </div>
                                 </>
@@ -807,7 +860,7 @@ function CourseCard({ enrollment, formatDuration, currentUser }) {
                     )}
                 </div>
 
-                <div className="flex items-center justify-between mb-[24px]">
+                <div className="flex flex-col gap-3 sm:gap-0 sm:flex-row sm:items-center sm:justify-between mb-[24px]">
                     {isCompleted ? (
                         hasCertificateEnabled ? (
                             certificateReady ? (
@@ -864,34 +917,36 @@ function CourseCard({ enrollment, formatDuration, currentUser }) {
                             </div>
                         </div>
                     ) : (
-                        <Link
-                            href={learnHref}
-                            className="flex items-center group cursor-pointer hover:opacity-90 transition-opacity"
-                            onClick={(e) => e.stopPropagation()}
-                        >
-                            <div className="px-5 h-[36px] box-border rounded-[20px] flex items-center justify-center border border-[#F87A53] bg-white text-[#F87A53] mr-[-12px] z-0 min-w-[70px]">
-                                <span className="font-medium text-[14px] pr-2">{actionLabel}</span>
-                            </div>
-                            <div className="w-[36px] h-[36px] box-border rounded-full flex items-center justify-center z-10 bg-white border border-[#F87A53]">
-                                <svg className="w-4 h-4 text-[#F87A53] ml-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="13 17 18 12 13 7"></polyline><polyline points="6 17 11 12 6 7"></polyline></svg>
-                            </div>
-                        </Link>
+                        <div className="flex items-center">
+                            <Link
+                                href={learnHref}
+                                className="flex items-center group cursor-pointer hover:opacity-90 transition-opacity"
+                                onClick={(e) => e.stopPropagation()}
+                            >
+                                <div className="px-5 h-[36px] box-border rounded-[20px] flex items-center justify-center border border-[#F87A53] bg-white text-[#F87A53] mr-[-12px] z-0 min-w-[70px]">
+                                    <span className="font-medium text-[14px] pr-2">{actionLabel}</span>
+                                </div>
+                                <div className="w-[36px] h-[36px] box-border rounded-full flex items-center justify-center z-10 bg-white border border-[#F87A53]">
+                                    <svg className="w-4 h-4 text-[#F87A53] ml-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="13 17 18 12 13 7"></polyline><polyline points="6 17 11 12 6 7"></polyline></svg>
+                                </div>
+                            </Link>
+                        </div>
                     )}
 
-                    <div className="flex items-center gap-[10px] shrink-0 text-right">
+                    <div className="flex items-center gap-[10px] shrink-0 sm:text-right">
                         <div className="w-[42px] h-[42px] box-border rounded-full object-cover border-2 border-[#eaedf5] shrink-0 bg-[#eef1fa] text-[#687EFF] flex items-center justify-center font-bold text-[18px]">
                             {(course?.instructor || 'I').charAt(0).toUpperCase()}
                         </div>
-                        <div className="flex flex-col justify-center items-end">
-                            <span className={`text-[#052143] font-medium text-[14px] leading-[130%] truncate max-w-[120px] ${containsThai(course?.instructor) ? 'font-thai-sarabun' : ''}`}>
-                                {course?.instructor || 'Instructor Name'}
+                        <div className="flex flex-col justify-center sm:items-end">
+                            <span className={`text-[#052143] font-medium text-[14px] leading-[130%] truncate max-w-[180px] ${containsThai(displayInstructor) ? 'font-thai-sarabun' : ''}`}>
+                                {displayInstructor}
                             </span>
-                            <span className="text-[#8E8E93] font-normal text-[11px] leading-[130%] truncate max-w-[120px] mt-0.5">8+ Years Experience</span>
+                            <span className="text-[#8E8E93] font-normal text-[11px] leading-[130%] truncate max-w-[180px] mt-0.5">{displayInstructorMeta}</span>
                         </div>
                     </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-[20px] border-t border-dashed border-[#eaedf5] mt-auto">
+                <div className="flex flex-wrap items-center justify-between gap-y-2 pt-[20px] border-t border-dashed border-[#eaedf5] mt-auto">
                     <div className="flex items-center gap-[6px]">
                         <svg className="w-[14px] h-[14px] text-[#FF3EA5]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
                         <span className="text-[#6B778B] font-medium text-[13px]">{displayDate}</span>
