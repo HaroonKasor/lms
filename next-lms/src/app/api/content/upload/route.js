@@ -412,7 +412,7 @@ function parseBooleanLiteral(value) {
 
 function extractVarLiteral(source, varName) {
     const escaped = String(varName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`\\b${escaped}\\s*=\\s*([^;]+);`, 'i');
+    const regex = new RegExp(`\\b${escaped}\\s*=\\s*([^;\\n\\r]+)\\s*(?:;|$)`, 'im');
     const match = String(source || '').match(regex);
     return match ? String(match[1] || '').trim() : '';
 }
@@ -531,11 +531,36 @@ function extractBooleanField(objectLiteral, fieldName) {
     return parseBooleanLiteral(match[1]);
 }
 
-function parseTinCanConfig(contentDir) {
-    const preferredPath = path.join(contentDir, 'scripts', 'config.js');
-    const configPath = fs.existsSync(preferredPath) ? preferredPath : findFile(contentDir, 'config.js');
-    if (!configPath) return null;
+function getTinCanConfigCandidates(contentDir) {
+    const candidates = [];
+    const seen = new Set();
+    const pushCandidate = (candidatePath) => {
+        const normalized = String(candidatePath || '').trim();
+        if (!normalized || seen.has(normalized)) return;
+        try {
+            if (!fs.existsSync(normalized)) return;
+            if (!fs.statSync(normalized).isFile()) return;
+            seen.add(normalized);
+            candidates.push(normalized);
+        } catch {
+            // ignore unreadable path
+        }
+    };
 
+    pushCandidate(path.join(contentDir, 'scripts', 'config.js'));
+    pushCandidate(path.join(contentDir, 'scripts', 'script.js'));
+    pushCandidate(path.join(contentDir, 'config.js'));
+    pushCandidate(path.join(contentDir, 'script.js'));
+
+    const recursiveConfig = findFile(contentDir, 'config.js');
+    const recursiveScript = findFile(contentDir, 'script.js');
+    pushCandidate(recursiveConfig);
+    pushCandidate(recursiveScript);
+
+    return candidates;
+}
+
+function parseTinCanConfigFile(configPath, contentDir) {
     let source = '';
     try {
         source = fs.readFileSync(configPath, 'utf-8');
@@ -591,6 +616,11 @@ function parseTinCanConfig(contentDir) {
             row.calculateScore ||
             (Number.isFinite(row.limitQuizzed) && Number(row.limitQuizzed) > 0)
     ).length;
+    const signalScore =
+        (isLinear !== null ? 3 : 0)
+        + (isResume !== null ? 1 : 0)
+        + (completedWhenDoAllMasteryscore !== null ? 1 : 0)
+        + (activities.length > 0 ? 4 : 0);
 
     return {
         source: path.relative(contentDir, configPath).replace(/\\/g, '/'),
@@ -598,6 +628,61 @@ function parseTinCanConfig(contentDir) {
         isResume,
         completedWhenDoAllMasteryscore,
         activities,
+        assessmentCount,
+        scoredAssessmentCount,
+        signalScore,
+    };
+}
+
+function parseTinCanConfig(contentDir) {
+    const candidates = getTinCanConfigCandidates(contentDir);
+    if (!Array.isArray(candidates) || candidates.length === 0) return null;
+
+    const parsedFiles = [];
+    for (const configPath of candidates) {
+        const parsed = parseTinCanConfigFile(configPath, contentDir);
+        if (parsed) parsedFiles.push(parsed);
+    }
+    if (parsedFiles.length === 0) return null;
+
+    const sortedForScalars = [...parsedFiles].sort((a, b) => Number(b.signalScore || 0) - Number(a.signalScore || 0));
+    const pickScalar = (fieldName) => {
+        for (const row of sortedForScalars) {
+            if (row?.[fieldName] !== null && row?.[fieldName] !== undefined) return row[fieldName];
+        }
+        return null;
+    };
+
+    const mergedActivities = [];
+    const seen = new Set();
+    for (const row of parsedFiles) {
+        const list = Array.isArray(row?.activities) ? row.activities : [];
+        for (const activity of list) {
+            const dedupeKey = String(activity?.normalizedUrl || activity?.id || '').trim().toLowerCase();
+            if (!dedupeKey || seen.has(dedupeKey)) continue;
+            seen.add(dedupeKey);
+            mergedActivities.push(activity);
+        }
+    }
+
+    const assessmentCount = mergedActivities.filter((row) => row?.isAssessment).length;
+    const scoredAssessmentCount = mergedActivities.filter(
+        (row) =>
+            (Number.isFinite(row?.masteryScore) && Number(row.masteryScore) > 0) ||
+            row?.calculateScore ||
+            (Number.isFinite(row?.limitQuizzed) && Number(row.limitQuizzed) > 0)
+    ).length;
+    const mergedSource = parsedFiles
+        .map((row) => String(row?.source || '').trim())
+        .filter(Boolean)
+        .join(',');
+
+    return {
+        source: mergedSource || sortedForScalars[0]?.source || '',
+        isLinear: pickScalar('isLinear'),
+        isResume: pickScalar('isResume'),
+        completedWhenDoAllMasteryscore: pickScalar('completedWhenDoAllMasteryscore'),
+        activities: mergedActivities,
         assessmentCount,
         scoredAssessmentCount,
     };

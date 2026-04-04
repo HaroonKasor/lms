@@ -292,6 +292,17 @@ export default function LearnPage() {
     const [isLearningSidebarOpen, setIsLearningSidebarOpen] = useState(true);
     const [isLearningAiOpen, setIsLearningAiOpen] = useState(false);
     const [showCompletionToast, setShowCompletionToast] = useState(false);
+    const packageLinearEnabled = useMemo(() => {
+        const raw = content?.packageConfig?.isLinear;
+        if (raw === true) return true;
+        if (typeof raw === 'number') return Number(raw) > 0;
+        if (typeof raw === 'string') {
+            const normalized = raw.trim().toLowerCase();
+            return ['1', 'true', 'yes', 'y'].includes(normalized);
+        }
+        return false;
+    }, [content?.packageConfig?.isLinear]);
+    const chapterLockEnabled = cohortModuleEnabled || packageLinearEnabled;
 
     const videoRef = useRef(null);
     const iframeRef = useRef(null);
@@ -3622,7 +3633,7 @@ export default function LearnPage() {
     const getMaxUnlockedActivityIndex = useCallback(() => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         if (activities.length === 0) return 0;
-        if (!cohortModuleEnabled) return activities.length - 1;
+        if (!chapterLockEnabled) return activities.length - 1;
 
         let runtimeUnlocked = -1;
         const frameWindow = iframeRef.current?.contentWindow;
@@ -3676,7 +3687,7 @@ export default function LearnPage() {
             )
         );
         return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
-    }, [content, cohortModuleEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, getTinCanRuntimeIndexOffset]);
+    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, getTinCanRuntimeIndexOffset]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
@@ -3684,7 +3695,7 @@ export default function LearnPage() {
 
         const safeIndex = Math.max(0, Math.min(activities.length - 1, Number(idx) || 0));
         const maxUnlocked = getMaxUnlockedActivityIndex();
-        if (cohortModuleEnabled && safeIndex > maxUnlocked) {
+        if (chapterLockEnabled && safeIndex > maxUnlocked) {
             toast.warning('กรุณาเรียนบทก่อนหน้าให้ผ่านก่อน จึงจะไปบทถัดไปได้', LEARNER_TOAST);
             return;
         }
@@ -3722,7 +3733,7 @@ export default function LearnPage() {
                 // ignore manual select sync errors
             }
         }
-    }, [content, cohortModuleEnabled, getMaxUnlockedActivityIndex, persistTincanResumeIndex, resolveActivityCandidateUrl, persistTincanResumePath, applyTincanResumeToIframe, progressContentId, progressUserId, activeSectionId, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime]);
+    }, [content, chapterLockEnabled, getMaxUnlockedActivityIndex, persistTincanResumeIndex, resolveActivityCandidateUrl, persistTincanResumePath, applyTincanResumeToIframe, progressContentId, progressUserId, activeSectionId, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime]);
 
     const getMaxUnlockedWebPageIndex = useCallback(() => {
         const knownTotal = Math.max(
@@ -3732,7 +3743,7 @@ export default function LearnPage() {
             Number(currentTime || 0)
         );
         if (knownTotal <= 1) return 0;
-        if (!cohortModuleEnabled) return knownTotal - 1;
+        if (!chapterLockEnabled) return knownTotal - 1;
 
         const runtimeSnapshot = getCurrentWebStatusSnapshot();
         const savedSnapshot = readWebStatusSnapshot();
@@ -3756,7 +3767,7 @@ export default function LearnPage() {
             ? Number(detectedIndex)
             : inferredCurrentIndex;
         return Math.max(0, Math.min(knownTotal - 1, Math.max(contiguousCompleted, selectedIndex)));
-    }, [getLegacyWebPageTotal, duration, currentTime, cohortModuleEnabled, getCurrentWebStatusSnapshot, readWebStatusSnapshot, detectLegacyWebPageIndex]);
+    }, [getLegacyWebPageTotal, duration, currentTime, chapterLockEnabled, getCurrentWebStatusSnapshot, readWebStatusSnapshot, detectLegacyWebPageIndex]);
 
     const handleManualWebPageSelect = useCallback(async (idx) => {
         if (content?.type !== 'web') return;
@@ -3769,7 +3780,7 @@ export default function LearnPage() {
             Number(idx || 0) + 1
         );
         const safeIndex = Math.max(0, Math.min(knownTotal - 1, Number(idx) || 0));
-        if (cohortModuleEnabled) {
+        if (chapterLockEnabled) {
             const maxUnlocked = getMaxUnlockedWebPageIndex();
             if (safeIndex > maxUnlocked) {
                 toast.warning('กรุณาเรียนหน้าก่อนหน้าให้ผ่านก่อน จึงจะไปหน้าถัดไปได้', LEARNER_TOAST);
@@ -3851,7 +3862,7 @@ export default function LearnPage() {
         getLegacyWebPageTotal,
         duration,
         currentTime,
-        cohortModuleEnabled,
+        chapterLockEnabled,
         getMaxUnlockedWebPageIndex,
         persistWebResumeIndex,
         canFinalizeLegacyWebCompletion,
