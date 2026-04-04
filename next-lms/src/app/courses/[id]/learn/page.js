@@ -1504,53 +1504,64 @@ export default function LearnPage() {
             return 0;
         }
 
-        try {
-            const frameWindow = iframeRef.current?.contentWindow;
-            if (!frameWindow) return 0;
+        const activities = content.activities;
+        const runtimeRows = getTinCanRuntimeRows();
+        if (!Array.isArray(runtimeRows) || runtimeRows.length === 0) return 0;
 
-            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
-                ? frameWindow.currentState.dataIndex
-                : [];
-            const treeArray = Array.isArray(frameWindow?.treeArray) ? frameWindow.treeArray : [];
-            const activityTotal = content.activities.length;
-            if (activityTotal <= 0) return 0;
+        const normalize = (value) => String(value || '')
+            .replace(/^https?:\/\/[^/]+/i, '')
+            .replace(/\\/g, '/')
+            .split('?')[0]
+            .split('#')[0]
+            .replace(/^\/+/, '')
+            .toLowerCase()
+            .trim();
 
-            // Most reliable signal: dataIndex aligns with currentPage/goToPage.
-            if (dataIndex.length > 0) {
-                const rawDiff = dataIndex.length - activityTotal;
-                const safeDiff = Number.isFinite(rawDiff) ? Math.max(0, Math.floor(rawDiff)) : 0;
-                return safeDiff;
-            }
+        // Prefer real path matching to estimate offset. This is safer than using
+        // count differences, which can be very wrong for some packages.
+        const diffCount = new Map();
+        let matched = 0;
+        for (let i = 0; i < activities.length; i++) {
+            const candidate = resolveActivityCandidateUrl(activities[i]);
+            const candidateKey = normalize(candidate);
+            if (!candidateKey) continue;
 
-            // Fallback: estimate using only launchable/page rows from treeArray.
-            if (treeArray.length > 0) {
-                const launchableCount = treeArray.filter((row) => {
-                    const isPage = row?.ispage;
-                    if (isPage === true) return true;
-                    if (String(isPage).toLowerCase() === 'true') return true;
-                    return Boolean(
-                        String(row?.url || '').trim()
-                        || String(row?.urlOffline || '').trim()
-                        || String(row?.launch || '').trim()
-                        || String(row?.href || '').trim()
-                        || String(row?.src || '').trim()
-                        || String(row?.path || '').trim()
-                    );
-                }).length;
-                const rawDiff = launchableCount - activityTotal;
-                const safeDiff = Number.isFinite(rawDiff) ? Math.max(0, Math.floor(rawDiff)) : 0;
-                return safeDiff;
-            }
+            const rowIndex = runtimeRows.findIndex((entry) => {
+                const rowKey = getTinCanRuntimeRowPathKey(entry?.row);
+                if (!rowKey) return false;
+                return (
+                    rowKey === candidateKey
+                    || rowKey.endsWith(candidateKey)
+                    || candidateKey.endsWith(rowKey)
+                );
+            });
+            if (rowIndex < 0) continue;
 
-            const runtimeTotal = Number(frameWindow?.numpage || 0) || 0;
-            if (runtimeTotal <= 0) return 0;
-            const rawDiff = runtimeTotal - activityTotal;
-            const safeDiff = Number.isFinite(rawDiff) ? Math.max(0, Math.floor(rawDiff)) : 0;
-            return safeDiff;
-        } catch {
-            return 0;
+            const diff = Math.floor(Number(rowIndex) - Number(i));
+            if (!Number.isFinite(diff) || diff < 0) continue;
+            matched += 1;
+            diffCount.set(diff, Number(diffCount.get(diff) || 0) + 1);
         }
-    }, [content]);
+
+        if (matched >= 2 && diffCount.size > 0) {
+            let bestDiff = 0;
+            let bestCount = -1;
+            for (const [diff, count] of diffCount.entries()) {
+                if (count > bestCount || (count === bestCount && diff < bestDiff)) {
+                    bestDiff = diff;
+                    bestCount = count;
+                }
+            }
+            return Math.max(0, bestDiff);
+        }
+
+        if (runtimeRows.length === activities.length) return 0;
+
+        // Last-resort fallback: keep offset conservative to avoid jumping to wrong chapter.
+        const rawDiff = runtimeRows.length - activities.length;
+        if (!Number.isFinite(rawDiff)) return 0;
+        return Math.max(0, Math.min(2, Math.floor(rawDiff)));
+    }, [content, getTinCanRuntimeRows, resolveActivityCandidateUrl, getTinCanRuntimeRowPathKey]);
 
     const mapRuntimePageToActivityIndex = useCallback((runtimePageIndex) => {
         const numeric = Number(runtimePageIndex);
@@ -1578,9 +1589,13 @@ export default function LearnPage() {
         if (exact >= 0) return exact;
 
         const offset = getTinCanRuntimeIndexOffset();
+        const runtimeRows = getTinCanRuntimeRows();
+        const runtimeMax = Array.isArray(runtimeRows) && runtimeRows.length > 0
+            ? runtimeRows.length - 1
+            : (activities.length - 1);
         const runtimeTarget = safeActivityIndex + offset;
-        return Math.max(0, runtimeTarget);
-    }, [content?.activities, findRuntimePageIndexForActivity, getTinCanRuntimeIndexOffset]);
+        return Math.max(0, Math.min(runtimeMax, runtimeTarget));
+    }, [content?.activities, findRuntimePageIndexForActivity, getTinCanRuntimeIndexOffset, getTinCanRuntimeRows]);
 
     const detectActivityIndexFromIframe = useCallback(() => {
         if (!iframeRef.current || !content || !Array.isArray(content.activities) || content.activities.length === 0) return -1;
