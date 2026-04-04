@@ -1,7 +1,8 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap');
 
 :root {
-  --font-outfit: "Inter", "Segoe UI", Arial, sans-serif;
+  --font-outfit: "Outfit", "Inter", "Segoe UI", Arial, sans-serif;
   --font-noto-sans-thai: "Noto Sans Thai", "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif;
 }
 
