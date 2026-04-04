@@ -339,6 +339,7 @@ export default function LearnPage() {
     const reflowSessionRef = useRef(0);
     const completionLockRef = useRef(false);
     const initializedStatementGateRef = useRef('');
+    const lessonEntryStatementGateRef = useRef('');
 
     const markLearningInteraction = useCallback(() => {
         const now = Date.now();
@@ -2718,6 +2719,58 @@ export default function LearnPage() {
         }
     }, [content, status, actor, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, resumeLoaded, syncProgressWithTrackedTime, routeId, enrollmentId]);
 
+    // Ensure each selected TinCan lesson emits at least one lesson-level statement
+    // so report can separate rows by lesson even if package script is quiet.
+    useEffect(() => {
+        if (!isLaunchMode || content?.type !== 'tincan' || !resumeLoaded) return;
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return;
+        const safeIndex = Math.max(0, Math.min(activities.length - 1, Number(selectedActivityIndex) || 0));
+        const lesson = activities[safeIndex];
+        if (!lesson) return;
+
+        const lessonId = String(
+            resolveActivityCandidateUrl(lesson)
+            || lesson?.activityId
+            || lesson?.id
+            || `lesson-${safeIndex + 1}`
+        ).trim();
+        const lessonName = String(lesson?.name || lesson?.title || `Lesson ${safeIndex + 1}`).trim();
+        const gateKey = `${String(content?.id || routeId || '')}:${Number(enrollmentId || 0)}:${Number(activeSectionId || 0)}:${safeIndex}:${lessonId}`;
+        if (lessonEntryStatementGateRef.current === gateKey) return;
+        lessonEntryStatementGateRef.current = gateKey;
+
+        const statement = buildVideoEventStatement({
+            actor,
+            contentId: content.id,
+            contentName: lessonName || content.title,
+            verb: 'experienced',
+            currentTime: safeIndex + 1,
+            duration: activities.length,
+        });
+        statement.object = {
+            ...(statement.object || {}),
+            definition: {
+                ...(statement.object?.definition || {}),
+                name: {
+                    ...(statement.object?.definition?.name || {}),
+                    'en-US': lessonName || content.title,
+                },
+            },
+        };
+        statement.context = {
+            ...(statement.context || {}),
+            extensions: {
+                ...(statement.context?.extensions || {}),
+                [`${xapiExtensionNamespace}/activity-id`]: lessonId,
+                [`${xapiExtensionNamespace}/activity-name`]: lessonName,
+                [`${xapiExtensionNamespace}/activity-index`]: Number(safeIndex + 1),
+                [xapiSkipProgressSyncKey]: true,
+            },
+        };
+        sendStatement(statement);
+    }, [isLaunchMode, content, resumeLoaded, selectedActivityIndex, resolveActivityCandidateUrl, actor, routeId, enrollmentId, activeSectionId, xapiExtensionNamespace, xapiSkipProgressSyncKey]);
+
     // Video event handlers
     const handlePlay = useCallback(() => {
         if (!content) return;
@@ -2815,6 +2868,23 @@ export default function LearnPage() {
             if (matchedActivityIndex < 0) {
                 matchedActivityIndex = detectActivityIndexFromIframe();
             }
+            const matchedActivity =
+                Array.isArray(content?.activities) && matchedActivityIndex >= 0 && matchedActivityIndex < content.activities.length
+                    ? content.activities[matchedActivityIndex]
+                    : null;
+            const matchedActivityId = String(
+                resolveActivityCandidateUrl(matchedActivity)
+                || matchedActivity?.activityId
+                || matchedActivity?.id
+                || ''
+            ).trim();
+            const matchedActivityName = String(
+                matchedActivity?.name
+                || matchedActivity?.title
+                || incoming?.object?.definition?.name?.['en-US']
+                || content?.title
+                || ''
+            ).trim();
 
             // Force statement ownership to current user + current content.
             // Some TinCan packages send external actor/object IDs that do not map to our DB keys.
@@ -2833,7 +2903,7 @@ export default function LearnPage() {
                         ...(incoming.object?.definition || {}),
                         name: {
                             ...(incoming.object?.definition?.name || {}),
-                            'en-US': incoming.object?.definition?.name?.['en-US'] || content.title,
+                            'en-US': matchedActivityName || incoming.object?.definition?.name?.['en-US'] || content.title,
                         },
                     },
                 },
@@ -2843,6 +2913,9 @@ export default function LearnPage() {
                         ...(incoming.context?.extensions || {}),
                         [`${xapiExtensionNamespace}/original-actor-mbox`]: incoming.actor?.mbox || '',
                         [`${xapiExtensionNamespace}/original-object-id`]: incoming.object?.id || '',
+                        [`${xapiExtensionNamespace}/activity-id`]: matchedActivityId,
+                        [`${xapiExtensionNamespace}/activity-name`]: matchedActivityName,
+                        [`${xapiExtensionNamespace}/activity-index`]: matchedActivityIndex >= 0 ? Number(matchedActivityIndex + 1) : null,
                         // Chapter resume is synced by LearnPage logic; don't let nested media overwrite it.
                         [xapiSkipProgressSyncKey]: true,
                     },

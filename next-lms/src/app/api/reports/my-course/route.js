@@ -116,14 +116,21 @@ function deriveActivityIdentity(payload = {}, fallbackCourseName = 'Activity') {
     const result = payload?.result || {};
     const extensions = result?.extensions || {};
     const contextExtensions = payload?.context?.extensions || {};
+    const taggedActivityId =
+        getExtensionValueByKeySuffix(contextExtensions, '/activity-id')
+        || getExtensionValueByKeySuffix(extensions, '/activity-id');
+    const taggedActivityName =
+        getExtensionValueByKeySuffix(contextExtensions, '/activity-name')
+        || getExtensionValueByKeySuffix(extensions, '/activity-name');
     const originalObjectId =
         getExtensionValueByKeySuffix(contextExtensions, '/original-object-id')
         || getExtensionValueByKeySuffix(extensions, '/original-object-id');
 
     const objectId = String(payload?.object?.id || '').trim();
-    const activityId = String(originalObjectId || objectId || '').trim();
+    const activityId = String(taggedActivityId || originalObjectId || objectId || '').trim();
     const activityNameFromPayload = String(
-        payload?.object?.definition?.name?.['en-US']
+        taggedActivityName
+        || payload?.object?.definition?.name?.['en-US']
         || payload?.object?.definition?.name?.en
         || payload?.object?.definition?.name?.th
         || ''
@@ -250,6 +257,17 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
         const startsNewSession = !hasCurrent || isInitialized || shouldSplitByLongGap;
 
         if (startsNewSession) {
+            // If a new "initialized" arrives soon after the previous statement,
+            // treat that gap as time spent in the previous learning entry.
+            if (
+                hasCurrent
+                && isInitialized
+                && Number.isFinite(gapMinutes)
+                && gapMinutes > 0
+                && gapMinutes <= 45
+            ) {
+                current.minutesFromGap += gapMinutes;
+            }
             flushCurrent();
             current = {
                 activity: item.activity || fallbackCourseName,
