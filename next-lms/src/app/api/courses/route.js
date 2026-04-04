@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import {
     getCourseCompatMaps,
+    getSectionCompatMaps,
     setCourseAutoApprove,
     setCourseContentId,
     setCourseSettings,
@@ -160,7 +161,8 @@ async function buildReviewSummaryByCourse(courseIds = []) {
 function normalizeCourse(
     course,
     compatMaps = { contentByCourseId: {}, thumbnailByCourseId: {} },
-    reviewSummaryByCourseId = {}
+    reviewSummaryByCourseId = {},
+    sectionSettingsBySectionId = {}
 ) {
     const categoryName = course.categories?.name || '';
     const publishStatus = String(course.publishStatus || 'draft').toLowerCase();
@@ -186,8 +188,45 @@ function normalizeCourse(
     const isOfflineClassroom = deliveryMode === 'offline_classroom';
     const isSelfLearning = deliveryMode === 'self_learning';
 
+    const normalizedSections = Array.isArray(course?.sections)
+        ? course.sections
+            .map((section) => {
+                const sectionKey = String(section?.id || '');
+                const sectionSettings = sectionSettingsBySectionId?.[sectionKey] || {};
+                const groups = Array.isArray(sectionSettings?.groups) ? sectionSettings.groups : [];
+                const isSectionActive = section?.isActive !== false;
+
+                return {
+                    ...section,
+                    name: section?.title || '',
+                    sessionCode: String(sectionSettings?.sessionCode || '').trim(),
+                    detail: String(sectionSettings?.detail || '').trim(),
+                    registerDateFrom: String(sectionSettings?.registerDateFrom || '').trim(),
+                    registerDateTo: String(sectionSettings?.registerDateTo || '').trim(),
+                    registerUnlimit: Boolean(sectionSettings?.registerUnlimit),
+                    learnDateTo: String(sectionSettings?.learnDateTo || '').trim(),
+                    learnDateUnlimit: sectionSettings?.learnDateUnlimit !== false,
+                    maxLearner: section?.maxLearner || 0,
+                    maxLearnerUnlimit: section?.maxLearner == null || Boolean(sectionSettings?.maxLearnerUnlimit),
+                    status: isSectionActive ? 'active' : 'inactive',
+                    autoApprove: sectionSettings?.autoApprove ?? true,
+                    certificate: Boolean(sectionSettings?.certificate),
+                    autoCert: Boolean(sectionSettings?.autoCert),
+                    cohortModule: Boolean(sectionSettings?.cohortModule),
+                    groups: groups.join(','),
+                };
+            })
+            .sort((a, b) => {
+                const aOrder = Number(a?.orderNo || 0);
+                const bOrder = Number(b?.orderNo || 0);
+                if (aOrder !== bOrder) return aOrder - bOrder;
+                return Number(a?.id || 0) - Number(b?.id || 0);
+            })
+        : [];
+
     return {
         ...course,
+        sections: normalizedSections,
         name: course.title || '',
         nameEn: course.titleEn || '',
         detail: String(settings?.detail || '').trim(),
@@ -275,7 +314,9 @@ export async function GET(request) {
                     title: true,
                     sectionType: true,
                     isActive: true,
+                    isPublic: true,
                     orderNo: true,
+                    maxLearner: true,
                 },
             }
             : {
@@ -291,11 +332,24 @@ export async function GET(request) {
             orderBy: { id: 'desc' },
         });
 
-        const [compatMaps, reviewSummaryByCourseId] = await Promise.all([
+        const sectionIds = courses
+            .flatMap((course) => (Array.isArray(course?.sections) ? course.sections : []))
+            .map((section) => Number(section?.id))
+            .filter((id) => Number.isInteger(id) && id > 0);
+
+        const [compatMaps, reviewSummaryByCourseId, sectionCompatMaps] = await Promise.all([
             getCourseCompatMaps(courses.map((course) => course.id)),
             buildReviewSummaryByCourse(courses.map((course) => course.id)),
+            getSectionCompatMaps(sectionIds),
         ]);
-        return NextResponse.json(courses.map((course) => normalizeCourse(course, compatMaps, reviewSummaryByCourseId)));
+        return NextResponse.json(
+            courses.map((course) => normalizeCourse(
+                course,
+                compatMaps,
+                reviewSummaryByCourseId,
+                sectionCompatMaps?.sectionSettingsBySectionId || {}
+            ))
+        );
     } catch (err) {
         return toErrorResponse(err);
     }
@@ -401,9 +455,13 @@ export async function POST(request) {
             collaborate: body.collaborate,
         });
 
-        const [compatMaps, reviewSummaryByCourseId] = await Promise.all([
+        const sectionIds = (Array.isArray(course?.sections) ? course.sections : [])
+            .map((section) => Number(section?.id))
+            .filter((id) => Number.isInteger(id) && id > 0);
+        const [compatMaps, reviewSummaryByCourseId, sectionCompatMaps] = await Promise.all([
             getCourseCompatMaps([course.id]),
             buildReviewSummaryByCourse([course.id]),
+            getSectionCompatMaps(sectionIds),
         ]);
 
         await writeAdminAudit({
@@ -425,7 +483,15 @@ export async function POST(request) {
             },
             request: { path: '/api/courses', method: 'POST' },
         });
-        return NextResponse.json({ success: true, course: normalizeCourse(course, compatMaps, reviewSummaryByCourseId) });
+        return NextResponse.json({
+            success: true,
+            course: normalizeCourse(
+                course,
+                compatMaps,
+                reviewSummaryByCourseId,
+                sectionCompatMaps?.sectionSettingsBySectionId || {}
+            ),
+        });
     } catch (err) {
         return toErrorResponse(err);
     }
@@ -563,9 +629,13 @@ export async function PUT(request) {
             });
         }
 
-        const [compatMaps, reviewSummaryByCourseId] = await Promise.all([
+        const sectionIds = (Array.isArray(course?.sections) ? course.sections : [])
+            .map((section) => Number(section?.id))
+            .filter((id) => Number.isInteger(id) && id > 0);
+        const [compatMaps, reviewSummaryByCourseId, sectionCompatMaps] = await Promise.all([
             getCourseCompatMaps([course.id]),
             buildReviewSummaryByCourse([course.id]),
+            getSectionCompatMaps(sectionIds),
         ]);
 
         await writeAdminAudit({
@@ -588,7 +658,15 @@ export async function PUT(request) {
             },
             request: { path: '/api/courses', method: 'PUT' },
         });
-        return NextResponse.json({ success: true, course: normalizeCourse(course, compatMaps, reviewSummaryByCourseId) });
+        return NextResponse.json({
+            success: true,
+            course: normalizeCourse(
+                course,
+                compatMaps,
+                reviewSummaryByCourseId,
+                sectionCompatMaps?.sectionSettingsBySectionId || {}
+            ),
+        });
     } catch (err) {
         return toErrorResponse(err);
     }

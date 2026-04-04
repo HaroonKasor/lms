@@ -1,6 +1,7 @@
 import "./globals.css";
 import IdleSessionGuard from "@/components/layout/IdleSessionGuard";
 import GlobalToastProvider from "@/components/ui/GlobalToastProvider";
+import PageTransition from "@/components/ui/PageTransition";
 
 export const metadata = {
     title: "SkillUp",
@@ -18,7 +19,7 @@ export default function RootLayout({ children }) {
             <body className="bg-gradient-to-b from-[#FFFFFF] to-[#F6F8FF] min-h-screen text-gray-800">
                 <IdleSessionGuard />
                 <GlobalToastProvider />
-                {children}
+                <PageTransition>{children}</PageTransition>
             </body>
         </html>
     );

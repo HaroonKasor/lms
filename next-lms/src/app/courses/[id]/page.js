@@ -18,11 +18,32 @@ function formatReviewDate(value) {
     if (!value) return '-';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '-';
-    return date.toLocaleDateString('th-TH', {
+    return date.toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
     });
+}
+
+function formatDateLabel(value, locale = 'en-US') {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return date.toLocaleDateString(locale, {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+    });
+}
+
+function formatDateRange(from, to, unlimit = false) {
+    if (unlimit) return 'Unlimited';
+    const hasFrom = Boolean(from);
+    const hasTo = Boolean(to);
+    if (!hasFrom && !hasTo) return '-';
+    if (hasFrom && hasTo) return `${formatDateLabel(from)} - ${formatDateLabel(to)}`;
+    if (hasFrom) return `Starts ${formatDateLabel(from)}`;
+    return `Until ${formatDateLabel(to)}`;
 }
 
 export default function CourseDetailPage() {
@@ -31,6 +52,7 @@ export default function CourseDetailPage() {
     const courseId = params.id;
 
     const [course, setCourse] = useState(null);
+    const [allCourses, setAllCourses] = useState([]);
     const [enrollment, setEnrollment] = useState(null);
     const [loading, setLoading] = useState(true);
     const [enrolling, setEnrolling] = useState(false);
@@ -112,6 +134,7 @@ export default function CourseDetailPage() {
                 const cRes = await fetch('/api/courses?public=true');
                 if (cRes.ok) {
                     const courses = await cRes.json();
+                    setAllCourses(Array.isArray(courses) ? courses : []);
                     const found = courses.find(c => c.id === parseInt(courseId));
                     if (found) setCourse(found);
                 }
@@ -149,7 +172,7 @@ export default function CourseDetailPage() {
 
         const defaultSection = pickDefaultSection(course);
         if (!defaultSection?.id) {
-            toast.warning('คอร์สนี้ยังไม่มี Section สำหรับลงทะเบียน กรุณาติดต่อผู้ดูแลระบบ', LEARNER_TOAST);
+            toast.warning('This course has no available section for enrollment. Please contact support.', LEARNER_TOAST);
             return;
         }
 
@@ -176,10 +199,63 @@ export default function CourseDetailPage() {
 
     const formatDuration = (c) => {
         const parts = [];
-        if (c.durationHours > 0) parts.push(`${c.durationHours} ชั่วโมง`);
-        if (c.durationMinutes > 0) parts.push(`${c.durationMinutes} นาที`);
-        return parts.join(' ') || 'ไม่จำกัด';
+        if (c.durationHours > 0) parts.push(`${c.durationHours} hours`);
+        if (c.durationMinutes > 0) parts.push(`${c.durationMinutes} minutes`);
+        return parts.join(' ') || 'Unlimited';
     };
+
+    const normalizedSections = useMemo(() => {
+        const sections = Array.isArray(course?.sections) ? course.sections : [];
+        return [...sections].sort((a, b) => {
+            const aOrder = Number(a?.orderNo || 0);
+            const bOrder = Number(b?.orderNo || 0);
+            if (aOrder !== bOrder) return aOrder - bOrder;
+            return Number(a?.id || 0) - Number(b?.id || 0);
+        });
+    }, [course]);
+
+    const defaultSection = useMemo(() => pickDefaultSection(course), [course]);
+
+    const instructorName = useMemo(
+        () => String(course?.instructor || '').trim() || 'Instructor Name',
+        [course]
+    );
+    const instructorExperience = useMemo(
+        () => String(course?.instructorExperience || '').trim(),
+        [course]
+    );
+    const registrationWindowText = useMemo(
+        () => formatDateRange(course?.registerDateFrom, course?.registerDateTo, course?.registerUnlimit),
+        [course]
+    );
+    const prerequisitesDisplay = useMemo(() => {
+        const raw = Array.isArray(course?.prerequisites) ? course.prerequisites : [];
+        if (raw.length === 0) return [];
+
+        const all = Array.isArray(allCourses) ? allCourses : [];
+        const normalize = (value) => String(value || '').trim().toLowerCase();
+
+        const byId = new Map(all.map((item) => [String(item?.id || ''), item]));
+        const byCode = new Map(all.map((item) => [normalize(item?.courseCode), item]));
+        const byName = new Map(all.map((item) => [normalize(item?.name), item]));
+
+        return raw.map((value) => {
+            const token = String(value || '').trim();
+            if (!token) return null;
+
+            const byIdMatch = byId.get(token);
+            if (byIdMatch?.name) return byIdMatch.name;
+
+            const normalized = normalize(token);
+            const byCodeMatch = byCode.get(normalized);
+            if (byCodeMatch?.name) return byCodeMatch.name;
+
+            const byNameMatch = byName.get(normalized);
+            if (byNameMatch?.name) return byNameMatch.name;
+
+            return token;
+        }).filter(Boolean);
+    }, [allCourses, course?.prerequisites]);
 
     const renderStars = (value, { interactive = false, sizeClass = 'w-[12px] h-[12px]' } = {}) => {
         const current = Number(value || 0);
@@ -211,17 +287,34 @@ export default function CourseDetailPage() {
         return `(${avg.toFixed(1)} / 5.0 Rating)`;
     }, [reviewSummary]);
 
+    const jumpToReviewSection = () => {
+        if (!isWebboardEnabled) return;
+        setActiveTab('review');
+        window.setTimeout(() => {
+            const target = document.getElementById('course-review-section');
+            if (target) {
+                target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }, 0);
+    };
+
+    useEffect(() => {
+        if (!isWebboardEnabled && activeTab === 'review') {
+            setActiveTab('overview');
+        }
+    }, [activeTab, isWebboardEnabled]);
+
     const handleSubmitReview = async () => {
         if (!user) {
             window.location.href = '/login';
             return;
         }
         if (!canReview) {
-            setReviewError('คุณต้องเรียนจบคอร์สก่อนจึงจะรีวิวได้');
+            setReviewError('You must complete this course before leaving a review.');
             return;
         }
         if (!Number.isInteger(reviewRating) || reviewRating < 1 || reviewRating > 5) {
-            setReviewError('กรุณาเลือกระดับดาว 1-5');
+            setReviewError('Please select a rating between 1 and 5 stars.');
             return;
         }
         try {
@@ -249,21 +342,6 @@ export default function CourseDetailPage() {
             setReviewSubmitting(false);
         }
     };
-
-    const jumpToReviewSection = () => {
-        if (!isWebboardEnabled) return;
-        setActiveTab('review');
-        const target = document.getElementById('course-review-section');
-        if (target) {
-            target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-    };
-
-    useEffect(() => {
-        if (!isWebboardEnabled && activeTab === 'review') {
-            setActiveTab('overview');
-        }
-    }, [activeTab, isWebboardEnabled]);
 
     const closeReviewSuccessModal = useCallback(() => {
         setReviewSuccessModal((prev) => ({ ...prev, open: false }));
@@ -295,8 +373,8 @@ export default function CourseDetailPage() {
                 <div className="flex items-center justify-center py-40">
                     <div className="text-center">
                         <div className="text-6xl mb-4">😕</div>
-                        <h2 className="text-2xl text-[#052143] font-medium mb-2">ไม่พบหลักสูตร</h2>
-                        <Link href="/courses" className="text-[#687EFF] underline">กลับหน้ารายการ</Link>
+                        <h2 className="text-2xl text-[#052143] font-medium mb-2">Course not found</h2>
+                        <Link href="/courses" className="text-[#687EFF] underline">Back to course list</Link>
                     </div>
                 </div>
             </div>
@@ -309,9 +387,17 @@ export default function CourseDetailPage() {
     const enrolledSectionId = Number(
         enrollment?.sectionId
         || enrollment?.section?.id
-        || pickDefaultSection(course)?.id
+        || defaultSection?.id
         || 0
     );
+    const showMaxLearner = !course?.maxLearnerUnlimit && Number(course?.maxLearner || 0) > 0;
+    const ctaLabel = enrolling
+        ? 'Enrolling...'
+        : isPendingApproval
+            ? 'Pending'
+            : isEnrolled
+                ? (enrollmentStatus === 'LEARNING' ? 'Continue Learning' : 'Start Learning')
+                : 'Enroll Now';
     const learnHref = enrolledSectionId > 0
         ? `/courses/${courseId}/learn?launch=1&sectionId=${enrolledSectionId}`
         : `/courses/${courseId}/learn?launch=1`;
@@ -344,12 +430,16 @@ export default function CourseDetailPage() {
                             <div className="flex flex-wrap items-center gap-[40px] pt-2">
                                 {/* Instructor */}
                                 <div className="flex items-center gap-3">
-                                    <div className="w-[44px] h-[44px] bg-[#eef1fa] border border-[#eaedf5] rounded-full overflow-hidden flex items-center justify-center text-[#687EFF] font-bold text-[16px]">
-                                        {(course.instructor || 'I')[0].toUpperCase()}
-                                    </div>
+                                    <img
+                                        src={DEFAULT_AVATAR_URL}
+                                        alt={instructorName}
+                                        className="w-[44px] h-[44px] border border-[#eaedf5] rounded-full object-cover"
+                                    />
                                     <div className="flex flex-col">
-                                        <span className="text-[#6B778B] text-[12px] leading-[140%]">20+ Years Experience</span>
-                                        <span className="text-[#052143] text-[15px] font-bold leading-[140%]">{course.instructor || 'Dr. Sarun'}</span>
+                                        {instructorExperience && (
+                                            <span className="text-[#6B778B] text-[12px] leading-[140%]">{instructorExperience}</span>
+                                        )}
+                                        <span className="text-[#052143] text-[15px] font-bold leading-[140%]">{instructorName}</span>
                                     </div>
                                 </div>
 
@@ -415,126 +505,122 @@ export default function CourseDetailPage() {
                         {/* LEFT COLUMN: Main Content */}
                         <div className="flex-1 max-w-[852px] flex flex-col gap-10">
 
-                            {/* Course Overview */}
-                            <div className="flex flex-col gap-4">
-                                <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">Course Overview</h2>
-                                <p className="text-[#6B778B] text-[15px] leading-[1.6]">
-                                    {course.detail || "Master Python Programming for Beginners and Beyond is a comprehensive course designed to take you from the fundamentals of Python to advanced topics, providing you with the skills needed to solve real-world problems. Whether you're new to programming or looking to deepen your Python knowledge, this course covers essential concepts and hands-on projects to make you proficient in Python, one of the world's most versatile and in-demand programming languages."}
-                                </p>
-                            </div>
+                            {activeTab === 'overview' && (
+                                <>
+                                    <div className="flex flex-col gap-4">
+                                        <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">Course Overview</h2>
+                                        <p className="text-[#6B778B] text-[15px] leading-[1.6]">
+                                            {course.detail || '-'}
+                                        </p>
+                                    </div>
 
-                            {/* What You Will Learn? */}
-                            <div className="flex flex-col gap-6">
-                                <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">What You Will Learn?</h2>
-                                <div className="flex flex-col gap-5">
-                                    <div className="flex gap-3 items-start">
-                                        <div className="mt-1 w-[16px] h-[16px] bg-[#687EFF] rounded-full text-white flex items-center justify-center shrink-0">
-                                            <svg className="w-[10px] h-[10px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                                        </div>
-                                        <div className="flex flex-col gap-1">
-                                            <h3 className="text-[#052143] text-[15px] font-bold leading-[1.4] m-0">Python Basics:</h3>
-                                            <p className="text-[#6B778B] text-[14px] leading-[1.6]">Understand the fundamentals of Python, including syntax, variables, data types, and control structures.</p>
-                                        </div>
+                                    <div className="flex flex-col gap-6">
+                                        <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">What You Will Learn?</h2>
+                                        {normalizedSections.length === 0 ? (
+                                            <p className="text-[#6B778B] text-[15px] leading-[1.6]">No sections available in this course yet.</p>
+                                        ) : (
+                                            <div className="flex flex-col gap-5">
+                                                {normalizedSections.map((section) => (
+                                                    <div key={section.id} className="flex gap-3 items-start">
+                                                        <div className="mt-1 w-[16px] h-[16px] bg-[#687EFF] rounded-full text-white flex items-center justify-center shrink-0">
+                                                            <svg className="w-[10px] h-[10px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                                        </div>
+                                                        <div className="flex flex-col gap-1">
+                                                            <h3 className="text-[#052143] text-[15px] font-bold leading-[1.4] m-0">
+                                                                {section?.name || section?.title || `Section ${section?.orderNo || '-'}`}
+                                                            </h3>
+                                                            <p className="text-[#6B778B] text-[14px] leading-[1.6]">
+                                                                {String(section?.detail || '').trim() || `Type: ${String(section?.sectionType || 'lesson')}`}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
-                                    <div className="flex gap-3 items-start">
-                                        <div className="mt-1 w-[16px] h-[16px] bg-[#687EFF] rounded-full text-white flex items-center justify-center shrink-0">
-                                            <svg className="w-[10px] h-[10px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                                        </div>
-                                        <div className="flex flex-col gap-1">
-                                            <h3 className="text-[#052143] text-[15px] font-bold leading-[1.4] m-0">Data Structures:</h3>
-                                            <p className="text-[#6B778B] text-[14px] leading-[1.6]">Dive deep into lists, tuples, dictionaries, and sets for efficient data storage and manipulation.</p>
-                                        </div>
+
+                                    <div className="flex flex-col gap-4">
+                                        <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">Prerequisites</h2>
+                                        {prerequisitesDisplay.length === 0 ? (
+                                            <p className="text-[#6B778B] text-[15px] leading-[1.6]">No prerequisites</p>
+                                        ) : (
+                                            <ul className="list-disc pl-5 space-y-2">
+                                                {prerequisitesDisplay.map((item, index) => (
+                                                    <li key={`${item}-${index}`} className="text-[#6B778B] text-[15px] leading-[1.6]">{item}</li>
+                                                ))}
+                                            </ul>
+                                        )}
                                     </div>
-                                    <div className="flex gap-3 items-start">
-                                        <div className="mt-1 w-[16px] h-[16px] bg-[#687EFF] rounded-full text-white flex items-center justify-center shrink-0">
-                                            <svg className="w-[10px] h-[10px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                                </>
+                            )}
+
+                            {activeTab === 'curriculum' && (
+                                <div className="flex flex-col gap-4">
+                                    <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">Curriculum</h2>
+                                    {normalizedSections.length === 0 ? (
+                                        <p className="text-[#6B778B] text-[15px] leading-[1.6]">No sections available in this course yet.</p>
+                                    ) : (
+                                        <div className="flex flex-col gap-4">
+                                            {normalizedSections.map((section) => (
+                                                <div key={section.id} className="rounded-[16px] border border-[#D1E3FB] bg-white p-4">
+                                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                                                        <div>
+                                                            <h3 className="text-[#052143] text-[16px] font-semibold leading-[130%]">
+                                                                {section?.name || section?.title || `Section ${section?.orderNo || '-'}`}
+                                                            </h3>
+                                                            {section?.sessionCode && (
+                                                                <p className="text-[#6B778B] text-[13px] mt-1">
+                                                                    Session {section.sessionCode}
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                        <span className={`text-[12px] px-3 py-1 rounded-full ${section?.status === 'active' ? 'bg-[#E8FFF5] text-[#0F9B63] border border-[#BDEFD6]' : 'bg-[#FFF3F3] text-[#D14343] border border-[#FFD7D7]'}`}>
+                                                            {section?.status === 'active' ? 'Active' : 'Inactive'}
+                                                        </span>
+                                                    </div>
+                                                    {String(section?.detail || '').trim() && (
+                                                        <p className="text-[#6B778B] text-[14px] leading-[1.6] mt-3">{section.detail}</p>
+                                                    )}
+                                                </div>
+                                            ))}
                                         </div>
-                                        <div className="flex flex-col gap-1">
-                                            <h3 className="text-[#052143] text-[15px] font-bold leading-[1.4] m-0">Functions and Modules:</h3>
-                                            <p className="text-[#6B778B] text-[14px] leading-[1.6]">Learn to write reusable functions and use Python modules for better code organization.</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex gap-3 items-start">
-                                        <div className="mt-1 w-[16px] h-[16px] bg-[#687EFF] rounded-full text-white flex items-center justify-center shrink-0">
-                                            <svg className="w-[10px] h-[10px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                                        </div>
-                                        <div className="flex flex-col gap-1">
-                                            <h3 className="text-[#052143] text-[15px] font-bold leading-[1.4] m-0">Object-Oriented Programming (OOP):</h3>
-                                            <p className="text-[#6B778B] text-[14px] leading-[1.6]">Grasp OOP principles with Python, including classes, objects, inheritance, and encapsulation.</p>
-                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {activeTab === 'instructor' && (
+                                <div className="rounded-[16px] border border-[#D1E3FB] bg-white p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+                                    <img
+                                        src={DEFAULT_AVATAR_URL}
+                                        alt={instructorName}
+                                        className="w-[64px] h-[64px] rounded-full border border-[#D1E3FB] object-cover"
+                                    />
+                                    <div className="flex-1">
+                                        <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">Instructor</h2>
+                                        <p className="text-[#052143] text-[18px] font-semibold mt-2">{instructorName}</p>
+                                        {instructorExperience && (
+                                            <p className="text-[#6B778B] text-[14px] mt-1">{instructorExperience}</p>
+                                        )}
+                                        <p className="text-[#6B778B] text-[14px] mt-2">Section: {defaultSection?.name || defaultSection?.title || '-'}</p>
                                     </div>
                                 </div>
-                            </div>
-
-                            {/* Requirements */}
-                            <div className="flex flex-col gap-6">
-                                <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">Requirement?</h2>
-                                <p className="text-[#6B778B] text-[15px] leading-[1.6]">
-                                    Whether you&apos;re new to programming or looking to deepen your Python knowledge, this course covers essential concepts and hands-on projects to make you proficient in Python, one of the world&apos;s most versatile and in-demand programming languages.
-                                </p>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-8 pt-2">
-                                    {/* Req 1 */}
-                                    <div className="flex flex-col gap-4">
-                                        <div className="w-[48px] h-[48px] relative flex items-center justify-center">
-                                            <div className="absolute top-0 left-0 w-8 h-8 bg-[#50F60E] opacity-10 rounded-full"></div>
-                                            <div className="z-10 flex items-center justify-center text-[22px]">🧩</div>
-                                        </div>
-                                        <div className="flex flex-col gap-1.5">
-                                            <h3 className="text-[#052143] text-[15px] font-bold leading-[1.3] m-0">No Prior Coding Experience Required:</h3>
-                                            <p className="text-[#6B778B] text-[13px] leading-[1.5]">This course is beginner-friendly and does not assume prior programming knowledge.</p>
-                                        </div>
-                                    </div>
-                                    {/* Req 2 */}
-                                    <div className="flex flex-col gap-4">
-                                        <div className="w-[48px] h-[48px] relative flex items-center justify-center">
-                                            <div className="absolute top-0 left-0 w-8 h-8 bg-[#FFC224] opacity-10 rounded-full"></div>
-                                            <div className="z-10 flex items-center justify-center text-[22px]">💻</div>
-                                        </div>
-                                        <div className="flex flex-col gap-1.5">
-                                            <h3 className="text-[#052143] text-[15px] font-bold leading-[1.3] m-0">Computer with Python Installed:</h3>
-                                            <p className="text-[#6B778B] text-[13px] leading-[1.5]">You&apos;ll need a computer (Windows, macOS, or Linux) with Python installed.</p>
-                                        </div>
-                                    </div>
-                                    {/* Req 3 */}
-                                    <div className="flex flex-col gap-4">
-                                        <div className="w-[48px] h-[48px] relative flex items-center justify-center">
-                                            <div className="absolute top-0 left-0 w-8 h-8 bg-[#687EFF] opacity-10 rounded-full"></div>
-                                            <div className="z-10 flex items-center justify-center text-[22px]">🎦</div>
-                                        </div>
-                                        <div className="flex flex-col gap-1.5">
-                                            <h3 className="text-[#052143] text-[15px] font-bold leading-[1.3] m-0">Computer with Java Installed:</h3>
-                                            <p className="text-[#6B778B] text-[13px] leading-[1.5]">A computer with Java installed is capable of running Java applications and applets.</p>
-                                        </div>
-                                    </div>
-                                    {/* Req 4 */}
-                                    <div className="flex flex-col gap-4">
-                                        <div className="w-[48px] h-[48px] relative flex items-center justify-center">
-                                            <div className="absolute top-0 left-0 w-8 h-8 bg-[#0ef6e3] opacity-10 rounded-full"></div>
-                                            <div className="z-10 flex items-center justify-center text-[22px]">📖</div>
-                                        </div>
-                                        <div className="flex flex-col gap-1.5">
-                                            <h3 className="text-[#052143] text-[15px] font-bold leading-[1.3] m-0">Willingness to Learn & Creativity:</h3>
-                                            <p className="text-[#6B778B] text-[13px] leading-[1.5]">An open mind and enthusiasm for learning are all you need to succeed in this course.</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            )}
 
                             {/* Reviews */}
-                            {isWebboardEnabled && (
+                            {isWebboardEnabled && activeTab === 'review' && (
                                 <section id="course-review-section" className="scroll-mt-28 flex flex-col gap-6">
-                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                    <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">Review & Comments</h2>
-                                    <div className="inline-flex items-center gap-2 rounded-full bg-white border border-[#D1E3FB] px-4 py-2 text-[#6B778B] text-[13px]">
-                                        {renderStars(Math.round(Number(reviewSummary?.averageRating || 0)), { sizeClass: 'w-[14px] h-[14px]' })}
-                                        <span className="font-medium text-[#052143]">
-                                            {Number(reviewSummary?.averageRating || 0).toFixed(1)}
-                                        </span>
-                                        <span>
-                                            ({Number(reviewSummary?.totalReviews || 0)} reviews)
-                                        </span>
+                                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                        <h2 className="text-[#052143] text-[22px] font-bold leading-[130%]">Review & Comments</h2>
+                                        <div className="inline-flex items-center gap-2 rounded-full bg-white border border-[#D1E3FB] px-4 py-2 text-[#6B778B] text-[13px]">
+                                            {renderStars(Math.round(Number(reviewSummary?.averageRating || 0)), { sizeClass: 'w-[14px] h-[14px]' })}
+                                            <span className="font-medium text-[#052143]">
+                                                {Number(reviewSummary?.averageRating || 0).toFixed(1)}
+                                            </span>
+                                            <span>
+                                                ({Number(reviewSummary?.totalReviews || 0)} reviews)
+                                            </span>
+                                        </div>
                                     </div>
-                                </div>
 
                                 <div className="bg-white border border-[#D1E3FB] rounded-[20px] p-5 md:p-6 shadow-[0_0_20px_rgba(0,0,0,0.04)]">
                                     <h3 className="text-[#052143] text-[17px] font-semibold mb-3">Leave your review</h3>
@@ -545,7 +631,7 @@ export default function CourseDetailPage() {
                                     )}
                                     {user && !canReview && (
                                         <div className="text-[14px] text-[#F59E0B] bg-[#FFF7ED] border border-[#FDE7C8] rounded-[12px] px-3 py-2 mb-3">
-                                            ต้องเรียนจบคอร์สนี้ก่อน จึงจะส่งรีวิวและคอมเมนต์ได้
+                                            You must complete this course before submitting a review.
                                         </div>
                                     )}
 
@@ -582,7 +668,7 @@ export default function CourseDetailPage() {
                                         <div className="text-[14px] text-[#6B778B]">Loading reviews...</div>
                                     )}
                                     {!reviewsLoading && reviewItems.length === 0 && (
-                                        <div className="text-[14px] text-[#6B778B]">ยังไม่มีคอมเมนต์สำหรับคอร์สนี้</div>
+                                        <div className="text-[14px] text-[#6B778B]">No comments for this course yet.</div>
                                     )}
                                     {!reviewsLoading && reviewItems.length > 0 && (
                                         <div className="flex flex-col gap-4">
@@ -633,7 +719,9 @@ export default function CourseDetailPage() {
 
                                 {/* Price / Enroll */}
                                 <div className="w-full flex justify-between items-center py-2">
-                                    <span className="text-[#687EFF] text-[20px] font-bold leading-[150%]">฿{course.price ? Number(course.price).toLocaleString() : '120.00'}</span>
+                                    <span className="text-[#687EFF] text-[20px] font-bold leading-[150%]">
+                                        {Number(course?.price || 0) > 0 ? `THB ${Number(course.price).toLocaleString()}` : 'Free'}
+                                    </span>
                                     <div
                                         className="relative group cursor-pointer inline-flex items-center"
                                         onClick={() => {
@@ -642,15 +730,15 @@ export default function CourseDetailPage() {
                                                 return;
                                             }
                                             if (isPendingApproval) {
-                                                toast.info('คำขอลงทะเบียนของคุณกำลังรอแอดมินอนุมัติ', LEARNER_TOAST);
+                                                toast.info('Your enrollment request is pending admin approval.', LEARNER_TOAST);
                                                 return;
                                             }
                                             handleEnroll();
                                         }}
                                     >
-                                        <div className="bg-[#F87A53] rounded-full px-3 flex items-center justify-between min-w-[100px] h-[32px] z-10 relative overflow-hidden transition-opacity hover:opacity-90">
+                                        <div className="bg-[#F87A53] rounded-full px-3 flex items-center justify-between min-w-[160px] h-[32px] z-10 relative overflow-hidden transition-opacity hover:opacity-90">
                                             <div className="absolute bg-white opacity-10 w-full h-[31px] rotate-35 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
-                                            <span className="text-white text-[13px] font-medium leading-[140%] relative z-10 mr-2">{enrolling ? 'Enrolling...' : isPendingApproval ? 'Pending' : isEnrolled ? 'Start' : 'Enroll Now'}</span>
+                                            <span className="text-white text-[13px] font-medium leading-[140%] relative z-10 mr-2">{ctaLabel}</span>
                                             <div className="w-[20px] h-[20px] border border-white/40 rounded-full flex items-center justify-center relative z-10">
                                                 <svg width="6" height="6" viewBox="0 0 24 24" fill="white"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z" /></svg>
                                             </div>
@@ -692,7 +780,7 @@ export default function CourseDetailPage() {
                                             <svg className="text-[#6B778B] w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M6.012 18H21V4a2 2 0 0 0-2-2H6c-1.206 0-3 .799-3 3v14c0 2.201 1.794 3 3 3h15v-2H6.012C5.55 19.988 5 19.805 5 19s.55-.988 1.012-1zM8 6h9v2H8V6z" /></svg>
                                             <span className="text-[#6B778B] text-[13px] leading-[150%]">Lesson</span>
                                         </div>
-                                        <span className="text-[#6B778B] text-[13px] leading-[150%]">{course.lessons || 50}</span>
+                                        <span className="text-[#6B778B] text-[13px] leading-[150%]">{course.lessons || 0}</span>
                                     </div>
                                     <div className="w-full border-b border-dashed border-[#D1E3FB]"></div>
 
@@ -706,58 +794,39 @@ export default function CourseDetailPage() {
                                     </div>
                                     <div className="w-full border-b border-dashed border-[#D1E3FB]"></div>
 
-                                    {/* Item: Skill Level */}
-                                    <div className="flex justify-between items-center w-full">
-                                        <div className="flex items-center gap-2">
-                                            <svg className="text-[#6B778B] w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M3 22h18v-2H3v2zm6-6h4V8H9v8zm-6 0h4v-4H3v4zm12-12v12h4V4h-4z" /></svg>
-                                            <span className="text-[#6B778B] text-[13px] leading-[150%]">Skill Level</span>
-                                        </div>
-                                        <span className="text-[#6B778B] text-[13px] leading-[150%]">Advance</span>
-                                    </div>
-                                    <div className="w-full border-b border-dashed border-[#D1E3FB]"></div>
-
-                                    {/* Item: Language */}
-                                    <div className="flex justify-between items-center w-full">
-                                        <div className="flex items-center gap-2">
-                                            <svg className="text-[#6B778B] w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm6.93 6h-2.95c-.32-1.25-.78-2.45-1.38-3.56 1.84.63 3.37 1.91 4.33 3.56zM8.02 4.44c-.6.11-1.07.23-1.38.35C5.68 3.68 7.21 2.4 9.05 1.77c-.32 1.12-.66 1.58-1.03 2.67zM3.07 16H6.1c.32 1.25.78 2.45 1.38 3.56-1.84-.63-3.37-1.91-4.33-3.56zm17.86 0c-.96 1.65-2.49 2.93-4.33 3.56.6-1.11 1.06-2.31 1.38-3.56h2.95zM12 20.03c-.83-1.55-1.45-3.15-1.87-4.81h3.74c-.42 1.66-1.04 3.26-1.87 4.81zm2.36-6.81H9.64c-.23-1.25-.36-2.58-.36-3.95 0-1.37.13-2.7.36-3.95h4.72c.23 1.25.36 2.58.36 3.95 0 1.37-.13 2.7-.36 3.95zM12 3.97c.83 1.55 1.45 3.15 1.87 4.81H8.39c.42-1.66 1.04-3.26 1.87-4.81M4.26 14C4.09 13.36 4 12.69 4 12s.09-1.36.26-2h3.38c-.16 1.25-.26 2.58-.26 3.95 0 1.37.1 2.7.26 3.95H4.26z" /></svg>
-                                            <span className="text-[#6B778B] text-[13px] leading-[150%]">Language</span>
-                                        </div>
-                                        <span className="text-[#6B778B] text-[13px] leading-[150%]">English, French</span>
-                                    </div>
-                                    <div className="w-full border-b border-dashed border-[#D1E3FB]"></div>
-
-                                    {/* Item: Certificate */}
-                                    <div className="flex justify-between items-center w-full">
-                                        <div className="flex items-center gap-2">
-                                            <svg className="text-[#6B778B] w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M18.828 2h-13.656c-1.077 0-1.953.844-1.996 1.914l-.626 15.657 9.45-8.406 9.45 8.406-.626-15.657c-.043-1.07-.919-1.914-1.996-1.914z" /></svg>
-                                            <span className="text-[#6B778B] text-[13px] leading-[150%]">Certificate</span>
-                                        </div>
-                                        <span className="text-[#6B778B] text-[13px] leading-[150%]">{course.certificate ? 'After Completed' : 'No'}</span>
-                                    </div>
-                                    <div className="w-full border-b border-dashed border-[#D1E3FB]"></div>
-
-                                    {/* Item: Deadline */}
+                                    {/* Item: Registration */}
                                     <div className="flex justify-between items-center w-full">
                                         <div className="flex items-center gap-2">
                                             <svg className="text-[#6B778B] w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M18 2v2H6V2H4v22h2v-2h12v2h2V2h-2zm-2 10H8V6h8v6zm0 6H8v-4h8v4z" /></svg>
-                                            <span className="text-[#6B778B] text-[13px] leading-[150%]">Deadline</span>
+                                            <span className="text-[#6B778B] text-[13px] leading-[150%]">Registration</span>
                                         </div>
-                                        <span className="text-[#6B778B] text-[13px] leading-[150%]">November 23, 2024</span>
+                                        <span className="text-[#6B778B] text-[13px] leading-[150%] text-right max-w-[55%]">{registrationWindowText}</span>
                                     </div>
-                                </div>
+                                    <div className="w-full border-b border-dashed border-[#D1E3FB]"></div>
 
-                                {/* Apply Coupon */}
-                                <div className="w-full flex flex-col pt-3 gap-3 mt-1">
-                                    <h3 className="text-[#052143] text-[18px] font-bold leading-[130%]">Apply Coupon</h3>
-                                    <div className="flex items-center gap-1 w-full">
-                                        <div className="flex-1 flex items-center border border-[#D1E3FB] rounded-full px-4 h-[38px] bg-white">
-                                            <input type="text" placeholder="Enter Coupon Code" className="w-[120px] bg-transparent outline-none text-[#052143] placeholder-[#6B778B] text-[13px] leading-[130%]" />
+                                    {showMaxLearner && (
+                                        <>
+                                            {/* Item: Max Learner */}
+                                            <div className="flex justify-between items-center w-full">
+                                                <div className="flex items-center gap-2">
+                                                    <svg className="text-[#6B778B] w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M3 22h18v-2H3v2zm6-6h4V8H9v8zm-6 0h4v-4H3v4zm12-12v12h4V4h-4z" /></svg>
+                                                    <span className="text-[#6B778B] text-[13px] leading-[150%]">Max Learner</span>
+                                                </div>
+                                                <span className="text-[#6B778B] text-[13px] leading-[150%]">{Number(course.maxLearner || 0)}</span>
+                                            </div>
+                                            <div className="w-full border-b border-dashed border-[#D1E3FB]"></div>
+                                        </>
+                                    )}
+
+                                    {/* Item: Sections */}
+                                    <div className="flex justify-between items-center w-full">
+                                        <div className="flex items-center gap-2">
+                                            <svg className="text-[#6B778B] w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M4 4h16v4H4V4zm0 6h16v4H4v-4zm0 6h16v4H4v-4z" /></svg>
+                                            <span className="text-[#6B778B] text-[13px] leading-[150%]">Sections</span>
                                         </div>
-                                        <button className="bg-[#687EFF] text-white px-4 h-[38px] rounded-full text-[13px] font-medium leading-[130%] hover:bg-[#5a6fe0]">
-                                            Apply
-                                        </button>
+                                        <span className="text-[#6B778B] text-[13px] leading-[150%]">{normalizedSections.length}</span>
                                     </div>
-                                    <p className="text-[#6B778B] text-[12px] leading-[150%] font-medium italic font-serif text-center pb-2 mt-1">30 days Money back grantee</p>
+                                    <div className="w-full border-b border-dashed border-[#D1E3FB]"></div>
                                 </div>
                             </div>
                         </div>

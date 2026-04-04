@@ -19,6 +19,12 @@ import { getUser } from '@/lib/auth';
 import { toast } from 'react-toastify';
 
 const LEARNER_TOAST = { containerId: 'global-toast' };
+const renderAdminLikeToastContent = (title, message) => (
+    <div className="min-w-0 py-0.5">
+        {title ? <div className="text-[12px] font-semibold text-[#475569]">{title}</div> : null}
+        <div className="text-[13px] text-[#6B7280]">{message || ''}</div>
+    </div>
+);
 
 function normalizeTinCanActivities(content) {
     if (!content || content.type !== 'tincan' || !Array.isArray(content.activities)) {
@@ -291,7 +297,6 @@ export default function LearnPage() {
     const [progressUserId, setProgressUserId] = useState('anonymous');
     const [isLearningSidebarOpen, setIsLearningSidebarOpen] = useState(true);
     const [isLearningAiOpen, setIsLearningAiOpen] = useState(false);
-    const [showCompletionToast, setShowCompletionToast] = useState(false);
     const packageLinearEnabled = useMemo(() => {
         const raw = content?.packageConfig?.isLinear;
         if (raw === true) return true;
@@ -405,13 +410,13 @@ export default function LearnPage() {
         }
         if (completed && !hasShownCompletionToastRef.current) {
             hasShownCompletionToastRef.current = true;
-            setShowCompletionToast(true);
-            const timer = setTimeout(() => setShowCompletionToast(false), 2600);
-            return () => clearTimeout(timer);
+            toast.success(
+                renderAdminLikeToastContent('Updated', 'Course marked as completed successfully.'),
+                { ...LEARNER_TOAST, toastId: 'learner-course-completed' }
+            );
         }
         if (!completed) {
             hasShownCompletionToastRef.current = false;
-            setShowCompletionToast(false);
         }
     }, [status]);
 
@@ -4219,12 +4224,6 @@ export default function LearnPage() {
                         <LearningAiAssistant onClose={handleCloseLearningAi} />
                     </div>
                 </div>
-                {showCompletionToast && (
-                    <div className="fixed right-6 top-6 z-[120] rounded-xl border border-emerald-300 bg-emerald-50 px-4 py-3 text-emerald-800 shadow-lg">
-                        <div className="text-sm font-semibold">เรียนจบแล้ว</div>
-                        <div className="text-xs text-emerald-700">สถานะถูกบันทึกเป็น Completed แล้ว</div>
-                    </div>
-                )}
             </div>
         );
     }

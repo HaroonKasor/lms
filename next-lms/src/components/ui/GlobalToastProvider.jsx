@@ -12,6 +12,28 @@ function renderToastIcon(type) {
     return <Info className="h-[18px] w-[18px] stroke-indigo-500" />;
 }
 
+function normalizeToastTone(value) {
+    const tone = String(value || '').trim().toLowerCase();
+    if (tone === 'success' || tone === 'warning' || tone === 'error') return tone;
+    return 'info';
+}
+
+function getToastClassName(tone) {
+    const normalized = normalizeToastTone(tone);
+    if (normalized === 'success') return 'Toastify__toast admin-toast admin-toast--success';
+    if (normalized === 'warning') return 'Toastify__toast admin-toast admin-toast--warning';
+    if (normalized === 'error') return 'Toastify__toast admin-toast admin-toast--error';
+    return 'Toastify__toast admin-toast admin-toast--info';
+}
+
+function getToastProgressClassName(tone) {
+    const normalized = normalizeToastTone(tone);
+    if (normalized === 'success') return 'Toastify__progress-bar Toastify__progress-bar--animated admin-toast-progress admin-toast-progress--success';
+    if (normalized === 'warning') return 'Toastify__progress-bar Toastify__progress-bar--animated admin-toast-progress admin-toast-progress--warning';
+    if (normalized === 'error') return 'Toastify__progress-bar Toastify__progress-bar--animated admin-toast-progress admin-toast-progress--error';
+    return 'Toastify__progress-bar Toastify__progress-bar--animated admin-toast-progress admin-toast-progress--info';
+}
+
 export default function GlobalToastProvider() {
     return (
         <>
@@ -24,28 +46,30 @@ export default function GlobalToastProvider() {
                 draggable
                 autoClose={3200}
                 hideProgressBar={false}
+                closeButton
+                rtl={false}
                 icon={({ type }) => renderToastIcon(type)}
-                className="global-toast-container"
+                className="admin-toast-container"
                 toastClassName={(context) => {
                     const type = String(context?.type || 'info');
-                    return `global-toast global-toast--${type}`;
+                    return getToastClassName(type);
                 }}
                 progressClassName={(context) => {
                     const type = String(context?.type || 'info');
-                    return `global-toast-progress global-toast-progress--${type}`;
+                    return getToastProgressClassName(type);
                 }}
-                bodyClassName="global-toast-body"
+                bodyClassName="admin-toast-body"
             />
 
             <style jsx global>{`
-                .global-toast-container.Toastify__toast-container--top-right {
+                .admin-toast-container.Toastify__toast-container--top-right {
                     top: 92px;
                     right: 20px;
-                    width: min(380px, calc(100vw - 32px));
-                    z-index: 90;
+                    width: min(360px, calc(100vw - 32px));
+                    z-index: 70;
                 }
 
-                .global-toast {
+                .admin-toast {
                     min-height: 0;
                     margin-bottom: 12px;
                     border-radius: 12px;
@@ -54,14 +78,15 @@ export default function GlobalToastProvider() {
                     color: #6b7280;
                     box-shadow: 0 14px 30px rgba(15, 23, 42, 0.18);
                     padding: 0;
+                    overflow: hidden;
                 }
 
-                .global-toast-body {
+                .admin-toast-body {
                     margin: 0;
                     padding: 14px 14px 14px 12px;
                 }
 
-                .global-toast .Toastify__close-button {
+                .admin-toast .Toastify__close-button {
                     align-self: flex-start;
                     color: #9ca3af;
                     opacity: 0.9;
@@ -69,52 +94,56 @@ export default function GlobalToastProvider() {
                     margin-right: 4px;
                 }
 
-                .global-toast .Toastify__close-button:hover {
+                .admin-toast .Toastify__close-button:hover {
                     color: #6b7280;
                     opacity: 1;
                 }
 
-                .global-toast-progress {
+                .admin-toast-progress {
                     height: 4px;
+                    position: absolute;
+                    left: 0;
+                    bottom: 0;
+                    width: 100%;
                 }
 
-                .global-toast--info {
+                .admin-toast--info {
                     border-color: #dbeafe;
                 }
 
-                .global-toast--error {
+                .admin-toast--error {
                     border-color: #fecdd3;
                 }
 
-                .global-toast--success {
+                .admin-toast--success {
                     border-color: #bbf7d0;
                 }
 
-                .global-toast--warning {
+                .admin-toast--warning {
                     border-color: #fde68a;
                 }
 
-                .global-toast-progress--info {
+                .admin-toast-progress--info {
                     background: #60a5fa;
                 }
 
-                .global-toast-progress--error {
+                .admin-toast-progress--error {
                     background: #f87171;
                 }
 
-                .global-toast-progress--success {
+                .admin-toast-progress--success {
                     background: #4ade80;
                 }
 
-                .global-toast-progress--warning {
+                .admin-toast-progress--warning {
                     background: #facc15;
                 }
 
                 @media (max-width: 640px) {
-                    .global-toast-container.Toastify__toast-container--top-right {
+                    .admin-toast-container.Toastify__toast-container--top-right {
                         top: 82px;
                         right: 12px;
-                        width: min(380px, calc(100vw - 24px));
+                        width: min(360px, calc(100vw - 24px));
                     }
                 }
             `}</style>

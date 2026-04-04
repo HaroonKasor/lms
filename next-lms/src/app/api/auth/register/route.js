@@ -15,6 +15,7 @@ import {
     ensureUserRole,
     getUserDisplayName,
 } from '@/lib/server/enterprise-context';
+import { createNotification } from '@/lib/server/notifications';
 import { hasMailConfig, sendRegistrationSuccessEmail } from '@/lib/server/mailer';
 import { sanitizeRegisterInput, validateRegisterInput } from '@/lib/validation/register';
 
@@ -150,6 +151,24 @@ export async function POST(request) {
         } else {
             console.warn('[auth/register] email service not configured, skip registration email');
         }
+
+        // Best-effort in-app welcome notification.
+        // Registration should still succeed even if notification service fails.
+        createNotification({
+            organizationId,
+            type: 'WELCOME_USER',
+            title: 'Welcome to SkillUp',
+            message: `Hi ${getUserDisplayName(user) || user.username}, your account is ready. Start your first course now.`,
+            payload: {
+                actionUrl: '/courses',
+                category: 'SYSTEM',
+                severity: 'info',
+            },
+            recipientUserIds: [Number(user.id)],
+            createdBy: Number(user.id),
+        }).catch((notifyErr) => {
+            console.error('[auth/register] welcome notification failed', notifyErr);
+        });
 
         return response;
     } catch (err) {

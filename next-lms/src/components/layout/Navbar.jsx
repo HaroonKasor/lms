@@ -32,12 +32,54 @@ function getNotificationTone(input) {
     const severity = String(
         (typeof input === 'object' ? (input?.severity || input?.payload?.severity) : '') || 'info'
     ).toLowerCase();
-    if (severity === 'critical') return { color: 'bg-[#FEE2E2]', icon: '🚨' };
-    if (severity === 'warning') return { color: 'bg-[#FFF7ED]', icon: '⚠️' };
+    const iconSvg = (kind) => {
+        if (kind === 'critical') {
+            return (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                    <line x1="12" y1="9" x2="12" y2="13" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+            );
+        }
+        if (kind === 'warning') {
+            return (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 9v4" />
+                    <path d="M12 17h.01" />
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                </svg>
+            );
+        }
+        if (kind === 'certificate') {
+            return (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="8" r="6" />
+                    <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
+                </svg>
+            );
+        }
+        if (kind === 'enrollment') {
+            return (
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
+                    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
+                </svg>
+            );
+        }
+        return (
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
+                <path d="M9 17a3 3 0 0 0 6 0" />
+            </svg>
+        );
+    };
+    if (severity === 'critical') return { color: 'bg-[#FEE2E2]', iconClass: 'text-[#DC2626]', icon: iconSvg('critical') };
+    if (severity === 'warning') return { color: 'bg-[#FFF7ED]', iconClass: 'text-[#B45309]', icon: iconSvg('warning') };
     const key = String(type || '').toUpperCase();
-    if (key.includes('CERTIFICATE')) return { color: 'bg-[#FFF3E0]', icon: '🏆' };
-    if (key.includes('ENROLLMENT')) return { color: 'bg-[#E3E7FF]', icon: '📘' };
-    return { color: 'bg-[#E8F7F3]', icon: '🔔' };
+    if (key.includes('CERTIFICATE')) return { color: 'bg-[#FFF3E0]', iconClass: 'text-[#D97706]', icon: iconSvg('certificate') };
+    if (key.includes('ENROLLMENT')) return { color: 'bg-[#E3E7FF]', iconClass: 'text-[#425CF2]', icon: iconSvg('enrollment') };
+    return { color: 'bg-[#E8F7F3]', iconClass: 'text-[#0F766E]', icon: iconSvg('default') };
 }
 
 export default function Navbar() {
@@ -711,7 +753,7 @@ export default function Navbar() {
                                                     }}
                                                     className={`w-full text-left p-4 hover:bg-[#F6F8FF] transition-colors border-b border-[#F6F8FF] flex items-start gap-3 ${notification?.readAt ? 'opacity-80' : ''}`}
                                                 >
-                                                    <div className={`w-10 h-10 rounded-xl ${tone.color} flex items-center justify-center text-lg shrink-0`}>
+                                                    <div className={`w-10 h-10 rounded-xl ${tone.color} ${tone.iconClass || ''} flex items-center justify-center shrink-0`}>
                                                         {tone.icon}
                                                     </div>
                                                     <div className="flex-1 min-w-0">
@@ -792,7 +834,7 @@ export default function Navbar() {
                                 className="pointer-events-auto cursor-pointer rounded-2xl border border-[#D1E3FB] bg-white p-4 shadow-[0_12px_32px_rgba(0,0,0,0.12)] transition hover:-translate-y-0.5"
                             >
                                 <div className="flex items-start gap-3">
-                                    <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone.color} text-lg`}>
+                                    <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${tone.color} ${tone.iconClass || ''}`}>
                                         {tone.icon}
                                     </div>
                                     <div className="min-w-0 flex-1">
