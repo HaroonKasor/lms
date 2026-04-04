@@ -288,6 +288,7 @@ export default function CourseManagementPage() {
             const params = new URLSearchParams({
                 courseId: String(courseId),
                 raw: '1',
+                scope: 'all',
             });
             const res = await fetch(`/api/enrollments?${params.toString()}`);
             if (!res.ok) {

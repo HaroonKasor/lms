@@ -24,6 +24,7 @@ export default function CourseReportPage() {
     const [summary, setSummary] = useState({ totalStudyMinutes: 0 });
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [notice, setNotice] = useState('');
     const [user, setUser] = useState(null);
     const [userResolved, setUserResolved] = useState(false);
 
@@ -74,6 +75,7 @@ export default function CourseReportPage() {
         const loadReport = async () => {
             setLoading(true);
             setError('');
+            setNotice('');
             try {
                 const res = await fetch(`/api/reports/my-course?courseId=${encodeURIComponent(courseId)}`, { cache: 'no-store' });
                 if (res.status === 401) {
@@ -94,6 +96,9 @@ export default function CourseReportPage() {
                     totalStudyMinutes: Number(data?.summary?.totalStudyMinutes || 0),
                 });
                 setSections(Array.isArray(data?.sections) ? data.sections : []);
+                if (data?.enrollmentFound === false) {
+                    setNotice(String(data?.message || 'Enrollment not found'));
+                }
             } catch (err) {
                 setError(err?.message || 'Failed to load report');
                 setCourse(null);
@@ -145,6 +150,10 @@ export default function CourseReportPage() {
                         {error ? (
                             <div className="rounded-[14px] border border-[#F5D0D0] bg-[#FFF5F5] p-8 text-[#B91C1C] text-[16px]">
                                 {error}
+                            </div>
+                        ) : notice ? (
+                            <div className="rounded-[14px] border border-[#E4E8FF] bg-[#F8FAFF] p-8 text-[#42537A] text-[16px]">
+                                {notice}
                             </div>
                         ) : sections.length === 0 ? (
                             <div className="rounded-[14px] border border-[#E4E8FF] bg-white p-8 text-[#6B778B] text-[16px]">

@@ -1000,6 +1000,7 @@ export async function GET(request) {
         const userId = searchParams.get('userId') || '';
         const courseId = searchParams.get('courseId');
         const raw = searchParams.get('raw');
+        const scope = String(searchParams.get('scope') || '').trim().toLowerCase();
 
         if (!session.isAdmin && !['learner', 'instructor'].includes(sessionRole)) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
@@ -1015,11 +1016,19 @@ export async function GET(request) {
             if (!resolved) return NextResponse.json([]);
             numericUserId = resolved;
         }
-        const shouldLimitAdminRawToSelf = raw === '1' && session.isAdmin && !userId;
+        const adminWantsAllUsers =
+            session.isAdmin
+            && !userId
+            && ['all', 'organization', 'org'].includes(scope);
 
         const where = { organization_id: organizationId };
-        if (!session.isAdmin || userId || shouldLimitAdminRawToSelf) {
-            where.userId = session.isAdmin && userId ? numericUserId : session.uid;
+        if (!session.isAdmin) {
+            where.userId = session.uid;
+        } else if (userId) {
+            where.userId = numericUserId;
+        } else if (!adminWantsAllUsers) {
+            // Default to "my enrollments" even for admin users unless admin pages explicitly request org scope.
+            where.userId = session.uid;
         }
         if (courseId) where.courseId = parseInt(courseId, 10);
 

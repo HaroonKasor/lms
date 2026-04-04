@@ -90,7 +90,7 @@ export default function LearnerStatusManagePage() {
     };
 
     const loadEnrollments = async (courseId = '') => {
-        const params = new URLSearchParams({ raw: '1' });
+        const params = new URLSearchParams({ raw: '1', scope: 'all' });
         if (courseId) params.set('courseId', String(courseId));
         const res = await fetch(`/api/enrollments?${params.toString()}`, { cache: 'no-store' });
         if (!res.ok) throw new Error('Failed to load enrollments');

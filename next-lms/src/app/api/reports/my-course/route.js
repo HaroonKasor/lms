@@ -274,7 +274,38 @@ export async function GET(request) {
 
         const selectedEnrollment = pickBestEnrollment(enrollments);
         if (!selectedEnrollment) {
-            return NextResponse.json({ error: 'Enrollment not found' }, { status: 404 });
+            const fallbackCourse = await prisma.course.findFirst({
+                where: {
+                    organization_id: organizationId,
+                    id: courseId,
+                },
+                select: {
+                    id: true,
+                    title: true,
+                    categories: { select: { name: true } },
+                },
+            });
+            const fallbackCompatMaps = await getCourseCompatMaps([courseId]);
+            const fallbackThumbnail = fallbackCompatMaps?.thumbnailByCourseId?.[String(courseId)] || '';
+
+            return NextResponse.json({
+                enrollmentFound: false,
+                message: 'Enrollment not found',
+                course: {
+                    id: Number(courseId),
+                    name: String(fallbackCourse?.title || '').trim(),
+                    category: String(fallbackCourse?.categories?.name || '').trim(),
+                    thumbnail: normalizeThumbnail(fallbackThumbnail),
+                    sectionName: '',
+                    enrollmentStatus: '',
+                    progressPercent: 0,
+                },
+                summary: {
+                    totalStudyMinutes: 0,
+                    statementCount: 0,
+                },
+                sections: [],
+            });
         }
 
         const availableSections = Array.isArray(selectedEnrollment?.courses?.sections)
@@ -338,6 +369,7 @@ export async function GET(request) {
         );
 
         return NextResponse.json({
+            enrollmentFound: true,
             course: {
                 id: Number(selectedEnrollment?.courses?.id || selectedEnrollment?.courseId || 0),
                 name: String(selectedEnrollment?.courses?.title || '').trim(),
