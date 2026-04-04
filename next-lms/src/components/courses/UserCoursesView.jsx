@@ -500,7 +500,7 @@ export default function UserCoursesView() {
                                     || ''
                                 ).trim();
                                 const instructorName = String(course?.instructor || '').trim();
-                                const displayInstructor = instructorName || 'Instructor';
+                                const displayInstructor = instructorName || 'Instructor Name';
                                 const displayInstructorMeta = sectionLabel ? `Section: ${sectionLabel}` : (instructorExperience || '-');
 
                                 return (
@@ -587,8 +587,10 @@ export default function UserCoursesView() {
                                                 )}
 
                                                 <div className="flex items-center gap-[10px] shrink-0 sm:text-right">
-                                                    <div className="w-[42px] h-[42px] box-border rounded-full object-cover border-2 border-[#eaedf5] shrink-0 bg-[#eef1fa] text-[#687EFF] flex items-center justify-center font-bold text-[18px]">
-                                                        {(course.instructor || 'I').charAt(0).toUpperCase()}
+                                                    <div className="w-[42px] h-[42px] box-border rounded-full object-cover border-2 border-[#eaedf5] shrink-0 bg-[#C7C7CC] text-white flex items-center justify-center">
+                                                        <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                                                            <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                                                        </svg>
                                                     </div>
                                                     <div className="flex flex-col justify-center sm:items-end">
                                                         <span className={`text-[#052143] font-medium text-[14px] leading-[130%] truncate max-w-[180px] ${containsThai(displayInstructor) ? 'font-thai-sarabun' : ''}`}>{displayInstructor}</span>

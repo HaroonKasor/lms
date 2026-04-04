@@ -43,13 +43,26 @@ function getSectionLabel(enrollment) {
     return value || '-';
 }
 
+function isTruthyFlag(value) {
+    if (value === true) return true;
+    if (typeof value === 'number') return value > 0;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        return ['1', 'true', 'yes', 'y'].includes(normalized);
+    }
+    return false;
+}
+
 function getContinueCardDate(enrollment) {
+    const sectionRegisterUnlimit = isTruthyFlag(enrollment?.section?.registerUnlimit);
+    const courseRegisterUnlimit = isTruthyFlag(enrollment?.course?.registerUnlimit);
+    if (sectionRegisterUnlimit || courseRegisterUnlimit) {
+        return null;
+    }
     return (
         toDateOnly(enrollment?.course?.registerDateFrom)
         || toDateOnly(enrollment?.section?.registerDateFrom)
-        || toDateOnly(enrollment?.enrolledAt)
-        || toDateOnly(enrollment?.createdAt)
-        || toDateOnly(enrollment?.course?.createdAt)
+        || null
     );
 }
 
