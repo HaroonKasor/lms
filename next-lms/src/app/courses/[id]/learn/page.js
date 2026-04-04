@@ -338,6 +338,7 @@ export default function LearnPage() {
     const playerReflowTimeoutsRef = useRef([]);
     const reflowSessionRef = useRef(0);
     const completionLockRef = useRef(false);
+    const initializedStatementGateRef = useRef('');
 
     const markLearningInteraction = useCallback(() => {
         const now = Date.now();
@@ -2693,22 +2694,29 @@ export default function LearnPage() {
         if (resolvedContentId && learningUserId) loadStatements();
     }, [resolvedContentId, learningUserId]);
 
-    // Send initialized statement when content loads
+    // Send initialized statement once per learning entry session.
     useEffect(() => {
-        if (content && resumeLoaded && status === 'NOT_STARTED') {
-            sendStatement(buildVideoEventStatement({
-                actor,
-                contentId: content.id,
-                contentName: content.title,
-                verb: 'initialized',
-                currentTime: 0,
-                duration: 0,
-            }));
+        if (!content || !resumeLoaded) return;
+
+        const sessionKey = `${String(content?.id || routeId || '')}:${Number(activeSectionId || 0)}:${Number(enrollmentId || 0)}`;
+        if (initializedStatementGateRef.current === sessionKey) return;
+        initializedStatementGateRef.current = sessionKey;
+
+        sendStatement(buildVideoEventStatement({
+            actor,
+            contentId: content.id,
+            contentName: content.title,
+            verb: 'initialized',
+            currentTime: 0,
+            duration: 0,
+        }));
+
+        if (status === 'NOT_STARTED') {
             setStatus('LEARNING');
             syncProgressWithTrackedTime({ contentId: progressContentId, userId: progressUserId, sectionId: activeSectionId, status: 'LEARNING', progress: 0 });
             syncEnrollmentStatus('LEARNING', 0);
         }
-    }, [content, status, actor, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, resumeLoaded, syncProgressWithTrackedTime]);
+    }, [content, status, actor, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, resumeLoaded, syncProgressWithTrackedTime, routeId, enrollmentId]);
 
     // Video event handlers
     const handlePlay = useCallback(() => {

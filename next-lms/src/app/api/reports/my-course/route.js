@@ -66,6 +66,85 @@ function parseIsoDurationToMinutes(value) {
     return hours * 60 + minutes + seconds / 60;
 }
 
+function getExtensionValueByKeySuffix(extensions = {}, suffix = '') {
+    const target = String(suffix || '').trim().toLowerCase();
+    if (!target) return '';
+    for (const [key, value] of Object.entries(extensions || {})) {
+        const normalizedKey = String(key || '').trim().toLowerCase();
+        if (!normalizedKey) continue;
+        if (normalizedKey.endsWith(target)) {
+            const text = String(value || '').trim();
+            if (text) return text;
+        }
+    }
+    return '';
+}
+
+function inferActivityNameFromId(activityId = '') {
+    const raw = String(activityId || '').trim();
+    if (!raw) return '';
+    let path = raw;
+    try {
+        if (/^https?:\/\//i.test(raw)) {
+            path = new URL(raw).pathname || raw;
+        }
+    } catch {
+        path = raw;
+    }
+
+    const cleaned = String(path)
+        .replace(/\\/g, '/')
+        .split('?')[0]
+        .split('#')[0]
+        .replace(/\/+$/, '');
+    if (!cleaned) return '';
+
+    const lastSegment = cleaned.split('/').filter(Boolean).pop() || '';
+    if (!lastSegment) return '';
+    const decoded = (() => {
+        try {
+            return decodeURIComponent(lastSegment);
+        } catch {
+            return lastSegment;
+        }
+    })();
+    const withoutExt = decoded.replace(/\.(html?|xhtml|xml|js|json)$/i, '');
+    return String(withoutExt || decoded).replace(/[-_]+/g, ' ').trim();
+}
+
+function deriveActivityIdentity(payload = {}, fallbackCourseName = 'Activity') {
+    const result = payload?.result || {};
+    const extensions = result?.extensions || {};
+    const contextExtensions = payload?.context?.extensions || {};
+    const originalObjectId =
+        getExtensionValueByKeySuffix(contextExtensions, '/original-object-id')
+        || getExtensionValueByKeySuffix(extensions, '/original-object-id');
+
+    const objectId = String(payload?.object?.id || '').trim();
+    const activityId = String(originalObjectId || objectId || '').trim();
+    const activityNameFromPayload = String(
+        payload?.object?.definition?.name?.['en-US']
+        || payload?.object?.definition?.name?.en
+        || payload?.object?.definition?.name?.th
+        || ''
+    ).trim();
+
+    const inferredFromId = inferActivityNameFromId(activityId);
+    const fallbackName = String(fallbackCourseName || 'Activity').trim() || 'Activity';
+    const shouldPreferInferred =
+        !activityNameFromPayload
+        || activityNameFromPayload.toLowerCase() === fallbackName.toLowerCase();
+    const activityName = shouldPreferInferred
+        ? (inferredFromId || activityNameFromPayload || fallbackName)
+        : activityNameFromPayload;
+    const activityKey = activityId || activityName || fallbackName;
+
+    return {
+        activityName: String(activityName || fallbackName).trim() || fallbackName,
+        activityKey: String(activityKey || fallbackName).trim() || fallbackName,
+    };
+}
+
 function normalizeThumbnail(thumbnail) {
     const value = String(thumbnail || '').trim();
     if (!value) return '/course.png';
@@ -104,54 +183,98 @@ function pickBestEnrollment(enrollments = []) {
     return sorted[0] || null;
 }
 
-function buildRowsFromStatements(statements = [], fallbackCourseName = 'Activity') {
+function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'Activity') {
     const byTimeAsc = [...statements].sort((a, b) => {
         const ta = toSafeTime(a?.timestamp || a?.storedAt || a?.receivedAt);
         const tb = toSafeTime(b?.timestamp || b?.storedAt || b?.receivedAt);
         return ta - tb;
     });
 
-    return byTimeAsc.map((row, idx) => {
+    const normalized = byTimeAsc.map((row) => {
         const payload = row?.statement_json && typeof row.statement_json === 'object'
             ? row.statement_json
             : {};
         const result = payload?.result || {};
         const extensions = result?.extensions || {};
-        const currentTs = toSafeTime(payload?.timestamp || payload?.storedAt || row?.receivedAt);
+        const rawTimestamp = payload?.timestamp || payload?.storedAt || row?.receivedAt;
+        const currentTs = toSafeTime(rawTimestamp);
+        const verbId = String(payload?.verb?.id || '').trim().toLowerCase();
 
         const explicitDurationMinutes =
             parseIsoDurationToMinutes(result?.duration) ||
             (toSafeNumber(extensions['https://w3id.org/xapi/video/extensions/length'], 0) / 60) ||
             (toSafeNumber(extensions.length, 0) / 60);
 
-        let fallbackDeltaMinutes = 0;
-        if (idx > 0) {
-            const prevRow = byTimeAsc[idx - 1];
-            const prevPayload = prevRow?.statement_json && typeof prevRow.statement_json === 'object'
-                ? prevRow.statement_json
-                : {};
-            const prevTs = toSafeTime(prevPayload?.timestamp || prevPayload?.storedAt || prevRow?.receivedAt);
-            const gapMinutes = (currentTs - prevTs) / 60000;
-            if (Number.isFinite(gapMinutes) && gapMinutes > 0 && gapMinutes <= 45) {
-                fallbackDeltaMinutes = gapMinutes;
-            }
-        }
-
-        const activityName = String(
-            payload?.object?.definition?.name?.['en-US']
-            || payload?.object?.definition?.name?.en
-            || payload?.object?.definition?.name?.th
-            || payload?.object?.id
-            || fallbackCourseName
-        ).trim() || fallbackCourseName;
+        const { activityName, activityKey } = deriveActivityIdentity(payload, fallbackCourseName);
 
         return {
             activity: activityName,
-            dateTime: toDateTimeText(payload?.timestamp || payload?.storedAt || row?.receivedAt),
+            activityKey,
+            dateTime: toDateTimeText(rawTimestamp),
+            rawTimestamp,
             timestampMs: currentTs,
-            durationMinutes: explicitDurationMinutes > 0 ? explicitDurationMinutes : fallbackDeltaMinutes,
+            explicitDurationMinutes: Math.max(0, toSafeNumber(explicitDurationMinutes, 0)),
+            verbId,
         };
     });
+
+    if (normalized.length === 0) return [];
+
+    const sessions = [];
+    let current = null;
+
+    const flushCurrent = () => {
+        if (!current) return;
+        const minutesFromGap = Math.max(0, toSafeNumber(current.minutesFromGap, 0));
+        const maxExplicit = Math.max(0, toSafeNumber(current.maxExplicitMinutes, 0));
+        const durationMinutes = minutesFromGap > 0 ? minutesFromGap : maxExplicit;
+
+        sessions.push({
+            activity: current.activity || fallbackCourseName,
+            activityKey: current.activityKey || fallbackCourseName,
+            dateTime: toDateTimeText(current.startTimestampRaw),
+            timestampMs: toSafeNumber(current.startTimestampMs, 0),
+            durationMinutes: Math.max(0, durationMinutes),
+        });
+        current = null;
+    };
+
+    for (let idx = 0; idx < normalized.length; idx += 1) {
+        const item = normalized[idx];
+        const isInitialized = item.verbId.includes('initialized');
+        const hasCurrent = Boolean(current);
+        const gapMinutes = hasCurrent
+            ? ((toSafeNumber(item.timestampMs, 0) - toSafeNumber(current.lastTimestampMs, 0)) / 60000)
+            : 0;
+        const shouldSplitByLongGap = hasCurrent && Number.isFinite(gapMinutes) && gapMinutes > 45;
+        const startsNewSession = !hasCurrent || isInitialized || shouldSplitByLongGap;
+
+        if (startsNewSession) {
+            flushCurrent();
+            current = {
+                activity: item.activity || fallbackCourseName,
+                activityKey: item.activityKey || fallbackCourseName,
+                startTimestampRaw: item.rawTimestamp,
+                startTimestampMs: item.timestampMs,
+                lastTimestampMs: item.timestampMs,
+                minutesFromGap: 0,
+                maxExplicitMinutes: Math.max(0, toSafeNumber(item.explicitDurationMinutes, 0)),
+            };
+            continue;
+        }
+
+        if (Number.isFinite(gapMinutes) && gapMinutes > 0 && gapMinutes <= 45) {
+            current.minutesFromGap += gapMinutes;
+        }
+        current.lastTimestampMs = item.timestampMs;
+        current.maxExplicitMinutes = Math.max(
+            Math.max(0, toSafeNumber(current.maxExplicitMinutes, 0)),
+            Math.max(0, toSafeNumber(item.explicitDurationMinutes, 0))
+        );
+    }
+
+    flushCurrent();
+    return sessions;
 }
 
 function hydrateDurationFromProgress(rows = [], latestProgress = null) {
@@ -190,7 +313,14 @@ function toGroupedSections(rows = [], lessonCount = 0, fallbackTitle = 'Activity
 
     if (sortedRows.length === 0) return [];
 
-    if (lessonCount <= 1) {
+    const uniqueActivityKeys = new Set(
+        sortedRows
+            .map((row) => String(row?.activityKey || row?.activity || '').trim())
+            .filter(Boolean)
+    );
+    const shouldGroupByActivity = uniqueActivityKeys.size > 1 || lessonCount > 1;
+
+    if (!shouldGroupByActivity) {
         return [
             {
                 title: fallbackTitle,
@@ -205,14 +335,14 @@ function toGroupedSections(rows = [], lessonCount = 0, fallbackTitle = 'Activity
 
     const grouped = new Map();
     for (const row of sortedRows) {
-        const key = String(row?.activity || fallbackTitle).trim() || fallbackTitle;
-        if (!grouped.has(key)) grouped.set(key, []);
-        grouped.get(key).push(row);
+        const key = String(row?.activityKey || row?.activity || fallbackTitle).trim() || fallbackTitle;
+        if (!grouped.has(key)) grouped.set(key, { title: String(row?.activity || fallbackTitle).trim() || fallbackTitle, rows: [] });
+        grouped.get(key).rows.push(row);
     }
 
-    return Array.from(grouped.entries()).map(([title, records]) => ({
-        title,
-        records: records.map((row, idx) => ({
+    return Array.from(grouped.values()).map((group) => ({
+        title: group.title,
+        records: group.rows.map((row, idx) => ({
             id: idx + 1,
             dateTime: row.dateTime,
             durationMinutes: toSafeNumber(row.durationMinutes, 0),
@@ -338,7 +468,7 @@ export async function GET(request) {
             take: 1000,
         });
 
-        let rows = buildRowsFromStatements(statements, String(selectedEnrollment?.courses?.title || 'Activity'));
+        let rows = buildSessionRowsFromStatements(statements, String(selectedEnrollment?.courses?.title || 'Activity'));
         rows = hydrateDurationFromProgress(rows, latestProgress);
 
         const statementMinutes = rows.reduce((sum, row) => sum + toSafeNumber(row?.durationMinutes, 0), 0);
@@ -355,6 +485,7 @@ export async function GET(request) {
         if (rows.length === 0 && fallbackMinutes > 0) {
             rows = [{
                 activity: String(selectedSection?.title || selectedEnrollment?.courses?.title || 'Activity').trim() || 'Activity',
+                activityKey: String(selectedSection?.id || selectedEnrollment?.courses?.id || selectedEnrollment?.courseId || 'activity'),
                 dateTime: toDateTimeText(selectedEnrollment?.lastActivityAt || selectedEnrollment?.startedAt || selectedEnrollment?.enrolledAt),
                 timestampMs: toSafeTime(selectedEnrollment?.lastActivityAt || selectedEnrollment?.startedAt || selectedEnrollment?.enrolledAt),
                 durationMinutes: fallbackMinutes,
