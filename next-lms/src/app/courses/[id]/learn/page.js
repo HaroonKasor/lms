@@ -270,21 +270,6 @@ export default function LearnPage() {
     const routeId = params.id;
     const [mounted, setMounted] = useState(false);
     const isLaunchMode = mounted && searchParams.get('launch') === '1';
-    const debugLessonMapEnabled = useMemo(() => {
-        const flag = String(
-            searchParams.get('debugLessonMap')
-            || searchParams.get('debugLesson')
-            || ''
-        ).trim().toLowerCase();
-        if (['1', 'true', 'yes', 'on', 'lesson-map', 'lessonmap'].includes(flag)) return true;
-        try {
-            if (!mounted) return false;
-            const local = String(localStorage.getItem('lms_debug_lesson_map') || '').trim().toLowerCase();
-            return ['1', 'true', 'yes', 'on'].includes(local);
-        } catch {
-            return false;
-        }
-    }, [mounted, searchParams]);
     const requestedSectionId = useMemo(() => {
         const value = Number(searchParams.get('sectionId'));
         return Number.isInteger(value) && value > 0 ? value : null;
@@ -355,28 +340,7 @@ export default function LearnPage() {
     const completionLockRef = useRef(false);
     const initializedStatementGateRef = useRef('');
     const lessonEntryStatementGateRef = useRef('');
-    const lessonMapDebugRef = useRef({ lastKey: '' });
-
-    const logLessonMapDebug = useCallback((label, payload = {}) => {
-        if (!debugLessonMapEnabled) return;
-        try {
-            const safe = {
-                label,
-                at: new Date().toISOString(),
-                routeId: String(routeId || ''),
-                courseId: String(content?.id || ''),
-                sectionId: Number(activeSectionId || 0) || null,
-                selectedActivityIndex: Number(selectedActivityIndex || 0),
-                ...payload,
-            };
-            const key = `${safe.label}|${safe.selectedActivityIndex}|${safe.targetIndex}|${safe.runtimeTargetIndex}|${safe.currentRuntimePage}|${safe.detectedActivityIndex}`;
-            if (lessonMapDebugRef.current.lastKey === key) return;
-            lessonMapDebugRef.current.lastKey = key;
-            console.debug('[LessonMapDebug]', label, safe);
-        } catch {
-            // ignore debug log errors
-        }
-    }, [debugLessonMapEnabled, routeId, content?.id, activeSectionId, selectedActivityIndex]);
+    const logLessonMapDebug = useCallback(() => {}, []);
 
     const markLearningInteraction = useCallback(() => {
         const now = Date.now();
@@ -401,16 +365,6 @@ export default function LearnPage() {
     useEffect(() => {
         setMounted(true);
     }, []);
-
-    useEffect(() => {
-        if (!debugLessonMapEnabled) return;
-        try {
-            // Keep this visible so tester knows debug mode is active.
-            console.info('[LessonMapDebug] enabled (query: debugLessonMap=1)');
-        } catch {
-            // ignore
-        }
-    }, [debugLessonMapEnabled]);
 
     // Learning player should always start with global chatbot closed.
     useEffect(() => {
