@@ -372,9 +372,7 @@ export default function LearnPage() {
             const key = `${safe.label}|${safe.selectedActivityIndex}|${safe.targetIndex}|${safe.runtimeTargetIndex}|${safe.currentRuntimePage}|${safe.detectedActivityIndex}`;
             if (lessonMapDebugRef.current.lastKey === key) return;
             lessonMapDebugRef.current.lastKey = key;
-            console.groupCollapsed(`[LessonMapDebug] ${label}`);
-            console.table([safe]);
-            console.groupEnd();
+            console.debug('[LessonMapDebug]', label, safe);
         } catch {
             // ignore debug log errors
         }
@@ -1447,6 +1445,22 @@ export default function LearnPage() {
             .trim();
     }, []);
 
+    const extractLessonNumber = useCallback((value) => {
+        const text = String(value || '').trim();
+        if (!text) return null;
+        const thaiLessonMatch = text.match(/บทที่\s*([0-9]+)/i);
+        if (thaiLessonMatch?.[1]) {
+            const parsed = Number(thaiLessonMatch[1]);
+            return Number.isFinite(parsed) ? parsed : null;
+        }
+        const lessonMatch = text.match(/(?:lesson|chapter|module)\s*([0-9]+)/i);
+        if (lessonMatch?.[1]) {
+            const parsed = Number(lessonMatch[1]);
+            return Number.isFinite(parsed) ? parsed : null;
+        }
+        return null;
+    }, []);
+
     const getTinCanRuntimeRows = useCallback(() => {
         try {
             const frameWindow = iframeRef.current?.contentWindow;
@@ -1500,6 +1514,7 @@ export default function LearnPage() {
         const activity = activities[safeIndex];
         const candidateUrl = resolveActivityCandidateUrl(activity);
         const activityTitle = String(activity?.name || activity?.title || '').trim();
+        const activityLessonNumber = extractLessonNumber(activityTitle);
         const normalize = (value) => String(value || '')
             .replace(/^https?:\/\/[^/]+/i, '')
             .replace(/\\/g, '/')
@@ -1527,6 +1542,7 @@ export default function LearnPage() {
             const rowKey = getTinCanRuntimeRowPathKey(entry?.row);
             const rowKeyBase = normalize(rowKey);
             const rowTitleKey = getTinCanRuntimeRowTitleKey(entry?.row);
+            const rowLessonNumber = extractLessonNumber(rowTitleKey);
             let score = 0;
 
             if (candidateKeyFull && rowKey) {
@@ -1541,6 +1557,13 @@ export default function LearnPage() {
                 if (rowTitleKey === activityTitleKey) score += 5;
                 else if (rowTitleKey.includes(activityTitleKey) || activityTitleKey.includes(rowTitleKey)) score += 3;
             }
+            if (
+                Number.isFinite(activityLessonNumber)
+                && Number.isFinite(rowLessonNumber)
+                && Number(activityLessonNumber) === Number(rowLessonNumber)
+            ) {
+                score += 20;
+            }
 
             if (score > bestScore) {
                 bestScore = score;
@@ -1549,7 +1572,7 @@ export default function LearnPage() {
         }
 
         return bestScore > 0 ? bestRuntimeIndex : -1;
-    }, [content?.activities, resolveActivityCandidateUrl, getTinCanRuntimeRows, getTinCanRuntimeRowPathKey, getTinCanRuntimeRowTitleKey]);
+    }, [content?.activities, resolveActivityCandidateUrl, getTinCanRuntimeRows, getTinCanRuntimeRowPathKey, getTinCanRuntimeRowTitleKey, extractLessonNumber]);
 
     const findActivityIndexForRuntimePage = useCallback((runtimePageIndex) => {
         const runtimeIndex = Math.floor(Number(runtimePageIndex));
@@ -1562,6 +1585,7 @@ export default function LearnPage() {
         const runtimeRow = runtimeRows.find((entry) => Number(entry?.runtimeIndex) === runtimeIndex)?.row;
         const rowKey = getTinCanRuntimeRowPathKey(runtimeRow);
         const rowTitleKey = getTinCanRuntimeRowTitleKey(runtimeRow);
+        const rowLessonNumber = extractLessonNumber(rowTitleKey);
 
         const normalize = (value) => String(value || '')
             .replace(/^https?:\/\/[^/]+/i, '')
@@ -1589,6 +1613,7 @@ export default function LearnPage() {
                 .trim();
             const candidateKeyBase = normalize(candidateUrl);
             const activityTitleKey = normalizeTitle(activities[i]?.name || activities[i]?.title || '');
+            const activityLessonNumber = extractLessonNumber(activityTitleKey);
 
             let score = 0;
             if (rowKey && candidateKeyFull) {
@@ -1604,6 +1629,13 @@ export default function LearnPage() {
                 if (rowTitleKey === activityTitleKey) score += 5;
                 else if (rowTitleKey.includes(activityTitleKey) || activityTitleKey.includes(rowTitleKey)) score += 3;
             }
+            if (
+                Number.isFinite(rowLessonNumber)
+                && Number.isFinite(activityLessonNumber)
+                && Number(rowLessonNumber) === Number(activityLessonNumber)
+            ) {
+                score += 20;
+            }
             if (score > bestScore) {
                 bestScore = score;
                 bestIndex = i;
@@ -1611,7 +1643,7 @@ export default function LearnPage() {
         }
 
         return bestScore > 0 ? bestIndex : -1;
-    }, [content?.activities, getTinCanRuntimeRows, getTinCanRuntimeRowPathKey, getTinCanRuntimeRowTitleKey, resolveActivityCandidateUrl]);
+    }, [content?.activities, getTinCanRuntimeRows, getTinCanRuntimeRowPathKey, getTinCanRuntimeRowTitleKey, resolveActivityCandidateUrl, extractLessonNumber]);
 
     const getTinCanRuntimeIndexOffset = useCallback(() => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) {
