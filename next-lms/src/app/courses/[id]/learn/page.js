@@ -1515,6 +1515,17 @@ export default function LearnPage() {
         const candidateUrl = resolveActivityCandidateUrl(activity);
         const activityTitle = String(activity?.name || activity?.title || '').trim();
         const activityLessonNumber = extractLessonNumber(activityTitle);
+        const runtimeRows = getTinCanRuntimeRows();
+        if (Number.isFinite(activityLessonNumber)) {
+            const lessonMatch = runtimeRows.find((entry) => {
+                const rowTitleKey = getTinCanRuntimeRowTitleKey(entry?.row);
+                const rowLessonNumber = extractLessonNumber(rowTitleKey);
+                return Number.isFinite(rowLessonNumber) && Number(rowLessonNumber) === Number(activityLessonNumber);
+            });
+            if (lessonMatch) {
+                return Number(lessonMatch.runtimeIndex);
+            }
+        }
         const normalize = (value) => String(value || '')
             .replace(/^https?:\/\/[^/]+/i, '')
             .replace(/\\/g, '/')
@@ -1538,7 +1549,7 @@ export default function LearnPage() {
 
         let bestRuntimeIndex = -1;
         let bestScore = -1;
-        for (const entry of getTinCanRuntimeRows()) {
+        for (const entry of runtimeRows) {
             const rowKey = getTinCanRuntimeRowPathKey(entry?.row);
             const rowKeyBase = normalize(rowKey);
             const rowTitleKey = getTinCanRuntimeRowTitleKey(entry?.row);
@@ -1586,6 +1597,16 @@ export default function LearnPage() {
         const rowKey = getTinCanRuntimeRowPathKey(runtimeRow);
         const rowTitleKey = getTinCanRuntimeRowTitleKey(runtimeRow);
         const rowLessonNumber = extractLessonNumber(rowTitleKey);
+        if (Number.isFinite(rowLessonNumber)) {
+            const lessonMatchIndex = activities.findIndex((activity) => {
+                const activityTitle = String(activity?.name || activity?.title || '').trim();
+                const activityLessonNumber = extractLessonNumber(activityTitle);
+                return Number.isFinite(activityLessonNumber) && Number(activityLessonNumber) === Number(rowLessonNumber);
+            });
+            if (lessonMatchIndex >= 0) {
+                return lessonMatchIndex;
+            }
+        }
 
         const normalize = (value) => String(value || '')
             .replace(/^https?:\/\/[^/]+/i, '')
