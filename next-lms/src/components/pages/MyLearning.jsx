@@ -618,18 +618,25 @@ export default function MyLearning() {
                             </>
                         ) : (
                             <>
-                                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-[#F5F7FF]">
-                                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
-                                        <path d="M4 8.5l5 2.3L20 4M10 10l1.2 5.3L16 14" stroke="#687EFF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                                        <circle cx="4.5" cy="4.5" r="1.2" fill="#1DBA9F" />
-                                        <circle cx="18.5" cy="19" r="1.1" fill="#F87A53" />
-                                        <circle cx="20.5" cy="7.5" r="1.1" fill="#687EFF" />
+                                <div className="mx-auto mb-2 flex items-center justify-center relative w-[80px] h-[80px]">
+                                    <svg width="80" height="80" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                        <rect x="36" y="52" width="20" height="32" rx="3" transform="rotate(-35 36 52)" fill="#FFC224" />
+                                        <rect x="32" y="78" width="16" height="8" rx="2" transform="rotate(-35 32 78)" fill="#F59E0B" />
+                                        <line x1="58" y1="36" x2="68" y2="28" stroke="#687EFF" strokeWidth="4" strokeLinecap="round" />
+                                        <line x1="50" y1="26" x2="55" y2="15" stroke="#F87A53" strokeWidth="4" strokeLinecap="round" />
+                                        <line x1="72" y1="46" x2="86" y2="44" stroke="#34D399" strokeWidth="4" strokeLinecap="round" />
+                                        <line x1="38" y1="28" x2="30" y2="20" stroke="#FFC224" strokeWidth="4" strokeLinecap="round" />
+                                        <circle cx="80" cy="24" r="3.5" fill="#FFC224" />
+                                        <circle cx="64" cy="12" r="3" fill="#687EFF" />
+                                        <circle cx="44" cy="14" r="3" fill="#34D399" />
+                                        <circle cx="88" cy="34" r="3.5" fill="#F87A53" />
+                                        <circle cx="46" cy="34" r="2.5" fill="#687EFF" />
                                     </svg>
                                 </div>
-                                <h3 className="text-[#687EFF] text-[34px] sm:text-[38px] font-semibold leading-[118%] mb-3">
+                                <h3 className="text-[#687EFF] text-[24px] sm:text-[26px] font-bold leading-[130%] mb-3">
                                     Thank you for your feedback!
                                 </h3>
-                                <p className="text-[#4B5567] text-[16px] leading-[145%] mb-8">
+                                <p className="text-[#6B778B] text-[15px] sm:text-[16px] leading-[145%] mb-6 max-w-[430px] mx-auto">
                                     Your review has been submitted successfully. It helps us and other students a lot.
                                 </p>
                                 <button
@@ -637,7 +644,7 @@ export default function MyLearning() {
                                     onClick={() => {
                                         closeReviewModal({ dismissCurrent: false });
                                     }}
-                                    className="h-[48px] px-8 rounded-full bg-[#F87A53] text-white text-[18px] font-medium hover:bg-[#E96E48] transition-colors min-w-[220px]"
+                                    className="h-[48px] px-8 rounded-full bg-[#F87A53] text-white text-[16px] leading-none font-medium hover:bg-[#E96E48] transition-colors w-full max-w-[320px] mx-auto"
                                 >
                                     Back to My LMS
                                 </button>

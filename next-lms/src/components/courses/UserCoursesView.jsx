@@ -678,16 +678,23 @@ export default function UserCoursesView() {
                         className="w-full max-w-[560px] rounded-[26px] bg-white px-5 sm:px-7 py-7 sm:py-8 text-center shadow-[0_32px_80px_rgba(9,16,35,0.38)] border border-[#E8ECFF]"
                         onClick={(event) => event.stopPropagation()}
                     >
-                        <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center">
-                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
-                                <path d="M6 6l5.2 2.6L20 4.4M11 10l1.3 5.2L17 13.6" stroke="#6579FF" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                                <circle cx="5" cy="4.8" r="1.2" fill="#28C38A" />
-                                <circle cx="19" cy="18.4" r="1.1" fill="#FF8A63" />
-                                <circle cx="20.2" cy="8.2" r="1.1" fill="#6579FF" />
+                        <div className="mx-auto mb-2 flex items-center justify-center relative w-[80px] h-[80px]">
+                            <svg width="80" height="80" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <rect x="36" y="52" width="20" height="32" rx="3" transform="rotate(-35 36 52)" fill="#FFC224" />
+                                <rect x="32" y="78" width="16" height="8" rx="2" transform="rotate(-35 32 78)" fill="#F59E0B" />
+                                <line x1="58" y1="36" x2="68" y2="28" stroke="#687EFF" strokeWidth="4" strokeLinecap="round" />
+                                <line x1="50" y1="26" x2="55" y2="15" stroke="#F87A53" strokeWidth="4" strokeLinecap="round" />
+                                <line x1="72" y1="46" x2="86" y2="44" stroke="#34D399" strokeWidth="4" strokeLinecap="round" />
+                                <line x1="38" y1="28" x2="30" y2="20" stroke="#FFC224" strokeWidth="4" strokeLinecap="round" />
+                                <circle cx="80" cy="24" r="3.5" fill="#FFC224" />
+                                <circle cx="64" cy="12" r="3" fill="#687EFF" />
+                                <circle cx="44" cy="14" r="3" fill="#34D399" />
+                                <circle cx="88" cy="34" r="3.5" fill="#F87A53" />
+                                <circle cx="46" cy="34" r="2.5" fill="#687EFF" />
                             </svg>
                         </div>
 
-                        <h3 className="text-[#687EFF] text-[32px] sm:text-[40px] font-semibold leading-[112%] mb-3 tracking-[-0.01em]">
+                        <h3 className="text-[#687EFF] text-[24px] sm:text-[26px] font-bold leading-[130%] mb-3">
                             {enrollSuccessModal.isPending
                                 ? 'Enrollment request sent!'
                                 : (
@@ -698,17 +705,17 @@ export default function UserCoursesView() {
                                     </>
                                 )}
                         </h3>
-                        <p className="text-[#4B5567] text-[16px] leading-[145%] mb-6 max-w-[430px] mx-auto">
+                        <p className="text-[#6B778B] text-[15px] sm:text-[16px] leading-[145%] mb-5 max-w-[430px] mx-auto">
                             {enrollSuccessModal.isPending
                                 ? 'Your request is waiting for admin approval. We will notify you once it is approved.'
                                 : 'You can start learning immediately or come back later. Your progress will be saved.'}
                         </p>
 
-                        <div className="rounded-[10px] bg-[#ECF0FF] px-4 py-3 text-[#1F2A44] text-[14px] font-medium leading-[140%] mb-7 max-w-[470px] mx-auto">
+                        <div className="rounded-[12px] bg-[#EEF2FC] px-5 py-4 text-[#052143] text-[15px] font-medium leading-[140%] mb-8 max-w-[480px] mx-auto">
                             {enrollSuccessModal.courseName}
                         </div>
 
-                        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                             <button
                                 type="button"
                                 onClick={() => {
@@ -716,14 +723,14 @@ export default function UserCoursesView() {
                                     closeEnrollSuccessModal();
                                     router.push(target);
                                 }}
-                                className="h-[50px] px-8 rounded-full bg-[linear-gradient(90deg,#6176FF_0%,#7087FF_100%)] text-white text-[18px] leading-none font-medium hover:brightness-105 transition-all min-w-[220px]"
+                                className="h-[48px] px-6 rounded-full bg-[#687EFF] text-white text-[16px] leading-none font-medium hover:bg-[#5a6ee0] transition-colors w-full sm:w-auto min-w-[200px]"
                             >
                                 {enrollSuccessModal.isPending ? 'Go to My Learning' : 'Start Learning Now'}
                             </button>
                             <button
                                 type="button"
                                 onClick={closeEnrollSuccessModal}
-                                className="h-[50px] px-8 rounded-full border border-[#C9D2F4] bg-white text-[#5C6784] text-[18px] leading-none font-medium hover:bg-[#F8FAFF] transition-colors min-w-[220px]"
+                                className="h-[48px] px-6 rounded-full border border-[#D1E3FB] bg-white text-[#6B778B] text-[16px] leading-none font-medium hover:bg-[#F6F8FF] hover:text-[#052143] transition-colors w-full sm:w-auto min-w-[200px]"
                             >
                                 Learn Later
                             </button>

@@ -3,8 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    npm config set fetch-retries 6 && \
+RUN npm config set fetch-retries 6 && \
     npm config set fetch-retry-factor 2 && \
     npm config set fetch-retry-mintimeout 10000 && \
     npm config set fetch-retry-maxtimeout 120000 && \
@@ -14,6 +13,7 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS=--max-old-space-size=4096
 
 RUN if [ -f prisma/schema.v2.prisma ]; then \
       npx prisma generate --schema prisma/schema.v2.prisma; \

@@ -315,6 +315,10 @@ export async function POST(request) {
             storedAt: new Date().toISOString(),
         };
 
+        const _extensions = statement?.context?.extensions || {};
+        const sectionIdKey = Object.keys(_extensions).find(k => k.endsWith('/section-id'));
+        const sectionId = sectionIdKey ? Number(_extensions[sectionIdKey]) : null;
+
         const savedStatementResult = await createXapiStatement({
             statementId: normalized.id,
             actorKey: normalizeUserKey(normalized.actor?.mbox || ''),
@@ -322,6 +326,7 @@ export async function POST(request) {
             objectId: normalized.object?.id,
             payloadJson: payload,
             contentId,
+            sectionId,
             timestamp: normalized.timestamp,
         });
         if (!savedStatementResult?.row) {

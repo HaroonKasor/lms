@@ -2533,10 +2533,8 @@ export default function LearnPage() {
         const normalizedPayload = shouldKeepCompleted
             ? { ...payload, status: 'COMPLETED', progress: 100 }
             : payload;
-        const trackedSeconds = getTrackedStudySeconds();
         const result = await updateProgress({
             ...normalizedPayload,
-            scoreRaw: trackedSeconds,
         });
         const reason = String(result?.reason || '').toUpperCase();
         const statusCode = Number(result?.status || 0);
@@ -3189,6 +3187,7 @@ export default function LearnPage() {
                 [`${xapiExtensionNamespace}/activity-id`]: lessonId,
                 [`${xapiExtensionNamespace}/activity-name`]: lessonName,
                 [`${xapiExtensionNamespace}/activity-index`]: Number(safeIndex + 1),
+                [`${xapiExtensionNamespace}/section-id`]: Number(activeSectionId || 0),
                 [xapiSkipProgressSyncKey]: true,
             },
         };
@@ -3375,7 +3374,8 @@ export default function LearnPage() {
                         [`${xapiExtensionNamespace}/activity-id`]: matchedActivityId,
                         [`${xapiExtensionNamespace}/activity-name`]: matchedActivityName,
                         [`${xapiExtensionNamespace}/activity-index`]: matchedActivityIndex >= 0 ? Number(matchedActivityIndex + 1) : null,
-                        // Chapter resume is synced by LearnPage logic; don't let nested media overwrite it.
+                        [`${xapiExtensionNamespace}/section-id`]: Number(activeSectionId || 0),
+                        // Chapter resume is synced by LearnPage logic...
                         [xapiSkipProgressSyncKey]: true,
                     },
                 },

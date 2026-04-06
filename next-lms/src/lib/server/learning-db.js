@@ -564,10 +564,11 @@ async function createXapiStatement({
     objectId,
     payloadJson,
     contentId,
+    sectionId,
     timestamp,
 }) {
     const user = await resolveUser(actorKey);
-    const courseId = await resolveCourseId(contentId);
+    const courseId = await resolveCourseId(contentId, sectionId);
     const enrollment = user && courseId ? await resolveEnrollment(user.id, courseId) : null;
     if (!user || !courseId || !enrollment?.id) {
         return { row: null, reason: 'ENROLLMENT_REQUIRED' };

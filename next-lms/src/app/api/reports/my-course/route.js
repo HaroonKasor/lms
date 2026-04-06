@@ -661,8 +661,30 @@ export async function GET(request) {
             take: 1000,
         });
 
+        const quizAttempts = await prisma.quizAttempt.findMany({
+            where: { enrollmentId: Number(selectedEnrollment.id) },
+            include: { quizzes: true },
+            orderBy: { submittedAt: 'asc' },
+        });
+
         let rows = buildSessionRowsFromStatements(statements, String(selectedEnrollment?.courses?.title || 'Activity'));
         rows = hydrateDurationFromProgress(rows, latestProgress);
+
+        const quizRows = quizAttempts.map((attempt) => {
+            const rawScore = toSafeNumber(attempt.score, 0);
+            return {
+                activity: String(attempt.quizzes?.title || 'Quiz').trim() || 'Quiz',
+                activityKey: `quiz-${attempt.quizId}`,
+                activityIndex: 9999,
+                dateTime: toDateTimeText(attempt.submittedAt),
+                timestampMs: toSafeTime(attempt.submittedAt),
+                durationMinutes: 0,
+                scoreText: `${Number(rawScore).toFixed(0)} / 100 (${Number(rawScore).toFixed(0)}%)`,
+                resultText: attempt.passed ? 'Pass' : 'Fail',
+            };
+        });
+
+        rows = [...rows, ...quizRows];
 
         const statementMinutes = rows.reduce((sum, row) => sum + toSafeNumber(row?.durationMinutes, 0), 0);
         const trackedSeconds = toSafeNumber(latestProgress?.scoreRaw, 0);
