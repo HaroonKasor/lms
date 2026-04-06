@@ -172,6 +172,8 @@ export default function CourseReportPage() {
                                                     <th className="text-white text-[16px] font-medium py-[10px] px-[14px] text-left border border-white bg-[#687EFF]">No.</th>
                                                     <th className="text-white text-[16px] font-medium py-[10px] px-[14px] text-left border border-white bg-[#687EFF]">Date and Time</th>
                                                     <th className="text-white text-[16px] font-medium py-[10px] px-[14px] text-left border border-white bg-[#687EFF]">Study Duration (Minutes)</th>
+                                                    <th className="text-white text-[16px] font-medium py-[10px] px-[14px] text-left border border-white bg-[#687EFF]">Score</th>
+                                                    <th className="text-white text-[16px] font-medium py-[10px] px-[14px] text-left border border-white bg-[#687EFF]">Result</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -194,6 +196,18 @@ export default function CourseReportPage() {
                                                             style={{ background: rowIdx % 2 === 0 ? '#F2F3FF' : '#FFFFFF' }}
                                                         >
                                                             {toFixedNumber(row?.durationMinutes || 0, 2)}
+                                                        </td>
+                                                        <td
+                                                            className="text-[#052143] text-[15px] font-medium py-[10px] px-[14px] border border-white"
+                                                            style={{ background: rowIdx % 2 === 0 ? '#F2F3FF' : '#FFFFFF' }}
+                                                        >
+                                                            {row?.scoreText || '-'}
+                                                        </td>
+                                                        <td
+                                                            className="text-[#052143] text-[15px] font-medium py-[10px] px-[14px] border border-white"
+                                                            style={{ background: rowIdx % 2 === 0 ? '#F2F3FF' : '#FFFFFF' }}
+                                                        >
+                                                            {row?.resultText || '-'}
                                                         </td>
                                                     </tr>
                                                 ))}

@@ -66,6 +66,64 @@ function parseIsoDurationToMinutes(value) {
     return hours * 60 + minutes + seconds / 60;
 }
 
+function toOptionalNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function formatScoreNumber(value) {
+    const n = toOptionalNumber(value);
+    if (n === null) return '-';
+    return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
+
+function deriveScoreSnapshot(result = {}) {
+    const raw = toOptionalNumber(result?.score?.raw);
+    const max = toOptionalNumber(result?.score?.max);
+    const scaled = toOptionalNumber(result?.score?.scaled);
+    const success = typeof result?.success === 'boolean' ? result.success : null;
+    const completion = typeof result?.completion === 'boolean' ? result.completion : null;
+
+    const percentFromScaled = scaled !== null
+        ? (scaled <= 1 ? scaled * 100 : scaled)
+        : null;
+    const percentFromRawMax =
+        raw !== null && max !== null && max > 0
+            ? (raw / max) * 100
+            : null;
+    const percent = percentFromScaled ?? percentFromRawMax ?? null;
+    const hasScore = raw !== null || max !== null || scaled !== null;
+    const hasResultFlag = success !== null || completion !== null;
+
+    let scoreText = '-';
+    if (raw !== null && max !== null && max > 0) {
+        const pct = percent !== null ? ` (${percent.toFixed(1)}%)` : '';
+        scoreText = `${formatScoreNumber(raw)} / ${formatScoreNumber(max)}${pct}`;
+    } else if (percent !== null) {
+        scoreText = `${percent.toFixed(1)}%`;
+    } else if (raw !== null) {
+        scoreText = formatScoreNumber(raw);
+    }
+
+    let resultText = '-';
+    if (success === true) resultText = 'Pass';
+    else if (success === false) resultText = 'Fail';
+    else if (completion === true) resultText = 'Completed';
+
+    return {
+        hasScore,
+        hasResultFlag,
+        raw,
+        max,
+        scaled,
+        percent,
+        success,
+        completion,
+        scoreText,
+        resultText,
+    };
+}
+
 function getExtensionValueByKeySuffix(extensions = {}, suffix = '') {
     const target = String(suffix || '').trim().toLowerCase();
     if (!target) return '';
@@ -213,17 +271,26 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
             ? row.statement_json
             : {};
         const result = payload?.result || {};
-        const extensions = result?.extensions || {};
         const rawTimestamp = payload?.timestamp || payload?.storedAt || row?.receivedAt;
         const currentTs = toSafeTime(rawTimestamp);
         const verbId = String(payload?.verb?.id || '').trim().toLowerCase();
 
+        // Keep explicit duration only from real xAPI duration field.
+        // Runtime "length" is media total length and causes fake repeated values (e.g. 0.20 each row).
+        const parsedDuration = parseIsoDurationToMinutes(result?.duration);
+        const isEntryLikeVerb =
+            verbId.includes('experienced') ||
+            verbId.includes('launched') ||
+            verbId.includes('resumed');
+        // Ignore tiny bootstrap durations often emitted by entry statements (e.g. PT12S => 0.20 min),
+        // because they create noisy repeated rows that do not reflect real study time.
         const explicitDurationMinutes =
-            parseIsoDurationToMinutes(result?.duration) ||
-            (toSafeNumber(extensions['https://w3id.org/xapi/video/extensions/length'], 0) / 60) ||
-            (toSafeNumber(extensions.length, 0) / 60);
+            isEntryLikeVerb && parsedDuration > 0 && parsedDuration <= 0.25
+                ? 0
+                : parsedDuration;
 
         const { activityName, activityKey, activityIndex } = deriveActivityIdentity(payload, fallbackCourseName);
+        const scoreSnapshot = deriveScoreSnapshot(result);
 
         return {
             activity: activityName,
@@ -234,6 +301,7 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
             timestampMs: currentTs,
             explicitDurationMinutes: Math.max(0, toSafeNumber(explicitDurationMinutes, 0)),
             verbId,
+            scoreSnapshot,
         };
     });
 
@@ -251,9 +319,20 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
         sessions.push({
             activity: current.activity || fallbackCourseName,
             activityKey: current.activityKey || fallbackCourseName,
+            activityIndex: Number.isFinite(Number(current.activityIndex))
+                ? Math.max(0, Math.floor(Number(current.activityIndex)))
+                : null,
             dateTime: toDateTimeText(current.startTimestampRaw),
             timestampMs: toSafeNumber(current.startTimestampMs, 0),
             durationMinutes: Math.max(0, durationMinutes),
+            scoreRaw: current.scoreRaw,
+            scoreMax: current.scoreMax,
+            scoreScaled: current.scoreScaled,
+            scorePercent: current.scorePercent,
+            success: current.success,
+            completion: current.completion,
+            scoreText: current.scoreText || '-',
+            resultText: current.resultText || '-',
         });
         current = null;
     };
@@ -275,22 +354,37 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
         const activityChanged =
             hasCurrent &&
             String(item.activityKey || '').trim() !== String(current.activityKey || '').trim();
-        const isNewEntryVerb =
-            item.verbId.includes('experienced')
-            || item.verbId.includes('launched')
-            || item.verbId.includes('resumed');
-        const startsNewSession = !hasCurrent || shouldSplitByLongGap || activityChanged || isNewEntryVerb;
+        const isEntryVerb =
+            item.verbId.includes('launched')
+            || item.verbId.includes('resumed')
+            || item.verbId.includes('terminated');
+        const shouldSplitByEntryVerb = hasCurrent
+            && isEntryVerb
+            && Number.isFinite(gapMinutes)
+            && gapMinutes > 2;
+        const startsNewSession = !hasCurrent || shouldSplitByLongGap || activityChanged || shouldSplitByEntryVerb;
 
         if (startsNewSession) {
             flushCurrent();
             current = {
                 activity: item.activity || fallbackCourseName,
                 activityKey: item.activityKey || fallbackCourseName,
+                activityIndex: Number.isFinite(Number(item.activityIndex))
+                    ? Math.max(0, Math.floor(Number(item.activityIndex)))
+                    : null,
                 startTimestampRaw: item.rawTimestamp,
                 startTimestampMs: item.timestampMs,
                 lastTimestampMs: item.timestampMs,
                 minutesFromGap: 0,
                 maxExplicitMinutes: Math.max(0, toSafeNumber(item.explicitDurationMinutes, 0)),
+                scoreRaw: item?.scoreSnapshot?.raw ?? null,
+                scoreMax: item?.scoreSnapshot?.max ?? null,
+                scoreScaled: item?.scoreSnapshot?.scaled ?? null,
+                scorePercent: item?.scoreSnapshot?.percent ?? null,
+                success: item?.scoreSnapshot?.success ?? null,
+                completion: item?.scoreSnapshot?.completion ?? null,
+                scoreText: item?.scoreSnapshot?.scoreText ?? '-',
+                resultText: item?.scoreSnapshot?.resultText ?? '-',
             };
             continue;
         }
@@ -303,6 +397,17 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
             Math.max(0, toSafeNumber(current.maxExplicitMinutes, 0)),
             Math.max(0, toSafeNumber(item.explicitDurationMinutes, 0))
         );
+        const snapshot = item?.scoreSnapshot || {};
+        if (snapshot.hasScore || snapshot.hasResultFlag) {
+            current.scoreRaw = snapshot.raw ?? current.scoreRaw;
+            current.scoreMax = snapshot.max ?? current.scoreMax;
+            current.scoreScaled = snapshot.scaled ?? current.scoreScaled;
+            current.scorePercent = snapshot.percent ?? current.scorePercent;
+            current.success = snapshot.success ?? current.success;
+            current.completion = snapshot.completion ?? current.completion;
+            current.scoreText = snapshot.scoreText || current.scoreText || '-';
+            current.resultText = snapshot.resultText || current.resultText || '-';
+        }
     }
 
     flushCurrent();
@@ -360,6 +465,8 @@ function toGroupedSections(rows = [], lessonCount = 0, fallbackTitle = 'Activity
                     id: idx + 1,
                     dateTime: row.dateTime,
                     durationMinutes: toSafeNumber(row.durationMinutes, 0),
+                    scoreText: String(row?.scoreText || '-'),
+                    resultText: String(row?.resultText || '-'),
                 })),
             },
         ];
@@ -368,16 +475,48 @@ function toGroupedSections(rows = [], lessonCount = 0, fallbackTitle = 'Activity
     const grouped = new Map();
     for (const row of sortedRows) {
         const key = String(row?.activityKey || row?.activity || fallbackTitle).trim() || fallbackTitle;
-        if (!grouped.has(key)) grouped.set(key, { title: String(row?.activity || fallbackTitle).trim() || fallbackTitle, rows: [] });
-        grouped.get(key).rows.push(row);
+        if (!grouped.has(key)) {
+            grouped.set(key, {
+                title: String(row?.activity || fallbackTitle).trim() || fallbackTitle,
+                rows: [],
+                minActivityIndex: Number.isFinite(Number(row?.activityIndex))
+                    ? Math.max(0, Math.floor(Number(row.activityIndex)))
+                    : null,
+                latestTimestampMs: toSafeNumber(row?.timestampMs, 0),
+            });
+        }
+        const bucket = grouped.get(key);
+        const rowIndex = Number.isFinite(Number(row?.activityIndex))
+            ? Math.max(0, Math.floor(Number(row.activityIndex)))
+            : null;
+        if (bucket.minActivityIndex === null && rowIndex !== null) {
+            bucket.minActivityIndex = rowIndex;
+        } else if (bucket.minActivityIndex !== null && rowIndex !== null) {
+            bucket.minActivityIndex = Math.min(bucket.minActivityIndex, rowIndex);
+        }
+        bucket.latestTimestampMs = Math.max(bucket.latestTimestampMs, toSafeNumber(row?.timestampMs, 0));
+        bucket.rows.push(row);
     }
 
-    return Array.from(grouped.values()).map((group) => ({
+    const orderedGroups = Array.from(grouped.values()).sort((a, b) => {
+        const aIndex = Number.isFinite(Number(a?.minActivityIndex)) ? Number(a.minActivityIndex) : null;
+        const bIndex = Number.isFinite(Number(b?.minActivityIndex)) ? Number(b.minActivityIndex) : null;
+        if (aIndex !== null && bIndex !== null && aIndex !== bIndex) {
+            return aIndex - bIndex;
+        }
+        if (aIndex !== null && bIndex === null) return -1;
+        if (aIndex === null && bIndex !== null) return 1;
+        return toSafeNumber(b?.latestTimestampMs, 0) - toSafeNumber(a?.latestTimestampMs, 0);
+    });
+
+    return orderedGroups.map((group) => ({
         title: group.title,
         records: group.rows.map((row, idx) => ({
             id: idx + 1,
             dateTime: row.dateTime,
             durationMinutes: toSafeNumber(row.durationMinutes, 0),
+            scoreText: String(row?.scoreText || '-'),
+            resultText: String(row?.resultText || '-'),
         })),
     }));
 }

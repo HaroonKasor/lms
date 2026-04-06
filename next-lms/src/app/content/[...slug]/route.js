@@ -17,6 +17,7 @@ function decodeSegment(segment = '') {
 function getMimeType(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     switch (ext) {
+        case '.htm':
         case '.html': return 'text/html; charset=utf-8';
         case '.js': return 'application/javascript; charset=utf-8';
         case '.mjs': return 'application/javascript; charset=utf-8';

@@ -787,7 +787,7 @@ export default function LearnPage() {
             ? item.success
             : (typeof item?.result?.success === 'boolean' ? item.result.success : null);
         if (explicitSuccess === false) return false;
-        if (explicitSuccess === true) return true;
+        if (!isAssessment && explicitSuccess === true) return true;
 
         const explicitPass =
             isTruthyFlag(item.passed) ||
@@ -1627,46 +1627,54 @@ export default function LearnPage() {
             const frameWindow = iframeRef.current?.contentWindow;
             if (!frameWindow) return [];
 
-            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
-                ? frameWindow.currentState.dataIndex
-                : [];
-            if (dataIndex.length > 0) {
-                // Prefer dataIndex because it reflects the actual playable order/current page state.
-                return dataIndex.map((row, index) => ({
-                    row,
-                    runtimeIndex: index,
-                    runtimeOrder: index,
-                    runtimeSource: 'dataIndex',
-                }));
-            }
+            const isLaunchableRow = (row = {}) => {
+                const isPage = row?.ispage;
+                const hasLaunch = Boolean(
+                    String(row?.url || '').trim()
+                    || String(row?.urlOffline || '').trim()
+                    || String(row?.launch || '').trim()
+                    || String(row?.href || '').trim()
+                    || String(row?.src || '').trim()
+                    || String(row?.path || '').trim()
+                );
+                if (isPage === true) return true;
+                if (String(isPage).toLowerCase() === 'true') return true;
+                return hasLaunch;
+            };
 
+            // IMPORTANT: treeArray keeps the runtime TOC/page ordering.
+            // dataIndex can be reordered/annotated by runtime status and may desync
+            // sidebar chapter indexes (e.g. click chapter 2 but jump chapter 9).
             const treeArray = Array.isArray(frameWindow?.treeArray) ? frameWindow.treeArray : [];
             if (treeArray.length > 0) {
                 const pageRows = treeArray
                     .map((row, index) => ({ row, runtimeIndex: index }))
-                    .filter((entry) => {
-                        const row = entry?.row || {};
-                        const isPage = row?.ispage;
-                        const hasLaunch = Boolean(
-                            String(row?.url || '').trim()
-                            || String(row?.urlOffline || '').trim()
-                            || String(row?.launch || '').trim()
-                            || String(row?.href || '').trim()
-                            || String(row?.src || '').trim()
-                            || String(row?.path || '').trim()
-                        );
-                        if (isPage === true) return true;
-                        if (String(isPage).toLowerCase() === 'true') return true;
-                        return hasLaunch;
-                    });
+                    .filter((entry) => isLaunchableRow(entry?.row));
                 if (pageRows.length > 0) {
                     return pageRows.map((entry, order) => ({
                         row: entry.row,
                         runtimeIndex: Number(entry.runtimeIndex),
                         runtimeOrder: order,
+                        runtimePage: order,
                         runtimeSource: 'treeArray',
                     }));
                 }
+            }
+
+            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
+                ? frameWindow.currentState.dataIndex
+                : [];
+            if (dataIndex.length > 0) {
+                return dataIndex
+                    .map((row, index) => ({ row, runtimeIndex: index }))
+                    .filter((entry) => isLaunchableRow(entry?.row))
+                    .map((entry, order) => ({
+                        row: entry.row,
+                        runtimeIndex: Number(entry.runtimeIndex),
+                        runtimeOrder: order,
+                        runtimePage: order,
+                        runtimeSource: 'dataIndex',
+                    }));
             }
         } catch {
             // ignore iframe access errors
@@ -1685,7 +1693,7 @@ export default function LearnPage() {
         const activity = activities[safeIndex];
         const runtimeRows = getTinCanRuntimeRows();
 
-        let bestRuntimeIndex = -1;
+        let bestRuntimePage = -1;
         let bestScore = -1;
         let bestDistance = Number.POSITIVE_INFINITY;
         for (let order = 0; order < runtimeRows.length; order++) {
@@ -1699,19 +1707,19 @@ export default function LearnPage() {
 
             if (score > bestScore || (score === bestScore && distance < bestDistance)) {
                 bestScore = score;
-                bestRuntimeIndex = Number(entry.runtimeIndex);
+                bestRuntimePage = Number(entry.runtimePage);
                 bestDistance = distance;
             }
         }
 
         if (bestScore >= TINCAN_STRONG_MATCH_SCORE) {
-            return bestRuntimeIndex;
+            return bestRuntimePage;
         }
 
         if (runtimeRows.length === activities.length) {
             const fallbackEntry = runtimeRows[safeIndex];
-            if (fallbackEntry && Number.isFinite(Number(fallbackEntry.runtimeIndex))) {
-                return Math.floor(Number(fallbackEntry.runtimeIndex));
+            if (fallbackEntry && Number.isFinite(Number(fallbackEntry.runtimePage))) {
+                return Math.floor(Number(fallbackEntry.runtimePage));
             }
         }
 
@@ -1726,11 +1734,13 @@ export default function LearnPage() {
         if (activities.length === 0) return -1;
 
         const runtimeRows = getTinCanRuntimeRows();
-        const runtimeEntry = runtimeRows.find((entry) => Number(entry?.runtimeIndex) === runtimeIndex);
+        const runtimeEntry =
+            runtimeRows.find((entry) => Number(entry?.runtimePage) === runtimeIndex)
+            || runtimeRows.find((entry) => Number(entry?.runtimeIndex) === runtimeIndex);
         const runtimeRow = runtimeEntry?.row;
         const rowOrdinal = Number.isFinite(Number(runtimeEntry?.runtimeOrder))
             ? Number(runtimeEntry.runtimeOrder)
-            : runtimeRows.findIndex((entry) => Number(entry?.runtimeIndex) === runtimeIndex);
+            : runtimeRows.findIndex((entry) => Number(entry?.runtimePage) === runtimeIndex);
 
         let bestIndex = -1;
         let bestScore = -1;
@@ -1752,7 +1762,7 @@ export default function LearnPage() {
             return bestIndex;
         }
 
-        const orderedIndex = runtimeRows.findIndex((entry) => Number(entry?.runtimeIndex) === runtimeIndex);
+        const orderedIndex = runtimeRows.findIndex((entry) => Number(entry?.runtimePage) === runtimeIndex);
         if (orderedIndex >= 0 && orderedIndex < activities.length) {
             return orderedIndex;
         }
@@ -1829,7 +1839,7 @@ export default function LearnPage() {
         if (exact >= 0) return exact;
 
         const runtimeRows = getTinCanRuntimeRows();
-        const orderedIndex = runtimeRows.findIndex((entry) => Number(entry?.runtimeIndex) === Math.floor(numeric));
+        const orderedIndex = runtimeRows.findIndex((entry) => Number(entry?.runtimePage) === Math.floor(numeric));
         if (orderedIndex >= 0 && orderedIndex < activities.length) {
             return orderedIndex;
         }
@@ -1849,8 +1859,8 @@ export default function LearnPage() {
 
         const runtimeRows = getTinCanRuntimeRows();
         const fallbackRow = runtimeRows[safeActivityIndex];
-        if (fallbackRow && Number.isFinite(Number(fallbackRow.runtimeIndex))) {
-            return Math.floor(Number(fallbackRow.runtimeIndex));
+        if (fallbackRow && Number.isFinite(Number(fallbackRow.runtimePage))) {
+            return Math.floor(Number(fallbackRow.runtimePage));
         }
 
         return -1;
@@ -1999,9 +2009,9 @@ export default function LearnPage() {
 
             const next = content.activities.map((_, i) => {
                 const directStatusRow = findTinCanStatusRowForActivity(i);
-                const mappedRuntimeIndex = findRuntimePageIndexForActivity(i);
-                const mappedRow = mappedRuntimeIndex >= 0
-                    ? runtimeRows.find((entry) => Number(entry?.runtimeIndex) === mappedRuntimeIndex)?.row
+                const mappedRuntimePage = findRuntimePageIndexForActivity(i);
+                const mappedRow = mappedRuntimePage >= 0
+                    ? runtimeRows.find((entry) => Number(entry?.runtimePage) === mappedRuntimePage)?.row
                     : null;
                 const row = directStatusRow || mappedRow || {};
                 const activity = content.activities[i];
@@ -2055,7 +2065,12 @@ export default function LearnPage() {
                     (normalizedFromRaw !== null && normalizedFromRaw >= assessmentPassingScore);
                 const markedPass =
                     !hasFailStatus &&
-                    (isTruthyFlag(row?.passed) || hasPassStatus || row?.success === true || hasPassingScore);
+                    (
+                        isTruthyFlag(row?.passed)
+                        || hasPassStatus
+                        || hasPassingScore
+                        || (!isAssessmentActivity(activity) && row?.success === true)
+                    );
                 const markedComplete =
                     !hasFailStatus &&
                     (isTruthyFlag(row?.completed) || row?.completion === true || hasCompletionStatusSignal(statusText));
@@ -3428,13 +3443,21 @@ export default function LearnPage() {
                         (normalizedIncomingScaled !== null && normalizedIncomingScaled >= passingScore) ||
                         (normalizedIncomingRawMax !== null && normalizedIncomingRawMax >= passingScore);
                     const matchedIsAssessment = isAssessmentActivity(matchedActivity);
-                    const markedPass = Boolean(
-                        incoming?.result?.success === true
-                        || verbId.includes('pass')
-                        || verbLabel.includes('pass')
-                        || verbLabel.includes('ผ่าน')
-                        || incomingHasPassingScore
-                    );
+                    const markedPass = matchedIsAssessment
+                        ? Boolean(
+                            verbId.includes('pass')
+                            || verbLabel.includes('pass')
+                            || verbLabel.includes('ผ่าน')
+                            || incomingHasPassingScore
+                            || isTruthyFlag(incoming?.result?.passed)
+                        )
+                        : Boolean(
+                            incoming?.result?.success === true
+                            || verbId.includes('pass')
+                            || verbLabel.includes('pass')
+                            || verbLabel.includes('ผ่าน')
+                            || incomingHasPassingScore
+                        );
                     const markedComplete = Boolean(
                         incoming?.result?.completion === true
                         || isCompletedVerb(incoming?.verb)

@@ -192,6 +192,29 @@ function hasPassingAssessmentScore({ scoreRaw, scoreScaled, scoreMax }) {
     );
 }
 
+function isAssessmentStatement(statement = {}) {
+    const objectId = String(statement?.object?.id || '').toLowerCase();
+    const objectName = String(
+        statement?.object?.definition?.name?.['en-US']
+        || statement?.object?.definition?.name?.en
+        || statement?.object?.definition?.name?.th
+        || ''
+    ).toLowerCase();
+    const contextExtensions = statement?.context?.extensions || {};
+    const activityName = Object.entries(contextExtensions).reduce((best, [key, value]) => {
+        if (!String(key || '').toLowerCase().endsWith('/activity-name')) return best;
+        const next = String(value || '').trim().toLowerCase();
+        return next || best;
+    }, '');
+    const activityId = Object.entries(contextExtensions).reduce((best, [key, value]) => {
+        if (!String(key || '').toLowerCase().endsWith('/activity-id')) return best;
+        const next = String(value || '').trim().toLowerCase();
+        return next || best;
+    }, '');
+    const raw = `${objectId} ${objectName} ${activityName} ${activityId}`;
+    return /quiz|test|exam|assessment|post[\s-_]?test|pre[\s-_]?test|แบบทดสอบ|ทดสอบ/i.test(raw);
+}
+
 async function updateProgressFromStatement(statement, contentId) {
     const verbId = String(statement?.verb?.id || '').toLowerCase();
     const userKey = normalizeUserKey(statement?.actor?.mbox || '');
@@ -214,8 +237,9 @@ async function updateProgressFromStatement(statement, contentId) {
             || Number.isFinite(scoreRaw)
             || Number.isFinite(scoreScaled)
             || Number.isFinite(scoreMax);
+        const assessmentLikeStatement = isAssessmentStatement(statement);
         const hasCompletionSignal = explicitCompletion === true || verbId.includes('completed');
-        const shouldRequirePass = hasAssessmentEvidence;
+        const shouldRequirePass = hasAssessmentEvidence || assessmentLikeStatement;
         const shouldMarkCompleted = !hasExplicitFailure
             && hasCompletionSignal
             && (!shouldRequirePass || explicitSuccess === true || hasPassingScore);
@@ -244,9 +268,10 @@ async function updateProgressFromStatement(statement, contentId) {
             || Number.isFinite(scoreRaw)
             || Number.isFinite(scoreScaled);
         const hasPassingScore = hasPassingAssessmentScore({ scoreRaw, scoreScaled });
+        const assessmentLikeStatement = isAssessmentStatement(statement);
         const hasVerifiedCompletionSignal =
             completion === true &&
-            (!hasAssessmentEvidence || success === true || hasPassingScore);
+            (!(hasAssessmentEvidence || assessmentLikeStatement) || success === true || hasPassingScore);
         return upsertLearningProgress({
             contentId,
             userKey,
