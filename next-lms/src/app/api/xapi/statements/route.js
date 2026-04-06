@@ -177,6 +177,21 @@ function parseIsoDurationToSeconds(value) {
     return hours * 3600 + minutes * 60 + seconds;
 }
 
+function hasPassingAssessmentScore({ scoreRaw, scoreScaled, scoreMax }) {
+    const raw = Number(scoreRaw);
+    const scaled = Number(scoreScaled);
+    const max = Number(scoreMax);
+    const normalizedFromRawMax =
+        Number.isFinite(raw) && Number.isFinite(max) && max > 0
+            ? (raw / max)
+            : undefined;
+    return (
+        (Number.isFinite(scaled) && scaled >= 0.8) ||
+        (Number.isFinite(raw) && raw >= 80) ||
+        (Number.isFinite(normalizedFromRawMax) && normalizedFromRawMax >= 0.8)
+    );
+}
+
 async function updateProgressFromStatement(statement, contentId) {
     const verbId = String(statement?.verb?.id || '').toLowerCase();
     const userKey = normalizeUserKey(statement?.actor?.mbox || '');
@@ -193,16 +208,17 @@ async function updateProgressFromStatement(statement, contentId) {
         const scoreRaw = Number(result?.score?.raw);
         const scoreScaled = Number(result?.score?.scaled);
         const scoreMax = Number(result?.score?.max);
-        const normalizedFromRawMax =
-            Number.isFinite(scoreRaw) && Number.isFinite(scoreMax) && scoreMax > 0
-                ? (scoreRaw / scoreMax)
-                : undefined;
-        const hasPassingScore =
-            (Number.isFinite(scoreScaled) && scoreScaled >= 0.8) ||
-            (Number.isFinite(scoreRaw) && scoreRaw >= 80) ||
-            (Number.isFinite(normalizedFromRawMax) && normalizedFromRawMax >= 0.8);
+        const hasPassingScore = hasPassingAssessmentScore({ scoreRaw, scoreScaled, scoreMax });
+        const hasAssessmentEvidence =
+            typeof explicitSuccess === 'boolean'
+            || Number.isFinite(scoreRaw)
+            || Number.isFinite(scoreScaled)
+            || Number.isFinite(scoreMax);
         const hasCompletionSignal = explicitCompletion === true || verbId.includes('completed');
-        const shouldMarkCompleted = !hasExplicitFailure && hasCompletionSignal && (explicitSuccess === true || hasPassingScore);
+        const shouldRequirePass = hasAssessmentEvidence;
+        const shouldMarkCompleted = !hasExplicitFailure
+            && hasCompletionSignal
+            && (!shouldRequirePass || explicitSuccess === true || hasPassingScore);
         return upsertLearningProgress({
             contentId,
             userKey,
@@ -223,7 +239,14 @@ async function updateProgressFromStatement(statement, contentId) {
         const normalizedProgress = Number.isFinite(Number(progress))
             ? Number(progress)
             : 0;
-        const hasVerifiedCompletionSignal = completion === true && success === true;
+        const hasAssessmentEvidence =
+            typeof success === 'boolean'
+            || Number.isFinite(scoreRaw)
+            || Number.isFinite(scoreScaled);
+        const hasPassingScore = hasPassingAssessmentScore({ scoreRaw, scoreScaled });
+        const hasVerifiedCompletionSignal =
+            completion === true &&
+            (!hasAssessmentEvidence || success === true || hasPassingScore);
         return upsertLearningProgress({
             contentId,
             userKey,

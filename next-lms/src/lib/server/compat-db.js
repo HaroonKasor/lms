@@ -1,5 +1,6 @@
 import prisma from '@/lib/prisma';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
+import { hydrateContentWithConfig } from '@/lib/server/tincan-package-config';
 
 const CONTENT_PREFIX = 'content/';
 const COURSE_CONTENT_MAP_PREFIX = '__map__/course-content/';
@@ -374,6 +375,7 @@ async function listContents() {
 
     return rows
         .map((asset) => toContentShape(asset))
+        .map((content) => hydrateContentWithConfig(content).content)
         .filter((content) => content.id);
 }
 

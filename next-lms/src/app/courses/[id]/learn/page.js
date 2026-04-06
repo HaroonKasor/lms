@@ -315,6 +315,7 @@ export default function LearnPage() {
     const lastSentTimeRef = useRef(0);
     const lastTincanSyncRef = useRef({ position: null, status: null, progress: null, at: 0 });
     const lastTinCanStatusSigRef = useRef('');
+    const tinCanActivityStatusRef = useRef([]);
     const resumeGuardUntilRef = useRef(0);
     const manualSelectionRef = useRef({ target: null, until: 0 });
     const hasShownCompletionToastRef = useRef(false);
@@ -341,6 +342,10 @@ export default function LearnPage() {
     const initializedStatementGateRef = useRef('');
     const lessonEntryStatementGateRef = useRef('');
     const logLessonMapDebug = useCallback(() => {}, []);
+
+    useEffect(() => {
+        tinCanActivityStatusRef.current = Array.isArray(tinCanActivityStatus) ? tinCanActivityStatus : [];
+    }, [tinCanActivityStatus]);
 
     const markLearningInteraction = useCallback(() => {
         const now = Date.now();
@@ -943,34 +948,105 @@ export default function LearnPage() {
     }, [course?.tincanCondition]);
 
     const canFinalizeTinCanCompletion = useCallback(({
+        completedByVerb = false,
         completedByProgress: _completedByProgress = false,
         completedByPackage = false,
         completedByActivities = false,
-        activityIndex: _activityIndex = -1,
+        activityIndex: rawActivityIndex = -1,
+        activityStatuses = tinCanActivityStatusRef.current,
     } = {}) => {
         const totalActivities = Array.isArray(content?.activities) ? content.activities.length : 0;
         const hasMultipleActivities = totalActivities > 1;
+        const statuses = Array.isArray(activityStatuses) ? activityStatuses : [];
+        const safeActivityIndex = Number.isFinite(Number(rawActivityIndex))
+            ? Math.max(0, Math.min(Math.max(totalActivities - 1, 0), Math.floor(Number(rawActivityIndex))))
+            : -1;
+        const isFinalActivity = totalActivities <= 1 || (safeActivityIndex >= 0 && safeActivityIndex >= totalActivities - 1);
 
         // Do not trust raw progress-only signals for finalization because some runtimes
         // can report 100% too early (e.g. single-page packages on launch).
         const completionSignalForMulti =
             completedByPackage ||
-            completedByActivities;
+            completedByActivities ||
+            (completedByVerb && isFinalActivity);
         const completionSignalForSingle =
             completedByPackage ||
-            completedByActivities;
+            completedByActivities ||
+            completedByVerb;
 
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         const hasActivitySignals = activities.some((_, idx) => {
-            const item = tinCanActivityStatus[idx];
+            const item = statuses[idx];
             return Boolean(item && typeof item === 'object');
         });
         const allActivitiesCompleted = activities.length > 0
             && hasActivitySignals
-            && activities.every((_, idx) => isTinCanLessonCompleted(tinCanActivityStatus[idx]));
+            && activities.every((_, idx) => isTinCanLessonCompleted(statuses[idx]));
         const allActivitiesSuccess = activities.length > 0
             && hasActivitySignals
-            && activities.every((activity, idx) => isTinCanLessonPassed(tinCanActivityStatus[idx], activity));
+            && activities.every((activity, idx) => isTinCanLessonPassed(statuses[idx], activity));
+        const hasAssessmentFailureSignalsFromStatuses = activities.some((activity, idx) => {
+            if (!isAssessmentActivity(activity)) return false;
+            const item = statuses[idx];
+            const statusText = normalizeStatusText(
+                item?.status
+                ?? item?.result
+                ?? item?.completionStatus
+                ?? item?.successStatus
+                ?? ''
+            );
+            if (hasFailureStatusSignal(statusText)) return true;
+            if (item?.success === false) return true;
+
+            const rawScore = asFiniteNumber(
+                item?.score
+                ?? item?.rawScore
+                ?? item?.raw
+                ?? item?.resultScore
+                ?? item?.scoreRaw
+                ?? item?.result?.score?.raw
+            );
+            const scaledScore = asFiniteNumber(
+                item?.scaledScore
+                ?? item?.scaled
+                ?? item?.scoreScaled
+                ?? item?.normalizedScore
+                ?? item?.result?.score?.scaled
+            );
+            const maxScore = asFiniteNumber(
+                item?.scoreMax
+                ?? item?.maxScore
+                ?? item?.max
+                ?? item?.totalScore
+                ?? item?.result?.score?.max
+            );
+            const passScore = getAssessmentPassingScore(activity);
+            const normalizedRaw =
+                rawScore !== null
+                    ? (rawScore <= 1 ? rawScore * 100 : rawScore)
+                    : null;
+            const normalizedScaled =
+                scaledScore !== null
+                    ? (scaledScore <= 1 ? scaledScore * 100 : scaledScore)
+                    : null;
+            const normalizedRawMax =
+                rawScore !== null && maxScore !== null && maxScore > 0
+                    ? (rawScore / maxScore) * 100
+                    : null;
+            const hasFailingScore =
+                (normalizedRaw !== null && normalizedRaw < passScore)
+                || (normalizedScaled !== null && normalizedScaled < passScore)
+                || (normalizedRawMax !== null && normalizedRawMax < passScore);
+            const hasAnyScore =
+                normalizedRaw !== null
+                || normalizedScaled !== null
+                || normalizedRawMax !== null;
+            return hasAnyScore && hasFailingScore;
+        });
+        const areAssessmentActivitiesPassedFromStatuses = !activities.some((activity, idx) => {
+            if (!isAssessmentActivity(activity)) return false;
+            return !isTinCanLessonPassed(statuses[idx], activity);
+        });
 
         let completionByCondition = allActivitiesCompleted;
         if (effectiveTinCanCondition === 'all_completed_by_content_success') {
@@ -980,7 +1056,7 @@ export default function LearnPage() {
         }
 
         const hasRuntimeCompletionSignal = hasMultipleActivities ? completionSignalForMulti : completionSignalForSingle;
-        const hasValidCompletionSignal = hasActivitySignals ? completionByCondition : hasRuntimeCompletionSignal;
+        const hasValidCompletionSignal = completionByCondition || hasRuntimeCompletionSignal;
 
         // Guard against instant false-positive completion on initial launch.
         const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
@@ -990,17 +1066,16 @@ export default function LearnPage() {
         const requiresSuccessValidation =
             effectiveTinCanCondition !== 'all_completed'
             || requireAssessmentPass;
-        if (requiresSuccessValidation && hasAssessmentFailureSignals) return false;
-        if (requiresSuccessValidation && !areAssessmentActivitiesPassed) return false;
+        if (requiresSuccessValidation && hasAssessmentFailureSignalsFromStatuses) return false;
+        if (requiresSuccessValidation && !areAssessmentActivitiesPassedFromStatuses) return false;
         return true;
     }, [
         requireAssessmentPass,
-        areAssessmentActivitiesPassed,
-        hasAssessmentFailureSignals,
         content?.activities,
-        tinCanActivityStatus,
         isTinCanLessonCompleted,
         isTinCanLessonPassed,
+        isAssessmentActivity,
+        getAssessmentPassingScore,
         effectiveTinCanCondition,
     ]);
 
@@ -1042,9 +1117,23 @@ export default function LearnPage() {
     const resolveActivityCandidateUrl = useCallback((activity) => {
         if (!activity) return '';
 
-        const launch = String(activity.launch || '').trim();
-        if (launch) {
-            return resolveActivityUrl(content?.entryPoint, launch);
+        const preferredValues = [
+            activity?.configNodeUrl,
+            activity?.configNormalizedUrl,
+            activity?.launch ? resolveActivityUrl(content?.entryPoint, activity.launch) : '',
+        ];
+        for (const candidateValue of preferredValues) {
+            const candidate = String(candidateValue || '').trim();
+            if (!candidate) continue;
+            if (/^https?:\/\//i.test(candidate)) {
+                try {
+                    const url = new URL(candidate);
+                    return `${url.pathname}${url.search}${url.hash}`;
+                } catch {
+                    return candidate;
+                }
+            }
+            return candidate;
         }
 
         // Some recovered TinCan metadata has empty launch but full activity id URL.
@@ -1060,6 +1149,56 @@ export default function LearnPage() {
 
         return '';
     }, [content?.entryPoint, resolveActivityUrl]);
+
+    const getActivityCandidateValues = useCallback((activity) => {
+        if (!activity || typeof activity !== 'object') return [];
+        const values = [
+            activity?.configNodeUrl,
+            activity?.configNormalizedUrl,
+            activity?.launch ? resolveActivityUrl(content?.entryPoint, activity.launch) : '',
+            activity?.launch,
+            activity?.activityId,
+            activity?.id,
+        ];
+
+        const seen = new Set();
+        const next = [];
+        for (const value of values) {
+            const normalized = String(value || '').trim();
+            if (!normalized || seen.has(normalized)) continue;
+            seen.add(normalized);
+            next.push(normalized);
+        }
+        return next;
+    }, [content?.entryPoint, resolveActivityUrl]);
+
+    const getActivityCandidatePathKeys = useCallback((activity) => {
+        const seen = new Set();
+        const keys = [];
+        for (const value of getActivityCandidateValues(activity)) {
+            const normalized = normalizeActivityPathKey(value);
+            if (!normalized || seen.has(normalized)) continue;
+            seen.add(normalized);
+            keys.push(normalized);
+        }
+        return keys;
+    }, [getActivityCandidateValues, normalizeActivityPathKey]);
+
+    const getActivityConfigOrdinals = useCallback((activity) => {
+        const raw = Number(activity?.configNodeIndex);
+        if (!Number.isFinite(raw)) return [];
+        const whole = Math.max(0, Math.floor(raw));
+        const ordinals = new Set([whole]);
+        if (whole >= 1) {
+            ordinals.add(whole - 1);
+        }
+        return Array.from(ordinals.values()).filter((value) => Number.isFinite(value) && value >= 0);
+    }, []);
+
+    const getPrimaryActivityResumePath = useCallback((activity) => {
+        const candidates = getActivityCandidateValues(activity);
+        return String(candidates[0] || '').trim();
+    }, [getActivityCandidateValues]);
 
     const ensureVideoAutoplay = useCallback(() => {
         const video = videoRef.current;
@@ -1357,13 +1496,6 @@ export default function LearnPage() {
     }, [content?.type, resumeLoaded, currentTime, readWebResumeIndex, getLegacyWebRuntimeWindows, applyWebStatusToRuntime]);
 
     const getTinCanRuntimeRowPathKey = useCallback((row) => {
-        const normalize = (value) => String(value || '')
-            .replace(/^https?:\/\/[^/]+/i, '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+/, '')
-            .toLowerCase()
-            .trim();
-
         const candidates = [
             row?.url,
             row?.urlOffline,
@@ -1376,12 +1508,12 @@ export default function LearnPage() {
         ];
 
         for (const candidate of candidates) {
-            const normalized = normalize(candidate);
+            const normalized = normalizeActivityPathKey(candidate);
             if (normalized) return normalized;
         }
 
         return '';
-    }, []);
+    }, [normalizeActivityPathKey]);
 
     const getTinCanRuntimeRowTitleKey = useCallback((row) => {
         const raw = String(
@@ -1415,23 +1547,101 @@ export default function LearnPage() {
         return null;
     }, []);
 
+    const scoreTinCanActivityRowMatch = useCallback((activity, row, { activityIndex = -1, rowOrdinal = -1 } = {}) => {
+        if (!activity || !row || typeof activity !== 'object' || typeof row !== 'object') return -1;
+
+        const normalizeTitle = (value) => String(value || '')
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const activityCandidateKeys = getActivityCandidatePathKeys(activity);
+        const activityOrdinals = getActivityConfigOrdinals(activity);
+        const activityTitle = String(activity?.configNodeText || activity?.name || activity?.title || '').trim();
+        const activityLessonNumber = extractLessonNumber(activityTitle);
+        const activityNodeKey = String(activity?.configNodeId || activity?.id || activity?.activityId || '').trim().toLowerCase();
+        const rowKey = getTinCanRuntimeRowPathKey(row);
+        const rowTitleKey = getTinCanRuntimeRowTitleKey(row);
+        const rowLessonNumber = extractLessonNumber(rowTitleKey);
+        const rowNodeKey = String(row?.id || row?.nodeId || '').trim().toLowerCase();
+        const activityTitleKey = normalizeTitle(activityTitle);
+
+        let score = 0;
+
+        if (activityNodeKey && rowNodeKey && activityNodeKey === rowNodeKey) {
+            score += 32;
+        }
+        if (rowKey && activityCandidateKeys.length > 0) {
+            const exactPathMatch = activityCandidateKeys.some((candidate) => candidate === rowKey);
+            const loosePathMatch = !exactPathMatch && activityCandidateKeys.some((candidate) => (
+                rowKey.endsWith(candidate)
+                || candidate.endsWith(rowKey)
+            ));
+            if (exactPathMatch) {
+                score += 36;
+            } else if (loosePathMatch) {
+                score += 24;
+            }
+        }
+        if (Number.isFinite(rowOrdinal) && rowOrdinal >= 0 && activityOrdinals.includes(Number(rowOrdinal))) {
+            score += 26;
+        }
+        if (activityTitleKey && rowTitleKey) {
+            if (rowTitleKey === activityTitleKey) score += 10;
+            else if (rowTitleKey.includes(activityTitleKey) || activityTitleKey.includes(rowTitleKey)) score += 5;
+        }
+        if (
+            Number.isFinite(activityLessonNumber)
+            && Number.isFinite(rowLessonNumber)
+            && Number(activityLessonNumber) === Number(rowLessonNumber)
+        ) {
+            score += 8;
+        }
+        if (Number.isFinite(activityIndex) && Number.isFinite(rowOrdinal) && activityIndex >= 0 && rowOrdinal >= 0) {
+            const distance = Math.abs(Number(activityIndex) - Number(rowOrdinal));
+            if (distance === 0) score += 6;
+            else if (distance === 1) score += 3;
+        }
+
+        return score;
+    }, [getActivityCandidatePathKeys, getActivityConfigOrdinals, extractLessonNumber, getTinCanRuntimeRowPathKey, getTinCanRuntimeRowTitleKey]);
+
+    const getTinCanStatusRows = useCallback(() => {
+        try {
+            const frameWindow = iframeRef.current?.contentWindow;
+            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
+                ? frameWindow.currentState.dataIndex
+                : [];
+            if (dataIndex.length > 0) {
+                return dataIndex.map((row, index) => ({ row, statusIndex: index, statusOrder: index }));
+            }
+        } catch {
+            // ignore iframe access errors
+        }
+
+        return [];
+    }, []);
+
     const getTinCanRuntimeRows = useCallback(() => {
         try {
             const frameWindow = iframeRef.current?.contentWindow;
             if (!frameWindow) return [];
 
-            // Prefer dataIndex: it reflects actual playable page order/currentPage mapping.
-            // treeArray may include non-page chapter nodes that shift indexes by +1/+N.
             const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
                 ? frameWindow.currentState.dataIndex
                 : [];
             if (dataIndex.length > 0) {
-                return dataIndex.map((row, index) => ({ row, runtimeIndex: index }));
+                // Prefer dataIndex because it reflects the actual playable order/current page state.
+                return dataIndex.map((row, index) => ({
+                    row,
+                    runtimeIndex: index,
+                    runtimeOrder: index,
+                    runtimeSource: 'dataIndex',
+                }));
             }
 
             const treeArray = Array.isArray(frameWindow?.treeArray) ? frameWindow.treeArray : [];
             if (treeArray.length > 0) {
-                // Fallback only: keep rows that look launchable to avoid index skew.
                 const pageRows = treeArray
                     .map((row, index) => ({ row, runtimeIndex: index }))
                     .filter((entry) => {
@@ -1450,7 +1660,12 @@ export default function LearnPage() {
                         return hasLaunch;
                     });
                 if (pageRows.length > 0) {
-                    return pageRows.map((entry, index) => ({ row: entry.row, runtimeIndex: index }));
+                    return pageRows.map((entry, order) => ({
+                        row: entry.row,
+                        runtimeIndex: Number(entry.runtimeIndex),
+                        runtimeOrder: order,
+                        runtimeSource: 'treeArray',
+                    }));
                 }
             }
         } catch {
@@ -1460,84 +1675,48 @@ export default function LearnPage() {
         return [];
     }, []);
 
+    const TINCAN_STRONG_MATCH_SCORE = 30;
+
     const findRuntimePageIndexForActivity = useCallback((activityIndex) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         if (activities.length === 0) return -1;
 
         const safeIndex = Math.max(0, Math.min(activities.length - 1, Math.floor(Number(activityIndex) || 0)));
         const activity = activities[safeIndex];
-        const candidateUrl = resolveActivityCandidateUrl(activity);
-        const activityTitle = String(activity?.name || activity?.title || '').trim();
-        const activityLessonNumber = extractLessonNumber(activityTitle);
         const runtimeRows = getTinCanRuntimeRows();
-        if (Number.isFinite(activityLessonNumber)) {
-            const lessonMatch = runtimeRows.find((entry) => {
-                const rowTitleKey = getTinCanRuntimeRowTitleKey(entry?.row);
-                const rowLessonNumber = extractLessonNumber(rowTitleKey);
-                return Number.isFinite(rowLessonNumber) && Number(rowLessonNumber) === Number(activityLessonNumber);
-            });
-            if (lessonMatch) {
-                return Number(lessonMatch.runtimeIndex);
-            }
-        }
-        const normalize = (value) => String(value || '')
-            .replace(/^https?:\/\/[^/]+/i, '')
-            .replace(/\\/g, '/')
-            .split('?')[0]
-            .split('#')[0]
-            .replace(/^\/+/, '')
-            .toLowerCase()
-            .trim();
-        const normalizeTitle = (value) => String(value || '')
-            .toLowerCase()
-            .replace(/\s+/g, ' ')
-            .trim();
-        const candidateKeyFull = String(candidateUrl || '')
-            .replace(/^https?:\/\/[^/]+/i, '')
-            .replace(/\\/g, '/')
-            .replace(/^\/+/, '')
-            .toLowerCase()
-            .trim();
-        const candidateKeyBase = normalize(candidateUrl);
-        const activityTitleKey = normalizeTitle(activityTitle);
 
         let bestRuntimeIndex = -1;
         let bestScore = -1;
-        for (const entry of runtimeRows) {
-            const rowKey = getTinCanRuntimeRowPathKey(entry?.row);
-            const rowKeyBase = normalize(rowKey);
-            const rowTitleKey = getTinCanRuntimeRowTitleKey(entry?.row);
-            const rowLessonNumber = extractLessonNumber(rowTitleKey);
-            let score = 0;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (let order = 0; order < runtimeRows.length; order++) {
+            const entry = runtimeRows[order];
+            const rowOrdinal = Number.isFinite(Number(entry?.runtimeOrder)) ? Number(entry.runtimeOrder) : order;
+            const score = scoreTinCanActivityRowMatch(activity, entry?.row, {
+                activityIndex: safeIndex,
+                rowOrdinal,
+            });
+            const distance = Math.abs(safeIndex - rowOrdinal);
 
-            if (candidateKeyFull && rowKey) {
-                if (rowKey === candidateKeyFull) score += 6;
-                else if (rowKey.endsWith(candidateKeyFull) || candidateKeyFull.endsWith(rowKey)) score += 4;
-            }
-            if (candidateKeyBase && rowKeyBase) {
-                if (rowKeyBase === candidateKeyBase) score += 4;
-                else if (rowKeyBase.endsWith(candidateKeyBase) || candidateKeyBase.endsWith(rowKeyBase)) score += 3;
-            }
-            if (activityTitleKey && rowTitleKey) {
-                if (rowTitleKey === activityTitleKey) score += 5;
-                else if (rowTitleKey.includes(activityTitleKey) || activityTitleKey.includes(rowTitleKey)) score += 3;
-            }
-            if (
-                Number.isFinite(activityLessonNumber)
-                && Number.isFinite(rowLessonNumber)
-                && Number(activityLessonNumber) === Number(rowLessonNumber)
-            ) {
-                score += 20;
-            }
-
-            if (score > bestScore) {
+            if (score > bestScore || (score === bestScore && distance < bestDistance)) {
                 bestScore = score;
                 bestRuntimeIndex = Number(entry.runtimeIndex);
+                bestDistance = distance;
             }
         }
 
-        return bestScore > 0 ? bestRuntimeIndex : -1;
-    }, [content?.activities, resolveActivityCandidateUrl, getTinCanRuntimeRows, getTinCanRuntimeRowPathKey, getTinCanRuntimeRowTitleKey, extractLessonNumber]);
+        if (bestScore >= TINCAN_STRONG_MATCH_SCORE) {
+            return bestRuntimeIndex;
+        }
+
+        if (runtimeRows.length === activities.length) {
+            const fallbackEntry = runtimeRows[safeIndex];
+            if (fallbackEntry && Number.isFinite(Number(fallbackEntry.runtimeIndex))) {
+                return Math.floor(Number(fallbackEntry.runtimeIndex));
+            }
+        }
+
+        return -1;
+    }, [content?.activities, getTinCanRuntimeRows, scoreTinCanActivityRowMatch]);
 
     const findActivityIndexForRuntimePage = useCallback((runtimePageIndex) => {
         const runtimeIndex = Math.floor(Number(runtimePageIndex));
@@ -1547,78 +1726,39 @@ export default function LearnPage() {
         if (activities.length === 0) return -1;
 
         const runtimeRows = getTinCanRuntimeRows();
-        const runtimeRow = runtimeRows.find((entry) => Number(entry?.runtimeIndex) === runtimeIndex)?.row;
-        const rowKey = getTinCanRuntimeRowPathKey(runtimeRow);
-        const rowTitleKey = getTinCanRuntimeRowTitleKey(runtimeRow);
-        const rowLessonNumber = extractLessonNumber(rowTitleKey);
-        if (Number.isFinite(rowLessonNumber)) {
-            const lessonMatchIndex = activities.findIndex((activity) => {
-                const activityTitle = String(activity?.name || activity?.title || '').trim();
-                const activityLessonNumber = extractLessonNumber(activityTitle);
-                return Number.isFinite(activityLessonNumber) && Number(activityLessonNumber) === Number(rowLessonNumber);
-            });
-            if (lessonMatchIndex >= 0) {
-                return lessonMatchIndex;
-            }
-        }
-
-        const normalize = (value) => String(value || '')
-            .replace(/^https?:\/\/[^/]+/i, '')
-            .replace(/\\/g, '/')
-            .split('?')[0]
-            .split('#')[0]
-            .replace(/^\/+/, '')
-            .toLowerCase()
-            .trim();
-
-        const normalizeTitle = (value) => String(value || '')
-            .toLowerCase()
-            .replace(/\s+/g, ' ')
-            .trim();
+        const runtimeEntry = runtimeRows.find((entry) => Number(entry?.runtimeIndex) === runtimeIndex);
+        const runtimeRow = runtimeEntry?.row;
+        const rowOrdinal = Number.isFinite(Number(runtimeEntry?.runtimeOrder))
+            ? Number(runtimeEntry.runtimeOrder)
+            : runtimeRows.findIndex((entry) => Number(entry?.runtimeIndex) === runtimeIndex);
 
         let bestIndex = -1;
         let bestScore = -1;
+        let bestDistance = Number.POSITIVE_INFINITY;
         for (let i = 0; i < activities.length; i++) {
-            const candidateUrl = resolveActivityCandidateUrl(activities[i]);
-            const candidateKeyFull = String(candidateUrl || '')
-                .replace(/^https?:\/\/[^/]+/i, '')
-                .replace(/\\/g, '/')
-                .replace(/^\/+/, '')
-                .toLowerCase()
-                .trim();
-            const candidateKeyBase = normalize(candidateUrl);
-            const activityTitleKey = normalizeTitle(activities[i]?.name || activities[i]?.title || '');
-            const activityLessonNumber = extractLessonNumber(activityTitleKey);
-
-            let score = 0;
-            if (rowKey && candidateKeyFull) {
-                if (rowKey === candidateKeyFull) score += 6;
-                else if (rowKey.endsWith(candidateKeyFull) || candidateKeyFull.endsWith(rowKey)) score += 4;
-            }
-            const rowKeyBase = normalize(rowKey);
-            if (rowKeyBase && candidateKeyBase) {
-                if (rowKeyBase === candidateKeyBase) score += 4;
-                else if (rowKeyBase.endsWith(candidateKeyBase) || candidateKeyBase.endsWith(rowKeyBase)) score += 3;
-            }
-            if (rowTitleKey && activityTitleKey) {
-                if (rowTitleKey === activityTitleKey) score += 5;
-                else if (rowTitleKey.includes(activityTitleKey) || activityTitleKey.includes(rowTitleKey)) score += 3;
-            }
-            if (
-                Number.isFinite(rowLessonNumber)
-                && Number.isFinite(activityLessonNumber)
-                && Number(rowLessonNumber) === Number(activityLessonNumber)
-            ) {
-                score += 20;
-            }
-            if (score > bestScore) {
+            const score = scoreTinCanActivityRowMatch(activities[i], runtimeRow, {
+                activityIndex: i,
+                rowOrdinal,
+            });
+            const distance = Math.abs(i - rowOrdinal);
+            if (score > bestScore || (score === bestScore && distance < bestDistance)) {
                 bestScore = score;
                 bestIndex = i;
+                bestDistance = distance;
             }
         }
 
-        return bestScore > 0 ? bestIndex : -1;
-    }, [content?.activities, getTinCanRuntimeRows, getTinCanRuntimeRowPathKey, getTinCanRuntimeRowTitleKey, resolveActivityCandidateUrl, extractLessonNumber]);
+        if (bestScore >= TINCAN_STRONG_MATCH_SCORE) {
+            return bestIndex;
+        }
+
+        const orderedIndex = runtimeRows.findIndex((entry) => Number(entry?.runtimeIndex) === runtimeIndex);
+        if (orderedIndex >= 0 && orderedIndex < activities.length) {
+            return orderedIndex;
+        }
+
+        return -1;
+    }, [content?.activities, getTinCanRuntimeRows, scoreTinCanActivityRowMatch]);
 
     const getTinCanRuntimeIndexOffset = useCallback(() => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) {
@@ -1629,32 +1769,27 @@ export default function LearnPage() {
         const runtimeRows = getTinCanRuntimeRows();
         if (!Array.isArray(runtimeRows) || runtimeRows.length === 0) return 0;
 
-        const normalize = (value) => String(value || '')
-            .replace(/^https?:\/\/[^/]+/i, '')
-            .replace(/\\/g, '/')
-            .split('?')[0]
-            .split('#')[0]
-            .replace(/^\/+/, '')
-            .toLowerCase()
-            .trim();
-
         // Prefer real path matching to estimate offset. This is safer than using
         // count differences, which can be very wrong for some packages.
         const diffCount = new Map();
         let matched = 0;
         for (let i = 0; i < activities.length; i++) {
-            const candidate = resolveActivityCandidateUrl(activities[i]);
-            const candidateKey = normalize(candidate);
-            if (!candidateKey) continue;
+            const candidateKeys = getActivityCandidatePathKeys(activities[i]);
+            const candidateOrdinals = getActivityConfigOrdinals(activities[i]);
+            if (candidateKeys.length === 0 && candidateOrdinals.length === 0) continue;
 
             const rowIndex = runtimeRows.findIndex((entry) => {
                 const rowKey = getTinCanRuntimeRowPathKey(entry?.row);
-                if (!rowKey) return false;
-                return (
+                const rowOrdinal = Number.isFinite(Number(entry?.runtimeOrder))
+                    ? Number(entry.runtimeOrder)
+                    : runtimeRows.findIndex((runtimeEntry) => runtimeEntry === entry);
+                const pathMatched = rowKey && candidateKeys.some((candidateKey) => (
                     rowKey === candidateKey
                     || rowKey.endsWith(candidateKey)
                     || candidateKey.endsWith(rowKey)
-                );
+                ));
+                const ordinalMatched = Number.isFinite(rowOrdinal) && candidateOrdinals.includes(rowOrdinal);
+                return Boolean(pathMatched || ordinalMatched);
             });
             if (rowIndex < 0) continue;
 
@@ -1682,7 +1817,7 @@ export default function LearnPage() {
         const rawDiff = runtimeRows.length - activities.length;
         if (!Number.isFinite(rawDiff)) return 0;
         return Math.max(0, Math.min(2, Math.floor(rawDiff)));
-    }, [content, getTinCanRuntimeRows, resolveActivityCandidateUrl, getTinCanRuntimeRowPathKey]);
+    }, [content, getTinCanRuntimeRows, getActivityCandidatePathKeys, getActivityConfigOrdinals, getTinCanRuntimeRowPathKey]);
 
     const mapRuntimePageToActivityIndex = useCallback((runtimePageIndex) => {
         const numeric = Number(runtimePageIndex);
@@ -1693,11 +1828,14 @@ export default function LearnPage() {
         const exact = findActivityIndexForRuntimePage(numeric);
         if (exact >= 0) return exact;
 
-        const offset = getTinCanRuntimeIndexOffset();
-        const mapped = Math.floor(numeric) - offset;
-        if (mapped < 0 || mapped >= activities.length) return -1;
-        return mapped;
-    }, [content?.activities, findActivityIndexForRuntimePage, getTinCanRuntimeIndexOffset]);
+        const runtimeRows = getTinCanRuntimeRows();
+        const orderedIndex = runtimeRows.findIndex((entry) => Number(entry?.runtimeIndex) === Math.floor(numeric));
+        if (orderedIndex >= 0 && orderedIndex < activities.length) {
+            return orderedIndex;
+        }
+
+        return -1;
+    }, [content?.activities, findActivityIndexForRuntimePage, getTinCanRuntimeRows]);
 
     const mapActivityIndexToRuntimePage = useCallback((activityIndex) => {
         const numeric = Number(activityIndex);
@@ -1709,23 +1847,93 @@ export default function LearnPage() {
         const exact = findRuntimePageIndexForActivity(safeActivityIndex);
         if (exact >= 0) return exact;
 
-        const offset = getTinCanRuntimeIndexOffset();
         const runtimeRows = getTinCanRuntimeRows();
-        const runtimeMax = Array.isArray(runtimeRows) && runtimeRows.length > 0
-            ? runtimeRows.length - 1
-            : (activities.length - 1);
-        const runtimeTarget = safeActivityIndex + offset;
-        return Math.max(0, Math.min(runtimeMax, runtimeTarget));
-    }, [content?.activities, findRuntimePageIndexForActivity, getTinCanRuntimeIndexOffset, getTinCanRuntimeRows]);
+        const fallbackRow = runtimeRows[safeActivityIndex];
+        if (fallbackRow && Number.isFinite(Number(fallbackRow.runtimeIndex))) {
+            return Math.floor(Number(fallbackRow.runtimeIndex));
+        }
+
+        return -1;
+    }, [content?.activities, findRuntimePageIndexForActivity, getTinCanRuntimeRows]);
+
+    const findTinCanStatusRowForActivity = useCallback((activityIndex) => {
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return null;
+
+        const safeIndex = Math.max(0, Math.min(activities.length - 1, Math.floor(Number(activityIndex) || 0)));
+        const activity = activities[safeIndex];
+        const statusRows = getTinCanStatusRows();
+        if (statusRows.length === 0) return null;
+
+        let bestRow = null;
+        let bestScore = -1;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (let order = 0; order < statusRows.length; order++) {
+            const entry = statusRows[order];
+            const rowOrdinal = Number.isFinite(Number(entry?.statusOrder)) ? Number(entry.statusOrder) : order;
+            const score = scoreTinCanActivityRowMatch(activity, entry?.row, {
+                activityIndex: safeIndex,
+                rowOrdinal,
+            });
+            const distance = Math.abs(safeIndex - rowOrdinal);
+
+            if (score > bestScore || (score === bestScore && distance < bestDistance)) {
+                bestScore = score;
+                bestRow = entry?.row || null;
+                bestDistance = distance;
+            }
+        }
+
+        if (bestScore >= TINCAN_STRONG_MATCH_SCORE) {
+            return bestRow;
+        }
+
+        if (statusRows.length === activities.length) {
+            return statusRows[safeIndex]?.row || null;
+        }
+
+        return null;
+    }, [content?.activities, getTinCanStatusRows, scoreTinCanActivityRowMatch]);
+
+    const findUniqueActivityIndexByPathKey = useCallback((normalizedPathKey, { allowLoose = false } = {}) => {
+        const key = String(normalizedPathKey || '').trim();
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (!key || activities.length === 0) return -1;
+
+        const exactMatches = [];
+        const looseMatches = [];
+        for (let i = 0; i < activities.length; i++) {
+            const candidateKeys = getActivityCandidatePathKeys(activities[i]);
+            if (!Array.isArray(candidateKeys) || candidateKeys.length === 0) continue;
+            if (candidateKeys.includes(key)) {
+                exactMatches.push(i);
+                continue;
+            }
+            if (
+                allowLoose &&
+                candidateKeys.some((candidate) => (
+                    key.endsWith(candidate)
+                    || candidate.endsWith(key)
+                ))
+            ) {
+                looseMatches.push(i);
+            }
+        }
+
+        if (exactMatches.length === 1) return exactMatches[0];
+        if (exactMatches.length > 1) return -1;
+        if (allowLoose && looseMatches.length === 1) return looseMatches[0];
+        return -1;
+    }, [content?.activities, getActivityCandidatePathKeys]);
 
     const detectActivityIndexFromIframe = useCallback(() => {
         if (!iframeRef.current || !content || !Array.isArray(content.activities) || content.activities.length === 0) return -1;
 
         const frameWindow = iframeRef.current.contentWindow;
+
         if (frameWindow) {
             try {
-                const runtimeDataReady = Array.isArray(frameWindow?.currentState?.dataIndex)
-                    && frameWindow.currentState.dataIndex.length > 0;
+                const runtimeDataReady = getTinCanRuntimeRows().length > 0;
                 const directIndex = Number(frameWindow.currentPage);
                 if (runtimeDataReady && Number.isFinite(directIndex) && directIndex >= 0) {
                     const mapped = mapRuntimePageToActivityIndex(directIndex);
@@ -1738,36 +1946,7 @@ export default function LearnPage() {
                     if (mapped >= 0) return mapped;
                 }
             } catch {
-                // Ignore cross-frame access errors and fallback to URL matching.
-            }
-        }
-
-        let currentHref = '';
-        try {
-            currentHref = frameWindow?.location?.href || '';
-        } catch {
-            return -1;
-        }
-        if (!currentHref) return -1;
-
-        const normalize = (value) => String(value || '')
-            .replace(/^https?:\/\/[^/]+/i, '')
-            .replace(/\\/g, '/')
-            .toLowerCase();
-
-        const current = normalize(currentHref);
-
-        for (let i = 0; i < content.activities.length; i++) {
-            const resolved = resolveActivityCandidateUrl(content.activities[i]);
-            const candidate = normalize(resolved);
-            if (!candidate) continue;
-
-            // Match both full launch and path without query/hash.
-            const candidateNoQuery = candidate.split('?')[0].split('#')[0];
-            const currentNoQuery = current.split('?')[0].split('#')[0];
-
-            if (current.includes(candidate) || current.includes(candidateNoQuery) || currentNoQuery.endsWith(candidateNoQuery)) {
-                return i;
+                // Ignore cross-frame access errors and fallback to runtime page matching.
             }
         }
 
@@ -1776,41 +1955,55 @@ export default function LearnPage() {
             const innerSrc = frameWindow?.document?.getElementById('contentFrame')?.getAttribute('src')
                 || frameWindow?.document?.getElementById('contentFrame')?.src
                 || '';
-            const inner = normalize(innerSrc);
+            const inner = normalizeActivityPathKey(innerSrc);
             if (inner) {
-                for (let i = 0; i < content.activities.length; i++) {
-                    const resolved = resolveActivityCandidateUrl(content.activities[i]);
-                    const candidate = normalize(resolved);
-                    const candidateNoQuery = candidate.split('?')[0].split('#')[0];
-                    const innerNoQuery = inner.split('?')[0].split('#')[0];
-                    if (inner.includes(candidate) || inner.includes(candidateNoQuery) || innerNoQuery.endsWith(candidateNoQuery)) {
-                        return i;
-                    }
-                }
+                const exact = findUniqueActivityIndexByPathKey(inner, { allowLoose: false });
+                if (exact >= 0) return exact;
+                const loose = findUniqueActivityIndexByPathKey(inner, { allowLoose: true });
+                if (loose >= 0) return loose;
             }
         } catch {
             // ignore inner-frame access errors
         }
 
+        let currentHref = '';
+        try {
+            currentHref = frameWindow?.location?.href || '';
+        } catch {
+            currentHref = '';
+        }
+        if (!currentHref) return -1;
+
+        const current = normalizeActivityPathKey(currentHref);
+        if (!current) return -1;
+        const exactCurrent = findUniqueActivityIndexByPathKey(current, { allowLoose: false });
+        if (exactCurrent >= 0) return exactCurrent;
+        const looseCurrent = findUniqueActivityIndexByPathKey(current, { allowLoose: true });
+        if (looseCurrent >= 0) return looseCurrent;
+
         return -1;
-    }, [content, resolveActivityCandidateUrl, mapRuntimePageToActivityIndex]);
+    }, [content, getTinCanRuntimeRows, normalizeActivityPathKey, mapRuntimePageToActivityIndex, findUniqueActivityIndexByPathKey]);
 
     const syncTinCanActivityStatusFromIframe = useCallback(() => {
-        if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
+        if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) {
+            return Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
+        }
 
         try {
             const frameWindow = iframeRef.current?.contentWindow;
             const dataIndex = frameWindow?.currentState?.dataIndex;
-            if (!Array.isArray(dataIndex)) return;
-            const offset = getTinCanRuntimeIndexOffset();
+            if (!Array.isArray(dataIndex)) {
+                return Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
+            }
             const runtimeRows = getTinCanRuntimeRows();
 
             const next = content.activities.map((_, i) => {
+                const directStatusRow = findTinCanStatusRowForActivity(i);
                 const mappedRuntimeIndex = findRuntimePageIndexForActivity(i);
                 const mappedRow = mappedRuntimeIndex >= 0
                     ? runtimeRows.find((entry) => Number(entry?.runtimeIndex) === mappedRuntimeIndex)?.row
                     : null;
-                const row = mappedRow || dataIndex[i + offset] || {};
+                const row = directStatusRow || mappedRow || {};
                 const activity = content.activities[i];
                 const statusText = normalizeStatusText(
                     row?.status
@@ -1881,14 +2074,17 @@ export default function LearnPage() {
             });
 
             const sig = JSON.stringify(next);
+            tinCanActivityStatusRef.current = next;
             if (sig !== lastTinCanStatusSigRef.current) {
                 lastTinCanStatusSigRef.current = sig;
                 setTinCanActivityStatus(next);
             }
+            return next;
         } catch {
             // ignore iframe state read errors
+            return Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
         }
-    }, [content, getTinCanRuntimeIndexOffset, isAssessmentActivity, getAssessmentPassingScore, getTinCanRuntimeRows, findRuntimePageIndexForActivity]);
+    }, [content, isAssessmentActivity, getAssessmentPassingScore, getTinCanRuntimeRows, findRuntimePageIndexForActivity, findTinCanStatusRowForActivity]);
 
     const applyTincanResumeToIframe = useCallback(() => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
@@ -1897,9 +2093,35 @@ export default function LearnPage() {
         const frameWindow = iframeRef.current.contentWindow;
         if (!frameWindow) return;
 
-        const targetIndex = Math.max(0, Math.min(selectedActivityIndex, content.activities.length - 1));
+        const manualTarget = Number(manualSelectionRef.current?.target);
+        const manualUntil = Number(manualSelectionRef.current?.until || 0);
+        const manualActive = Number.isFinite(manualTarget) && Date.now() < manualUntil;
+        const targetIndex = Math.max(
+            0,
+            Math.min(
+                manualActive ? Math.floor(manualTarget) : Number(selectedActivityIndex),
+                content.activities.length - 1
+            )
+        );
         let attempts = 0;
         const maxAttempts = 80;
+        const commitResolvedIndex = (resolvedIndex) => {
+            if (!Number.isFinite(Number(resolvedIndex))) return;
+            const safeResolvedIndex = Math.max(0, Math.min(content.activities.length - 1, Math.floor(Number(resolvedIndex))));
+            const resolvedActivity = content.activities[safeResolvedIndex];
+            const resolvedPath = getPrimaryActivityResumePath(resolvedActivity);
+            setSelectedActivityIndex(safeResolvedIndex);
+            setCurrentTime(safeResolvedIndex + 1);
+            persistTincanResumeIndex(safeResolvedIndex);
+            persistTincanResumePath(resolvedPath || resolvedActivity?.activityId || resolvedActivity?.id || '');
+            highestSeenActivityIndexRef.current = Math.max(
+                Number(highestSeenActivityIndexRef.current || 0),
+                safeResolvedIndex
+            );
+            if (manualActive) {
+                manualSelectionRef.current = { target: null, until: 0 };
+            }
+        };
 
         const timer = setInterval(() => {
             attempts += 1;
@@ -1910,15 +2132,7 @@ export default function LearnPage() {
                     let runtimeTargetIndex = mapActivityIndexToRuntimePage(targetIndex);
                     if (runtimeTargetIndex < 0) return;
 
-                    // Safety: if calculated runtime index maps back to a different lesson,
-                    // prefer direct index when it round-trips correctly.
                     const roundTripIndex = mapRuntimePageToActivityIndex(runtimeTargetIndex);
-                    if (roundTripIndex >= 0 && roundTripIndex !== targetIndex) {
-                        const directRoundTrip = mapRuntimePageToActivityIndex(targetIndex);
-                        if (directRoundTrip === targetIndex) {
-                            runtimeTargetIndex = targetIndex;
-                        }
-                    }
 
                     logLessonMapDebug('resume-jump-prepare', {
                         targetIndex,
@@ -1928,8 +2142,21 @@ export default function LearnPage() {
                         targetActivityTitle: String(content?.activities?.[targetIndex]?.name || content?.activities?.[targetIndex]?.title || ''),
                     });
 
+                    const detectedBefore = detectActivityIndexFromIframe();
+                    if (detectedBefore === targetIndex) {
+                        logLessonMapDebug('resume-jump-skip-detected-target', {
+                            targetIndex,
+                            runtimeTargetIndex,
+                            currentRuntimePage: Number(frameWindow.currentPage),
+                            detectedActivityIndex: detectedBefore,
+                        });
+                        commitResolvedIndex(detectedBefore);
+                        clearInterval(timer);
+                        return;
+                    }
+
                     const current = Number(frameWindow.currentPage);
-                    if (!Number.isFinite(current) || current !== runtimeTargetIndex) {
+                    if (!Number.isFinite(current) || current !== runtimeTargetIndex || detectedBefore !== targetIndex) {
                         // Fallback: disable linear check just for resume jump.
                         const previousLinear = frameWindow.islinear;
                         try {
@@ -1947,27 +2174,19 @@ export default function LearnPage() {
                             frameWindow.drawTOC();
                         }
 
-                        // Verify jump applied; if not, keep retrying.
-                        const after = Number(frameWindow.currentPage);
-                        if (Number.isFinite(after) && after === runtimeTargetIndex) {
+                        const detectedAfter = detectActivityIndexFromIframe();
+                        if (detectedAfter === targetIndex) {
+                            const after = Number(frameWindow.currentPage);
                             logLessonMapDebug('resume-jump-applied', {
                                 targetIndex,
                                 runtimeTargetIndex,
                                 currentRuntimePage: after,
-                                detectedActivityIndex: mapRuntimePageToActivityIndex(after),
+                                detectedActivityIndex: detectedAfter,
                             });
+                            commitResolvedIndex(detectedAfter);
                             clearInterval(timer);
                             return;
                         }
-                    } else {
-                        logLessonMapDebug('resume-jump-skip-same-page', {
-                            targetIndex,
-                            runtimeTargetIndex,
-                            currentRuntimePage: current,
-                            detectedActivityIndex: mapRuntimePageToActivityIndex(current),
-                        });
-                        clearInterval(timer);
-                        return;
                     }
                 }
             } catch {
@@ -1975,10 +2194,16 @@ export default function LearnPage() {
             }
 
             if (attempts >= maxAttempts) {
+                const detectedFinal = detectActivityIndexFromIframe();
+                if (detectedFinal >= 0) {
+                    commitResolvedIndex(detectedFinal);
+                } else if (manualActive) {
+                    manualSelectionRef.current = { target: null, until: 0 };
+                }
                 clearInterval(timer);
             }
         }, 250);
-    }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug]);
+    }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug, detectActivityIndexFromIframe, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath]);
 
     const restoreTincanPositionFromProgress = useCallback((entry) => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
@@ -1990,9 +2215,8 @@ export default function LearnPage() {
         const savedPathKey = readTincanResumePath();
         const idxFromSavedPath = savedPathKey
             ? content.activities.findIndex((activity) => {
-                const candidate = resolveActivityCandidateUrl(activity);
-                const key = normalizeActivityPathKey(candidate || activity?.activityId || activity?.id || '');
-                return Boolean(key) && key === savedPathKey;
+                const candidateKeys = getActivityCandidatePathKeys(activity);
+                return candidateKeys.includes(savedPathKey);
             })
             : -1;
 
@@ -2044,13 +2268,10 @@ export default function LearnPage() {
         if (Number.isFinite(idxFromSavedPath) && idxFromSavedPath >= 0) {
             if (merged < 0) {
                 merged = idxFromSavedPath;
-            } else {
-                const gap = Math.abs(idxFromSavedPath - merged);
-                if (gap > 2) {
-                    // Path-based resume is more precise than historical index snapshots.
+            } else if (idxFromSavedPath >= merged) {
+                const staleAheadByPath = !isCourseCompleted && idxFromSavedPath > merged + 2;
+                if (!staleAheadByPath) {
                     merged = idxFromSavedPath;
-                } else {
-                    merged = Math.max(merged, idxFromSavedPath);
                 }
             }
         }
@@ -2072,12 +2293,12 @@ export default function LearnPage() {
             persistTincanResumeIndex(idx);
         }
         if (idx >= 0 && idx < content.activities.length) {
-            const resumePath = resolveActivityCandidateUrl(content.activities[idx]);
+            const resumePath = getPrimaryActivityResumePath(content.activities[idx]);
             persistTincanResumePath(resumePath || content.activities[idx]?.activityId || content.activities[idx]?.id || '');
         }
         // Keep TinCan wrapper loaded (shows TOC/sidebar), then jump chapter via goToPage.
         setIframeSrc(resolvePlayerSrc(content.entryPoint));
-    }, [content, readTincanResumePath, resolveActivityCandidateUrl, normalizeActivityPathKey, readTincanResumeIndex, persistTincanResumeIndex, persistTincanResumePath, resolvePlayerSrc]);
+    }, [content, readTincanResumePath, getActivityCandidatePathKeys, readTincanResumeIndex, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, resolvePlayerSrc]);
 
     useEffect(() => {
         if (!content) return;
@@ -2089,6 +2310,7 @@ export default function LearnPage() {
         setDuration(0);
         setStatus('NOT_STARTED');
         setTinCanActivityStatus([]);
+        tinCanActivityStatusRef.current = [];
         lastTinCanStatusSigRef.current = '';
         lastTincanSyncRef.current = { position: null, status: null, progress: null, at: 0 };
         selectedActivitySyncStateRef.current = { idx: null, status: '', at: 0 };
@@ -2129,8 +2351,7 @@ export default function LearnPage() {
         if (safeIdx > Number(highestSeenActivityIndexRef.current || 0)) {
             highestSeenActivityIndexRef.current = safeIdx;
         }
-        persistTincanResumeIndex(safeIdx);
-    }, [content, selectedActivityIndex, persistTincanResumeIndex, resumeLoaded]);
+    }, [content, selectedActivityIndex, resumeLoaded]);
 
     // Resolve enrollment record for this user/course (used to keep /my-learning status synced)
     useEffect(() => {
@@ -2407,15 +2628,25 @@ export default function LearnPage() {
         if (!progressContentId || !progressUserId) return;
 
         const total = Math.max(1, Number(content?.activities?.length || 0));
-        const safeIdx = Math.max(0, Math.min(total - 1, Math.floor(Number(selectedActivityIndex) || 0)));
+        const detectedIdx = detectActivityIndexFromIframe();
+        const safeIdx = Math.max(
+            0,
+            Math.min(
+                total - 1,
+                Number.isFinite(Number(detectedIdx)) && detectedIdx >= 0
+                    ? Math.floor(Number(detectedIdx))
+                    : Math.floor(Number(selectedActivityIndex) || 0)
+            )
+        );
+        const activityStatuses = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
         const completedByActivities =
-            Array.isArray(tinCanActivityStatus) &&
-            tinCanActivityStatus.length > 0 &&
-            tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
+            activityStatuses.length > 0 &&
+            activityStatuses.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
         const shouldComplete = canFinalizeTinCanCompletion({
             completedByProgress: false,
             completedByActivities,
             activityIndex: safeIdx,
+            activityStatuses,
         });
         const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
         const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
@@ -2434,6 +2665,8 @@ export default function LearnPage() {
         selectedActivitySyncStateRef.current = { idx: safeIdx, status: nextStatus, at: now };
         setStatus(nextStatus);
         setProgress(nextProgress);
+        setCurrentTime(safeIdx + 1);
+        setDuration(total);
 
         syncProgressWithTrackedTime({
             contentId: progressContentId,
@@ -2450,7 +2683,7 @@ export default function LearnPage() {
         } else {
             syncEnrollmentStatus('LEARNING', nextProgress);
         }
-    }, [isLaunchMode, content, resumeLoaded, progressContentId, progressUserId, activeSectionId, selectedActivityIndex, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, hasAssessmentFailureSignals]);
+    }, [isLaunchMode, content, resumeLoaded, progressContentId, progressUserId, activeSectionId, selectedActivityIndex, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, hasAssessmentFailureSignals, detectActivityIndexFromIframe]);
 
     // Load content only from user's own enrollment (prevent bypass by direct URL).
     useEffect(() => {
@@ -2892,12 +3125,21 @@ export default function LearnPage() {
         if (!isLaunchMode || content?.type !== 'tincan' || !resumeLoaded) return;
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         if (activities.length === 0) return;
-        const safeIndex = Math.max(0, Math.min(activities.length - 1, Number(selectedActivityIndex) || 0));
+        const detectedIdx = detectActivityIndexFromIframe();
+        const safeIndex = Math.max(
+            0,
+            Math.min(
+                activities.length - 1,
+                Number.isFinite(Number(detectedIdx)) && detectedIdx >= 0
+                    ? Math.floor(Number(detectedIdx))
+                    : Number(selectedActivityIndex) || 0
+            )
+        );
         const lesson = activities[safeIndex];
         if (!lesson) return;
 
         const lessonId = String(
-            resolveActivityCandidateUrl(lesson)
+            getPrimaryActivityResumePath(lesson)
             || lesson?.activityId
             || lesson?.id
             || `lesson-${safeIndex + 1}`
@@ -2936,7 +3178,7 @@ export default function LearnPage() {
             },
         };
         sendStatement(statement);
-    }, [isLaunchMode, content, resumeLoaded, selectedActivityIndex, resolveActivityCandidateUrl, actor, routeId, enrollmentId, activeSectionId, xapiExtensionNamespace, xapiSkipProgressSyncKey]);
+    }, [isLaunchMode, content, resumeLoaded, selectedActivityIndex, getPrimaryActivityResumePath, actor, routeId, enrollmentId, activeSectionId, xapiExtensionNamespace, xapiSkipProgressSyncKey, detectActivityIndexFromIframe]);
 
     // Video event handlers
     const handlePlay = useCallback(() => {
@@ -3023,24 +3265,59 @@ export default function LearnPage() {
             const incoming = payload.statement || payload.data || payload;
             if (!incoming?.verb || !incoming?.object) return;
 
-            // Try to infer currently viewed TinCan activity from xAPI object id.
-            let matchedActivityIndex = -1;
-                const incomingObjectId = String(incoming.object?.id || '');
-                if (incomingObjectId && Array.isArray(content.activities)) {
-                    matchedActivityIndex = content.activities.findIndex((a) => {
-                        const activityId = String(a?.activityId || a?.id || '');
-                        return activityId && incomingObjectId === activityId;
-                    });
+            const incomingContextExtensions =
+                incoming?.context?.extensions && typeof incoming.context.extensions === 'object'
+                    ? incoming.context.extensions
+                    : {};
+            const incomingResultExtensions =
+                incoming?.result?.extensions && typeof incoming.result.extensions === 'object'
+                    ? incoming.result.extensions
+                    : {};
+            const readIncomingExtensionBySuffix = (suffix) => {
+                for (const source of [incomingContextExtensions, incomingResultExtensions]) {
+                    for (const [key, value] of Object.entries(source || {})) {
+                        if (!String(key || '').endsWith(suffix)) continue;
+                        if (value === undefined || value === null) continue;
+                        const normalized = String(value).trim();
+                        if (normalized) return normalized;
+                    }
                 }
+                return '';
+            };
+
+            // Prefer the iframe's real current lesson before trusting package-emitted IDs.
+            let matchedActivityIndex = detectActivityIndexFromIframe();
+            const incomingTaggedActivityIndex = readIncomingExtensionBySuffix('/activity-index');
             if (matchedActivityIndex < 0) {
-                matchedActivityIndex = detectActivityIndexFromIframe();
+                const parsedIncomingIndex = Number(incomingTaggedActivityIndex);
+                if (Number.isFinite(parsedIncomingIndex)) {
+                    const zeroBasedIncomingIndex = parsedIncomingIndex > 0
+                        ? Math.floor(parsedIncomingIndex - 1)
+                        : Math.floor(parsedIncomingIndex);
+                    if (
+                        Array.isArray(content.activities)
+                        && zeroBasedIncomingIndex >= 0
+                        && zeroBasedIncomingIndex < content.activities.length
+                    ) {
+                        matchedActivityIndex = zeroBasedIncomingIndex;
+                    }
+                }
+            }
+            const incomingObjectId = String(incoming.object?.id || '').trim();
+            const incomingObjectKey = normalizeActivityPathKey(incomingObjectId);
+            if (matchedActivityIndex < 0 && incomingObjectKey && Array.isArray(content.activities)) {
+                matchedActivityIndex = findUniqueActivityIndexByPathKey(incomingObjectKey, { allowLoose: false });
+                if (matchedActivityIndex < 0) {
+                    matchedActivityIndex = findUniqueActivityIndexByPathKey(incomingObjectKey, { allowLoose: true });
+                }
             }
             const matchedActivity =
                 Array.isArray(content?.activities) && matchedActivityIndex >= 0 && matchedActivityIndex < content.activities.length
                     ? content.activities[matchedActivityIndex]
                     : null;
             const matchedActivityId = String(
-                resolveActivityCandidateUrl(matchedActivity)
+                getPrimaryActivityResumePath(matchedActivity)
+                || incomingObjectId
                 || matchedActivity?.activityId
                 || matchedActivity?.id
                 || ''
@@ -3103,103 +3380,122 @@ export default function LearnPage() {
                     if (manualActive && matchedActivityIndex !== manualTarget) {
                         return;
                     }
-                    setTinCanActivityStatus((prev) => {
-                        const total = Array.isArray(content?.activities) ? content.activities.length : 0;
-                        if (total <= 0 || matchedActivityIndex < 0 || matchedActivityIndex >= total) return prev;
+                    const total = Array.isArray(content?.activities) ? content.activities.length : 0;
+                    if (total <= 0 || matchedActivityIndex < 0 || matchedActivityIndex >= total) {
+                        return;
+                    }
 
-                        const next = Array.isArray(prev) && prev.length === total
-                            ? [...prev]
-                            : Array.from({ length: total }, (_, index) => ({
-                                attempted: Boolean(prev?.[index]?.attempted),
-                                completed: Boolean(prev?.[index]?.completed),
-                                passed: Boolean(prev?.[index]?.passed),
-                                quizzed: Boolean(prev?.[index]?.quizzed),
-                                status: String(prev?.[index]?.status || ''),
-                                success: typeof prev?.[index]?.success === 'boolean' ? prev?.[index]?.success : null,
-                                completion: typeof prev?.[index]?.completion === 'boolean' ? prev?.[index]?.completion : null,
-                                scoreRaw: asFiniteNumber(prev?.[index]?.scoreRaw),
-                                scoreScaled: asFiniteNumber(prev?.[index]?.scoreScaled),
-                                scoreMax: asFiniteNumber(prev?.[index]?.scoreMax),
-                            }));
+                    const previousStatuses = Array.isArray(tinCanActivityStatusRef.current) && tinCanActivityStatusRef.current.length === total
+                        ? tinCanActivityStatusRef.current
+                        : [];
+                    const nextActivityStatuses = previousStatuses.length === total
+                        ? [...previousStatuses]
+                        : Array.from({ length: total }, (_, index) => ({
+                            attempted: Boolean(previousStatuses?.[index]?.attempted),
+                            completed: Boolean(previousStatuses?.[index]?.completed),
+                            passed: Boolean(previousStatuses?.[index]?.passed),
+                            quizzed: Boolean(previousStatuses?.[index]?.quizzed),
+                            status: String(previousStatuses?.[index]?.status || ''),
+                            success: typeof previousStatuses?.[index]?.success === 'boolean' ? previousStatuses[index].success : null,
+                            completion: typeof previousStatuses?.[index]?.completion === 'boolean' ? previousStatuses[index].completion : null,
+                            scoreRaw: asFiniteNumber(previousStatuses?.[index]?.scoreRaw),
+                            scoreScaled: asFiniteNumber(previousStatuses?.[index]?.scoreScaled),
+                            scoreMax: asFiniteNumber(previousStatuses?.[index]?.scoreMax),
+                        }));
 
-                        const current = next[matchedActivityIndex] || {};
-                        const verbId = String(incoming?.verb?.id || '').toLowerCase();
-                        const verbLabel = String(incoming?.verb?.display?.['en-US'] || incoming?.verb?.display?.en || '').toLowerCase();
-                        const incomingRaw = asFiniteNumber(incoming?.result?.score?.raw);
-                        const incomingScaled = asFiniteNumber(incoming?.result?.score?.scaled);
-                        const incomingMax = asFiniteNumber(incoming?.result?.score?.max);
-                        const matchedActivity = content?.activities?.[matchedActivityIndex];
-                        const passingScore = getAssessmentPassingScore(matchedActivity);
-                        const normalizedIncomingRaw =
-                            incomingRaw !== null
-                                ? (incomingRaw <= 1 ? incomingRaw * 100 : incomingRaw)
-                                : null;
-                        const normalizedIncomingScaled =
-                            incomingScaled !== null
-                                ? (incomingScaled <= 1 ? incomingScaled * 100 : incomingScaled)
-                                : null;
-                        const normalizedIncomingRawMax =
-                            incomingRaw !== null && incomingMax !== null && incomingMax > 0
-                                ? (incomingRaw / incomingMax) * 100
-                                : null;
-                        const incomingHasPassingScore =
-                            (normalizedIncomingRaw !== null && normalizedIncomingRaw >= passingScore) ||
-                            (normalizedIncomingScaled !== null && normalizedIncomingScaled >= passingScore) ||
-                            (normalizedIncomingRawMax !== null && normalizedIncomingRawMax >= passingScore);
-                        const matchedIsAssessment = isAssessmentActivity(matchedActivity);
-                        const markedPass = Boolean(
-                            incoming?.result?.success === true
-                            || verbId.includes('pass')
-                            || verbLabel.includes('pass')
-                            || verbLabel.includes('ผ่าน')
-                            || incomingHasPassingScore
-                        );
-                        const markedComplete = Boolean(
-                            incoming?.result?.completion === true
-                            || isCompletedVerb(incoming?.verb)
-                            || (matchedIsAssessment && markedPass)
-                        );
+                    const current = nextActivityStatuses[matchedActivityIndex] || {};
+                    const verbId = String(incoming?.verb?.id || '').toLowerCase();
+                    const verbLabel = String(incoming?.verb?.display?.['en-US'] || incoming?.verb?.display?.en || '').toLowerCase();
+                    const incomingRaw = asFiniteNumber(incoming?.result?.score?.raw);
+                    const incomingScaled = asFiniteNumber(incoming?.result?.score?.scaled);
+                    const incomingMax = asFiniteNumber(incoming?.result?.score?.max);
+                    const matchedActivity = content?.activities?.[matchedActivityIndex];
+                    const passingScore = getAssessmentPassingScore(matchedActivity);
+                    const normalizedIncomingRaw =
+                        incomingRaw !== null
+                            ? (incomingRaw <= 1 ? incomingRaw * 100 : incomingRaw)
+                            : null;
+                    const normalizedIncomingScaled =
+                        incomingScaled !== null
+                            ? (incomingScaled <= 1 ? incomingScaled * 100 : incomingScaled)
+                            : null;
+                    const normalizedIncomingRawMax =
+                        incomingRaw !== null && incomingMax !== null && incomingMax > 0
+                            ? (incomingRaw / incomingMax) * 100
+                            : null;
+                    const incomingHasPassingScore =
+                        (normalizedIncomingRaw !== null && normalizedIncomingRaw >= passingScore) ||
+                        (normalizedIncomingScaled !== null && normalizedIncomingScaled >= passingScore) ||
+                        (normalizedIncomingRawMax !== null && normalizedIncomingRawMax >= passingScore);
+                    const matchedIsAssessment = isAssessmentActivity(matchedActivity);
+                    const markedPass = Boolean(
+                        incoming?.result?.success === true
+                        || verbId.includes('pass')
+                        || verbLabel.includes('pass')
+                        || verbLabel.includes('ผ่าน')
+                        || incomingHasPassingScore
+                    );
+                    const markedComplete = Boolean(
+                        incoming?.result?.completion === true
+                        || isCompletedVerb(incoming?.verb)
+                        || (matchedIsAssessment && markedPass)
+                    );
 
-                        next[matchedActivityIndex] = {
-                            attempted: true,
-                            completed: Boolean(current?.completed) || markedComplete,
-                            passed: Boolean(current?.passed) || markedPass,
-                            quizzed: Boolean(current?.quizzed) || /quiz|test|exam|assessment|แบบทดสอบ|ทดสอบ/i.test(
-                                String(
-                                    content?.activities?.[matchedActivityIndex]?.name
-                                    || content?.activities?.[matchedActivityIndex]?.title
-                                    || ''
-                                )
-                            ),
-                            status: String(current?.status || ''),
-                            success: typeof incoming?.result?.success === 'boolean'
-                                ? incoming.result.success
-                                : (typeof current?.success === 'boolean' ? current.success : null),
-                            completion: typeof incoming?.result?.completion === 'boolean'
-                                ? incoming.result.completion
-                                : (typeof current?.completion === 'boolean' ? current.completion : null),
-                            scoreRaw: asFiniteNumber(incoming?.result?.score?.raw) ?? asFiniteNumber(current?.scoreRaw),
-                            scoreScaled: asFiniteNumber(incoming?.result?.score?.scaled) ?? asFiniteNumber(current?.scoreScaled),
-                            scoreMax: asFiniteNumber(incoming?.result?.score?.max) ?? asFiniteNumber(current?.scoreMax),
-                        };
+                    nextActivityStatuses[matchedActivityIndex] = {
+                        attempted: true,
+                        completed: Boolean(current?.completed) || markedComplete,
+                        passed: Boolean(current?.passed) || markedPass,
+                        quizzed: Boolean(current?.quizzed) || /quiz|test|exam|assessment|แบบทดสอบ|ทดสอบ/i.test(
+                            String(
+                                content?.activities?.[matchedActivityIndex]?.name
+                                || content?.activities?.[matchedActivityIndex]?.title
+                                || ''
+                            )
+                        ),
+                        status: String(current?.status || ''),
+                        success: typeof incoming?.result?.success === 'boolean'
+                            ? incoming.result.success
+                            : (typeof current?.success === 'boolean' ? current.success : null),
+                        completion: typeof incoming?.result?.completion === 'boolean'
+                            ? incoming.result.completion
+                            : (typeof current?.completion === 'boolean' ? current.completion : null),
+                        scoreRaw: asFiniteNumber(incoming?.result?.score?.raw) ?? asFiniteNumber(current?.scoreRaw),
+                        scoreScaled: asFiniteNumber(incoming?.result?.score?.scaled) ?? asFiniteNumber(current?.scoreScaled),
+                        scoreMax: asFiniteNumber(incoming?.result?.score?.max) ?? asFiniteNumber(current?.scoreMax),
+                    };
 
-                        return next;
-                    });
+                    const nextActivityStatusesSig = JSON.stringify(nextActivityStatuses);
+                    tinCanActivityStatusRef.current = nextActivityStatuses;
+                    if (nextActivityStatusesSig !== lastTinCanStatusSigRef.current) {
+                        lastTinCanStatusSigRef.current = nextActivityStatusesSig;
+                        setTinCanActivityStatus(nextActivityStatuses);
+                    }
                     const savedIdx = readTincanResumeIndex();
                     const savedKnownIndex = Number.isFinite(savedIdx) && savedIdx >= 0 ? Math.floor(savedIdx) : -1;
                     const currentKnownIndex =
                         Number.isFinite(currentTime) && Number(currentTime) > 0
                             ? Math.max(0, Math.floor(Number(currentTime) - 1))
                             : -1;
-                    const knownFloorIndex = Math.max(selectedActivityIndex, savedKnownIndex, currentKnownIndex, 0);
+                    const lastKnownIndex =
+                        Number.isFinite(Number(lastTincanSyncRef.current?.position))
+                            ? Math.max(0, Math.floor(Number(lastTincanSyncRef.current.position) - 1))
+                            : -1;
+                    const highestSeenIndex = Number.isFinite(Number(highestSeenActivityIndexRef.current))
+                        ? Math.max(0, Math.floor(Number(highestSeenActivityIndexRef.current)))
+                        : -1;
+                    const knownFloorIndex = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);
                     // Never auto-regress to an earlier lesson from stale/late statements.
                     // Backward jump is only allowed when user explicitly selected a lesson.
                     if (!manualActive && matchedActivityIndex < knownFloorIndex) {
                         return;
                     }
                     setSelectedActivityIndex(matchedActivityIndex);
+                    setCurrentTime(matchedActivityIndex + 1);
+                    setDuration(total);
                     resumeGuardUntilRef.current = 0;
                     persistTincanResumeIndex(matchedActivityIndex);
+                    const matchedPath = getPrimaryActivityResumePath(matchedActivity);
+                    persistTincanResumePath(matchedPath || matchedActivity?.activityId || matchedActivity?.id || '');
                     const totalActivities = Math.max(content.activities?.length || 0, 1);
                     const statementProgressRaw =
                         incoming?.result?.extensions?.['https://w3id.org/xapi/video/extensions/progress'] ??
@@ -3209,14 +3505,14 @@ export default function LearnPage() {
                     const completedByProgress =
                         (Number.isFinite(statementProgress) && statementProgress >= 100);
                     const completedByActivities =
-                        Array.isArray(tinCanActivityStatus) &&
-                        tinCanActivityStatus.length > 0 &&
-                        tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
+                        nextActivityStatuses.length > 0 &&
+                        nextActivityStatuses.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
                     const shouldComplete = canFinalizeTinCanCompletion({
                         completedByVerb: completedByVerbSignal,
                         completedByProgress,
                         completedByActivities,
                         activityIndex: matchedActivityIndex,
+                        activityStatuses: nextActivityStatuses,
                     });
                     const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
                     const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
@@ -3302,7 +3598,7 @@ export default function LearnPage() {
 
         window.addEventListener('message', onMessage);
         return () => window.removeEventListener('message', onMessage);
-    }, [content, actor, resolvedContentId, progressContentId, progressUserId, activeSectionId, progress, status, syncEnrollmentStatus, persistTincanResumeIndex, readTincanResumeIndex, selectedActivityIndex, currentTime, computeTinCanProgress, isCompletedVerb, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, resumeLoaded, syncProgressWithTrackedTime, requireAssessmentPass, getAssessmentPassingScore, detectActivityIndexFromIframe, hasAssessmentFailureSignals, isAssessmentActivity]);
+    }, [content, actor, resolvedContentId, progressContentId, progressUserId, activeSectionId, progress, status, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, selectedActivityIndex, currentTime, computeTinCanProgress, isCompletedVerb, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, resumeLoaded, syncProgressWithTrackedTime, requireAssessmentPass, getAssessmentPassingScore, detectActivityIndexFromIframe, hasAssessmentFailureSignals, isAssessmentActivity, findUniqueActivityIndexByPathKey, getPrimaryActivityResumePath, normalizeActivityPathKey]);
 
     // Format time
     const formatTime = (seconds) => {
@@ -3334,23 +3630,21 @@ export default function LearnPage() {
         try {
             if (content?.type === 'tincan' && Array.isArray(content.activities) && content.activities.length > 0 && progressUserId) {
                 const frameWindow = iframeRef.current?.contentWindow;
-                let idx = -1;
-                try {
-                    const directIndex = Number(frameWindow?.currentPage);
-                    if (Number.isFinite(directIndex) && directIndex >= 0) {
-                        idx = mapRuntimePageToActivityIndex(directIndex);
-                    } else {
-                        const lastSeenIndex = Number(frameWindow?.currentState?.lastSeenIndex);
-                        if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
-                            idx = mapRuntimePageToActivityIndex(lastSeenIndex);
-                        }
-                    }
-                } catch {
-                    idx = -1;
-                }
-
+                let idx = detectActivityIndexFromIframe();
                 if (idx < 0) {
-                    idx = detectActivityIndexFromIframe();
+                    try {
+                        const directIndex = Number(frameWindow?.currentPage);
+                        if (Number.isFinite(directIndex) && directIndex >= 0) {
+                            idx = mapRuntimePageToActivityIndex(directIndex);
+                        } else {
+                            const lastSeenIndex = Number(frameWindow?.currentState?.lastSeenIndex);
+                            if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
+                                idx = mapRuntimePageToActivityIndex(lastSeenIndex);
+                            }
+                        }
+                    } catch {
+                        idx = -1;
+                    }
                 }
                 if (idx < 0) {
                     const savedIdx = readTincanResumeIndex();
@@ -3359,12 +3653,20 @@ export default function LearnPage() {
                     }
                 }
                 if (idx < 0) {
+                    const highestSeenIdx = Number.isFinite(Number(highestSeenActivityIndexRef.current))
+                        ? Math.floor(Number(highestSeenActivityIndexRef.current))
+                        : 0;
+                    const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
+                        ? Math.floor(Number(selectedActivityIndex))
+                        : 0;
+                    const currentIdx = Number.isFinite(Number(currentTime)) && Number(currentTime) > 0
+                        ? Math.floor(Number(currentTime) - 1)
+                        : 0;
                     idx = Math.max(
                         0,
                         Math.min(
                             content.activities.length - 1,
-                            Number(highestSeenActivityIndexRef.current || 0),
-                            Number(selectedActivityIndex || 0)
+                            Math.max(highestSeenIdx, selectedIdx, currentIdx)
                         )
                     );
                 }
@@ -3374,19 +3676,20 @@ export default function LearnPage() {
                     highestSeenActivityIndexRef.current = Math.max(Number(highestSeenActivityIndexRef.current || 0), idx);
                     persistTincanResumeIndex(idx);
                     const closeActivity = content.activities[idx];
-                    const closePath = resolveActivityCandidateUrl(closeActivity);
+                    const closePath = getPrimaryActivityResumePath(closeActivity);
                     persistTincanResumePath(closePath || closeActivity?.activityId || closeActivity?.id || '');
                     const total = content.activities.length;
+                    const syncedStatuses = syncTinCanActivityStatusFromIframe() || (Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : []);
                     const packageCompleted = Boolean(frameWindow?.currentState?.completed);
                     const completedByActivities =
-                        Array.isArray(tinCanActivityStatus) &&
-                        tinCanActivityStatus.length > 0 &&
-                        tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
+                        syncedStatuses.length > 0 &&
+                        syncedStatuses.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
                     const shouldComplete = canFinalizeTinCanCompletion({
                         completedByPackage: packageCompleted,
                         completedByProgress: false,
                         completedByActivities,
                         activityIndex: idx,
+                        activityStatuses: syncedStatuses,
                     });
                     const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
                     const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
@@ -3470,14 +3773,15 @@ export default function LearnPage() {
                             latest?.success === true ||
                             latest?.completion === true
                         );
+                    const closeStatuses = syncTinCanActivityStatusFromIframe() || (Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : []);
                     const isActuallyCompleted = hasVerifiedServerCompletion
                         || canFinalizeTinCanCompletion({
                             completedByProgress: false,
                             completedByActivities:
-                                Array.isArray(tinCanActivityStatus) &&
-                                tinCanActivityStatus.length > 0 &&
-                                tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx])),
+                                closeStatuses.length > 0 &&
+                                closeStatuses.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx])),
                             activityIndex: (Number.isFinite(latestCurrent) && latestCurrent > 0) ? (latestCurrent - 1) : -1,
+                            activityStatuses: closeStatuses,
                         });
                     if (isActuallyCompleted) {
                         await syncEnrollmentStatus('COMPLETED', 100);
@@ -3504,7 +3808,7 @@ export default function LearnPage() {
         setTimeout(() => {
             window.location.href = fallbackUrl;
         }, 120);
-    }, [content, resolveActivityCandidateUrl, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, notifyLearningRefresh, persistTincanResumeIndex, persistTincanResumePath, persistWebResumeIndex, persistWebStatusSnapshot, computeTinCanProgress, status, tinCanActivityStatus, isTinCanLessonPassed, canFinalizeTinCanCompletion, canFinalizeLegacyWebCompletion, detectActivityIndexFromIframe, detectLegacyWebPageIndex, getLegacyWebPageTotal, readTincanResumeIndex, readWebResumeIndex, selectedActivityIndex, getCurrentWebStatusSnapshot, applyWebStatusToRuntime, syncProgressWithTrackedTime, mapRuntimePageToActivityIndex, requireAssessmentPass, hasAssessmentFailureSignals]);
+    }, [content, getPrimaryActivityResumePath, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, notifyLearningRefresh, persistTincanResumeIndex, persistTincanResumePath, persistWebResumeIndex, persistWebStatusSnapshot, computeTinCanProgress, status, tinCanActivityStatus, isTinCanLessonPassed, canFinalizeTinCanCompletion, canFinalizeLegacyWebCompletion, detectActivityIndexFromIframe, detectLegacyWebPageIndex, getLegacyWebPageTotal, readTincanResumeIndex, readWebResumeIndex, selectedActivityIndex, getCurrentWebStatusSnapshot, applyWebStatusToRuntime, syncProgressWithTrackedTime, mapRuntimePageToActivityIndex, requireAssessmentPass, hasAssessmentFailureSignals, syncTinCanActivityStatusFromIframe]);
 
     const bindIframeCloseHandler = useCallback(() => {
         const frameWindow = iframeRef.current?.contentWindow;
@@ -3765,7 +4069,7 @@ export default function LearnPage() {
         try {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
         if (!resumeLoaded) return;
-        syncTinCanActivityStatusFromIframe();
+        const syncedStatuses = syncTinCanActivityStatusFromIframe() || (Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : []);
 
         let packageCompleted = false;
         try {
@@ -3814,7 +4118,7 @@ export default function LearnPage() {
         const highestSeenIndex = Number.isFinite(Number(highestSeenActivityIndexRef.current))
             ? Math.max(0, Math.floor(Number(highestSeenActivityIndexRef.current)))
             : -1;
-        const knownFloorIndex = Math.max(selectedActivityIndex, savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);
+        const knownFloorIndex = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);
 
         const effectivePosition = position;
         const effectiveIndex = Math.max(0, Math.min(total - 1, effectivePosition - 1));
@@ -3832,20 +4136,21 @@ export default function LearnPage() {
         }
 
         const completedByActivityFlags =
-            Array.isArray(tinCanActivityStatus) &&
-            tinCanActivityStatus.length > 0 &&
-            tinCanActivityStatus.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
+            syncedStatuses.length > 0 &&
+            syncedStatuses.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
         const shouldComplete = canFinalizeTinCanCompletion({
             completedByPackage: packageCompleted,
             completedByProgress: false,
             completedByActivities: completedByActivityFlags,
             activityIndex: effectiveIndex,
+            activityStatuses: syncedStatuses,
         });
         const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
         const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
         const nextProgress = computeTinCanProgress(effectivePosition, total, nextStatus === 'COMPLETED');
         const guardActive = Date.now() < Number(resumeGuardUntilRef.current || 0);
-        if (guardActive && selectedActivityIndex > 0 && effectiveIndex < selectedActivityIndex) {
+        const guardBaseline = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);
+        if (guardActive && guardBaseline > 0 && effectiveIndex < guardBaseline) {
             return;
         }
         const now = Date.now();
@@ -3859,7 +4164,7 @@ export default function LearnPage() {
         lastTincanSyncRef.current = { position: effectivePosition, status: nextStatus, progress: nextProgress, at: now };
         persistTincanResumeIndex(effectiveIndex);
         const effectiveActivity = content.activities[effectiveIndex];
-        const effectivePath = resolveActivityCandidateUrl(effectiveActivity);
+        const effectivePath = getPrimaryActivityResumePath(effectiveActivity);
         persistTincanResumePath(effectivePath || effectiveActivity?.activityId || effectiveActivity?.id || '');
         setCurrentTime(effectivePosition);
         if (nextStatus === 'COMPLETED') {
@@ -3889,7 +4194,7 @@ export default function LearnPage() {
         } finally {
             tinCanSyncInFlightRef.current = false;
         }
-    }, [content, resolveActivityCandidateUrl, detectActivityIndexFromIframe, selectedActivityIndex, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals, logLessonMapDebug]);
+    }, [content, getPrimaryActivityResumePath, detectActivityIndexFromIframe, selectedActivityIndex, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals, logLessonMapDebug]);
 
     const getMaxUnlockedActivityIndex = useCallback(() => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
@@ -3897,29 +4202,25 @@ export default function LearnPage() {
         if (!chapterLockEnabled) return activities.length - 1;
 
         let runtimeUnlocked = -1;
-        const frameWindow = iframeRef.current?.contentWindow;
         try {
-            const dataIndex = frameWindow?.currentState?.dataIndex;
-            if (Array.isArray(dataIndex) && dataIndex.length > 0) {
-                const offset = getTinCanRuntimeIndexOffset();
-                let contiguousPassed = 0;
-                for (let i = 0; i < activities.length; i++) {
-                    const row = dataIndex[i + offset];
-                    if (isTinCanLessonClearedForAdvance(row, activities[i])) {
-                        contiguousPassed += 1;
-                        continue;
-                    }
-                    break;
+            let contiguousPassed = 0;
+            for (let i = 0; i < activities.length; i++) {
+                const row = findTinCanStatusRowForActivity(i);
+                if (isTinCanLessonClearedForAdvance(row, activities[i])) {
+                    contiguousPassed += 1;
+                    continue;
                 }
-                runtimeUnlocked = Math.max(0, Math.min(activities.length - 1, contiguousPassed));
+                break;
             }
+            runtimeUnlocked = Math.max(0, Math.min(activities.length - 1, contiguousPassed));
         } catch {
             // ignore iframe access errors and fallback to local state
         }
 
+        const activityStatuses = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
         let localUnlocked = 0;
         for (let i = 0; i < activities.length; i++) {
-            if (isTinCanLessonClearedForAdvance(tinCanActivityStatus[i], activities[i])) {
+            if (isTinCanLessonClearedForAdvance(activityStatuses[i], activities[i])) {
                 localUnlocked += 1;
                 continue;
             }
@@ -3930,7 +4231,7 @@ export default function LearnPage() {
         const selectedSafe = Math.max(0, Math.min(activities.length - 1, selectedActivityIndex));
         let forwardFromSelected = selectedSafe;
         for (let i = selectedSafe; i < activities.length; i++) {
-            if (isTinCanLessonClearedForAdvance(tinCanActivityStatus[i], activities[i])) {
+            if (isTinCanLessonClearedForAdvance(activityStatuses[i], activities[i])) {
                 forwardFromSelected = i + 1;
                 continue;
             }
@@ -3948,7 +4249,7 @@ export default function LearnPage() {
             )
         );
         return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
-    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, getTinCanRuntimeIndexOffset]);
+    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
@@ -3974,35 +4275,9 @@ export default function LearnPage() {
             Number(highestSeenActivityIndexRef.current || 0),
             safeIndex
         );
-        setSelectedActivityIndex(safeIndex);
-        setCurrentTime(safeIndex + 1);
         resumeGuardUntilRef.current = 0;
-        persistTincanResumeIndex(safeIndex);
-        const targetActivity = activities[safeIndex];
-        const targetPath = resolveActivityCandidateUrl(targetActivity);
-        persistTincanResumePath(targetPath || targetActivity?.activityId || targetActivity?.id || '');
         applyTincanResumeToIframe();
-
-        // Persist chapter position immediately so reopening won't fall back to lesson 1.
-        if (progressUserId) {
-            try {
-                const total = activities.length;
-                const nextProgress = computeTinCanProgress(safeIndex + 1, total, false);
-                await syncProgressWithTrackedTime({
-                    contentId: progressContentId,
-                    userId: progressUserId,
-                    sectionId: activeSectionId,
-                    status: 'LEARNING',
-                    progress: nextProgress,
-                    currentTime: safeIndex + 1,
-                    duration: total,
-                });
-                await syncEnrollmentStatus('LEARNING', nextProgress);
-            } catch {
-                // ignore manual select sync errors
-            }
-        }
-    }, [content, chapterLockEnabled, getMaxUnlockedActivityIndex, persistTincanResumeIndex, resolveActivityCandidateUrl, persistTincanResumePath, applyTincanResumeToIframe, progressContentId, progressUserId, activeSectionId, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, logLessonMapDebug, mapActivityIndexToRuntimePage, detectActivityIndexFromIframe, selectedActivityIndex]);
+    }, [content, chapterLockEnabled, getMaxUnlockedActivityIndex, applyTincanResumeToIframe, logLessonMapDebug, mapActivityIndexToRuntimePage, detectActivityIndexFromIframe, selectedActivityIndex]);
 
     const getMaxUnlockedWebPageIndex = useCallback(() => {
         const knownTotal = Math.max(
@@ -4302,8 +4577,17 @@ export default function LearnPage() {
                 ? Math.max(0, Math.floor(Number(currentTime) - 1))
                 : -1;
         const detectedWebIndex = isLegacyWebContent ? detectLegacyWebPageIndex() : -1;
+        const detectedTinCanIndex = isTinCanContent ? detectActivityIndexFromIframe() : -1;
         const selectedLessonIndex = isTinCanContent
-            ? Math.max(0, Math.min(lessonItems.length - 1, Number(selectedActivityIndex) || 0))
+            ? Math.max(
+                0,
+                Math.min(
+                    lessonItems.length - 1,
+                    Number.isFinite(Number(detectedTinCanIndex)) && detectedTinCanIndex >= 0
+                        ? Math.floor(Number(detectedTinCanIndex))
+                        : (Number(selectedActivityIndex) || 0)
+                )
+            )
             : Math.max(
                 0,
                 Math.min(
@@ -4316,7 +4600,7 @@ export default function LearnPage() {
         const inferredCompletedThrough = isTinCanContent
             ? (normalizedStatus === 'COMPLETED'
                 ? lessonItems.length - 1
-                : Math.max(-1, Math.min(lessonItems.length - 1, Math.max(resumePositionIndex, selectedActivityIndex - 1))))
+                : Math.max(-1, Math.min(lessonItems.length - 1, Math.max(resumePositionIndex, selectedLessonIndex - 1))))
             : (normalizedStatus === 'COMPLETED'
                 ? lessonItems.length - 1
                 : Math.max(-1, Math.min(lessonItems.length - 1, selectedLessonIndex - 1)));

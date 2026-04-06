@@ -1,170 +1,7 @@
-import { NextResponse } from 'next/server';
 import fs from 'fs';
 import path from 'path';
-import AdmZip from 'adm-zip';
-import { deleteContent, listContents, saveContent } from '@/lib/server/compat-db';
-import { requireSession } from '@/lib/server/auth';
-import { readJsonBody } from '@/lib/server/request-validation';
 
 const ASSESSMENT_NAME_REGEX = /quiz|test|exam|assessment|post[\s-_]?test|pre[\s-_]?test|แบบทดสอบ|ทดสอบ/i;
-
-export async function POST(request) {
-    try {
-        const { response } = await requireSession(request, { requireAdmin: true });
-        if (response) return response;
-
-        const contentType = request.headers.get('content-type') || '';
-        if (!contentType.toLowerCase().startsWith('multipart/form-data')) {
-            return NextResponse.json({ error: 'Content-Type must be multipart/form-data' }, { status: 400 });
-        }
-
-        const formData = await request.formData();
-        const file = formData.get('file');
-        const title = formData.get('title') || 'Untitled';
-
-        if (!file) {
-            return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
-        }
-
-        const uuid = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-        const contentDir = path.join(process.cwd(), 'public', 'content', uuid);
-        fs.mkdirSync(contentDir, { recursive: true });
-
-        const bytes = await file.arrayBuffer();
-        const buffer = Buffer.from(bytes);
-        const fileName = file.name;
-        const ext = path.extname(fileName).toLowerCase();
-
-        let activities = [];
-        let entryPoint = '';
-        let type = 'tincan';
-
-        if (ext !== '.zip') {
-            return NextResponse.json({ error: 'Only TinCan .zip package is supported' }, { status: 400 });
-        }
-
-        const zipPath = path.join(contentDir, fileName);
-        fs.writeFileSync(zipPath, buffer);
-
-        try {
-            const zip = new AdmZip(zipPath);
-            zip.extractAllTo(contentDir, true);
-            const processed = processExtractedContent(contentDir);
-            type = processed.type;
-            entryPoint = processed.entryPoint;
-            activities = processed.activities;
-            const completionPolicy = processed.completionPolicy || null;
-            const packageConfig = processed.packageConfig || null;
-
-            if (type !== 'tincan') {
-                return NextResponse.json({ error: 'Invalid TinCan package: tincan.xml not found' }, { status: 400 });
-            }
-
-            if (!entryPoint) {
-                return NextResponse.json({ error: 'No launchable file found in package' }, { status: 400 });
-            }
-
-            const content = {
-                id: uuid,
-                title: String(title),
-                type,
-                fileName,
-                entryPoint,
-                status: 'active',
-                activities,
-                completionPolicy,
-                packageConfig,
-                uploadedAt: new Date().toISOString(),
-            };
-
-            await saveContent(content);
-            return NextResponse.json({ success: true, content });
-        } catch {
-            return NextResponse.json({ error: 'Could not extract ZIP package' }, { status: 400 });
-        }
-    } catch (err) {
-        console.error('[content/upload][POST] failed', err);
-        return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
-    }
-}
-
-export async function GET(request) {
-    try {
-        // GET is only for admin content management screens.
-        // Learner view must access content through enrolled course/section only.
-        const { response } = await requireSession(request, { requireAdmin: true });
-        if (response) return response;
-
-        const contents = await listContents();
-        const hydrated = contents.map((item) => hydrateContentWithConfig(item));
-        for (const row of hydrated) {
-            if (row.changed) {
-                await saveContent(row.content);
-            }
-        }
-        return NextResponse.json(hydrated.map((row) => row.content));
-    } catch (err) {
-        console.error('[content/upload][GET] failed', err);
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-    }
-}
-
-export async function DELETE(request) {
-    try {
-        const { response } = await requireSession(request, { requireAdmin: true });
-        if (response) return response;
-
-        const { searchParams } = new URL(request.url);
-        const id = searchParams.get('id');
-        if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
-
-        await deleteContent(id);
-
-        const contentDir = path.join(process.cwd(), 'public', 'content', id);
-        if (fs.existsSync(contentDir)) {
-            fs.rmSync(contentDir, { recursive: true, force: true });
-        }
-
-        return NextResponse.json({ success: true });
-    } catch (err) {
-        console.error('[content/upload][DELETE] failed', err);
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-    }
-}
-
-export async function PUT(request) {
-    try {
-        const { response } = await requireSession(request, { requireAdmin: true });
-        if (response) return response;
-
-        const { data: body, response: invalidBodyResponse } = await readJsonBody(request);
-        if (invalidBodyResponse) return invalidBodyResponse;
-
-        const id = String(body?.id || '').trim();
-        if (!id) {
-            return NextResponse.json({ error: 'id is required' }, { status: 400 });
-        }
-
-        const rows = await listContents();
-        const current = rows.find((item) => String(item?.id || '').trim() === id);
-        if (!current) {
-            return NextResponse.json({ error: 'Content not found' }, { status: 404 });
-        }
-
-        const nextContent = {
-            ...current,
-            id,
-            title: String(body?.title || current.title || '').trim() || current.title || 'Untitled',
-            status: String(body?.status || current.status || 'active').trim() || 'active',
-        };
-        const saved = await saveContent(nextContent);
-
-        return NextResponse.json({ success: true, content: saved });
-    } catch (err) {
-        console.error('[content/upload][PUT] failed', err);
-        return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-    }
-}
 
 function findFile(dir, filename) {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -178,121 +15,6 @@ function findFile(dir, filename) {
         }
     }
     return null;
-}
-
-function findFileByExtensions(dir, extensions) {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-            const found = findFileByExtensions(fullPath, extensions);
-            if (found) return found;
-        } else if (extensions.includes(path.extname(entry.name).toLowerCase())) {
-            return fullPath;
-        }
-    }
-    return null;
-}
-
-function processExtractedContent(contentDir) {
-    let activities = [];
-    let entryPoint = '';
-    let type = 'web';
-    let completionPolicy = null;
-    let packageConfig = null;
-    const publicDir = path.join(process.cwd(), 'public');
-
-    const tincanXmlPath = findFile(contentDir, 'tincan.xml');
-    if (tincanXmlPath) {
-        type = 'tincan';
-        const tincanContent = fs.readFileSync(tincanXmlPath, 'utf-8');
-        const tincanBaseDir = path.dirname(tincanXmlPath);
-        activities = parseTincanXml(tincanContent).map((act) => {
-            const normalizedLaunch = normalizeLaunchPath(act.launch || '', tincanBaseDir);
-            if (!normalizedLaunch) {
-                return { ...act, launch: '' };
-            }
-
-            const launchPath = resolveLaunchAbsolutePath(tincanBaseDir, normalizedLaunch);
-            if (launchPath && fs.existsSync(launchPath)) {
-                const launchRel = path.relative(publicDir, launchPath).replace(/\\/g, '/');
-                const { suffix } = splitLaunchTarget(normalizedLaunch);
-                return { ...act, launch: `${launchRel}${suffix}` };
-            }
-
-            if (/^https?:\/\//i.test(normalizedLaunch)) {
-                return { ...act, launch: normalizedLaunch };
-            }
-
-            return { ...act, launch: '' };
-        });
-
-        const activityWithLaunch = activities.find((a) => a.launch);
-        if (activityWithLaunch?.launch) {
-            const launchPath = resolveLaunchAbsolutePath(tincanBaseDir, activityWithLaunch.launch);
-            if (launchPath && fs.existsSync(launchPath)) {
-                entryPoint = path.relative(path.join(process.cwd(), 'public'), launchPath).replace(/\\/g, '/');
-            }
-        }
-
-        const configMeta = parseTinCanConfig(contentDir);
-        if (configMeta) {
-            activities = mergeActivitiesWithConfig(activities, configMeta.activities, contentDir);
-            completionPolicy = buildCompletionPolicy(configMeta);
-            packageConfig = {
-                source: configMeta.source || '',
-                isLinear: configMeta.isLinear,
-                isResume: configMeta.isResume,
-                completedWhenDoAllMasteryscore: configMeta.completedWhenDoAllMasteryscore,
-                assessmentCount: Number(configMeta.assessmentCount || 0),
-                scoredAssessmentCount: Number(configMeta.scoredAssessmentCount || 0),
-            };
-        }
-    }
-
-    if (!entryPoint) {
-        const videoFile = findFileByExtensions(contentDir, ['.mp4', '.webm', '.ogg', '.mov']);
-        if (videoFile) {
-            type = 'video';
-            entryPoint = path.relative(path.join(process.cwd(), 'public'), videoFile).replace(/\\/g, '/');
-        } else {
-            const indexPath = findFile(contentDir, 'index.html');
-            if (indexPath) {
-                type = type === 'tincan' ? 'tincan' : 'web';
-                entryPoint = path.relative(path.join(process.cwd(), 'public'), indexPath).replace(/\\/g, '/');
-            }
-        }
-    }
-
-    if (type !== 'tincan') {
-        return { type, entryPoint, activities, completionPolicy, packageConfig };
-    }
-
-    if (!entryPoint) {
-        return { type, entryPoint, activities, completionPolicy, packageConfig };
-    }
-
-    return { type, entryPoint, activities, completionPolicy, packageConfig };
-}
-
-function parseTincanXml(xmlContent) {
-    const activities = [];
-    const activityRegex = /<activity[^>]*>[\s\S]*?<\/activity>/gi;
-    const nameRegex = /<name[^>]*>([\s\S]*?)<\/name>/i;
-    const idRegex = /id="([^"]*)"/i;
-    const launchRegex = /<launch[^>]*>([\s\S]*?)<\/launch>/i;
-    const matches = xmlContent.match(activityRegex) || [];
-    for (const match of matches) {
-        const nameMatch = match.match(nameRegex);
-        const idMatch = match.match(idRegex);
-        const launchMatch = match.match(launchRegex);
-        activities.push({
-            id: idMatch ? idMatch[1] : `activity-${activities.length}`,
-            name: nameMatch ? nameMatch[1].trim() : `Activity ${activities.length + 1}`,
-            launch: launchMatch ? launchMatch[1].trim() : '',
-        });
-    }
-    return activities;
 }
 
 function splitLaunchTarget(launch) {
@@ -311,8 +33,8 @@ function resolveCaseInsensitivePath(baseDir, relPath) {
 
     for (const part of parts) {
         const entries = fs.readdirSync(currentDir, { withFileTypes: true });
-        const exact = entries.find((e) => e.name === part);
-        const match = exact || entries.find((e) => e.name.toLowerCase() === part.toLowerCase());
+        const exact = entries.find((entry) => entry.name === part);
+        const match = exact || entries.find((entry) => entry.name.toLowerCase() === part.toLowerCase());
         if (!match) return null;
         resolvedParts.push(match.name);
         currentDir = path.join(currentDir, match.name);
@@ -368,6 +90,7 @@ function normalizeLaunchPath(launch, baseDir) {
 function normalizePathKey(value = '') {
     const raw = String(value || '').trim();
     if (!raw) return '';
+
     let normalized = raw;
     if (/^https?:\/\//i.test(normalized)) {
         try {
@@ -377,6 +100,7 @@ function normalizePathKey(value = '') {
             // keep raw string on invalid URL format
         }
     }
+
     normalized = normalized
         .replace(/^https?:\/\/[^/]+/i, '')
         .replace(/\\/g, '/')
@@ -384,6 +108,7 @@ function normalizePathKey(value = '') {
         .replace(/^\.\//, '')
         .replace(/^content\/[^/]+\//i, '')
         .trim();
+
     return splitLaunchTarget(normalized).pathPart.toLowerCase();
 }
 
@@ -422,6 +147,7 @@ function extractArrayLiteral(source, varName) {
     const pattern = new RegExp(`\\b${escaped}\\s*=\\s*\\[`, 'i');
     const match = pattern.exec(String(source || ''));
     if (!match) return '';
+
     const start = String(source).indexOf('[', match.index);
     if (start < 0) return '';
 
@@ -429,7 +155,8 @@ function extractArrayLiteral(source, varName) {
     let inSingle = false;
     let inDouble = false;
     let escapedChar = false;
-    for (let i = start; i < source.length; i++) {
+
+    for (let i = start; i < source.length; i += 1) {
         const ch = source[i];
         if (escapedChar) {
             escapedChar = false;
@@ -457,6 +184,7 @@ function extractArrayLiteral(source, varName) {
             }
         }
     }
+
     return '';
 }
 
@@ -469,7 +197,7 @@ function splitTopLevelObjects(arrayLiteral = '') {
     let inDouble = false;
     let escapedChar = false;
 
-    for (let i = 0; i < source.length; i++) {
+    for (let i = 0; i < source.length; i += 1) {
         const ch = source[i];
         if (escapedChar) {
             escapedChar = false;
@@ -551,11 +279,8 @@ function getTinCanConfigCandidates(contentDir) {
     pushCandidate(path.join(contentDir, 'scripts', 'script.js'));
     pushCandidate(path.join(contentDir, 'config.js'));
     pushCandidate(path.join(contentDir, 'script.js'));
-
-    const recursiveConfig = findFile(contentDir, 'config.js');
-    const recursiveScript = findFile(contentDir, 'script.js');
-    pushCandidate(recursiveConfig);
-    pushCandidate(recursiveScript);
+    pushCandidate(findFile(contentDir, 'config.js'));
+    pushCandidate(findFile(contentDir, 'script.js'));
 
     return candidates;
 }
@@ -588,10 +313,10 @@ function parseTinCanConfigFile(configPath, contentDir) {
             const identityText = `${nodeId} ${text} ${url}`.trim();
             const fuzzyAssessment = ASSESSMENT_NAME_REGEX.test(identityText);
             const isAssessment =
-                (Number.isFinite(masteryScore) && Number(masteryScore) > 0) ||
-                (Number.isFinite(limitQuizzed) && Number(limitQuizzed) > 0) ||
-                calculateScore === true ||
-                fuzzyAssessment;
+                (Number.isFinite(masteryScore) && masteryScore > 0)
+                || (Number.isFinite(limitQuizzed) && limitQuizzed > 0)
+                || calculateScore === true
+                || fuzzyAssessment;
 
             return {
                 index,
@@ -600,8 +325,8 @@ function parseTinCanConfigFile(configPath, contentDir) {
                 url,
                 normalizedUrl: normalizePathKey(url),
                 isPage: isPage === null ? Boolean(url) : Boolean(isPage),
-                masteryScore: Number.isFinite(masteryScore) ? Number(masteryScore) : null,
-                limitQuizzed: Number.isFinite(limitQuizzed) ? Number(limitQuizzed) : null,
+                masteryScore: Number.isFinite(masteryScore) ? masteryScore : null,
+                limitQuizzed: Number.isFinite(limitQuizzed) ? limitQuizzed : null,
                 calculateScore: calculateScore === true,
                 playIcon: playIcon === null ? null : Boolean(playIcon),
                 isAssessment,
@@ -612,9 +337,9 @@ function parseTinCanConfigFile(configPath, contentDir) {
     const assessmentCount = activities.filter((row) => row.isAssessment).length;
     const scoredAssessmentCount = activities.filter(
         (row) =>
-            (Number.isFinite(row.masteryScore) && Number(row.masteryScore) > 0) ||
-            row.calculateScore ||
-            (Number.isFinite(row.limitQuizzed) && Number(row.limitQuizzed) > 0)
+            (Number.isFinite(row.masteryScore) && row.masteryScore > 0)
+            || row.calculateScore
+            || (Number.isFinite(row.limitQuizzed) && row.limitQuizzed > 0)
     ).length;
     const signalScore =
         (isLinear !== null ? 3 : 0)
@@ -636,7 +361,7 @@ function parseTinCanConfigFile(configPath, contentDir) {
 
 function parseTinCanConfig(contentDir) {
     const candidates = getTinCanConfigCandidates(contentDir);
-    if (!Array.isArray(candidates) || candidates.length === 0) return null;
+    if (candidates.length === 0) return null;
 
     const parsedFiles = [];
     for (const configPath of candidates) {
@@ -668,9 +393,9 @@ function parseTinCanConfig(contentDir) {
     const assessmentCount = mergedActivities.filter((row) => row?.isAssessment).length;
     const scoredAssessmentCount = mergedActivities.filter(
         (row) =>
-            (Number.isFinite(row?.masteryScore) && Number(row.masteryScore) > 0) ||
-            row?.calculateScore ||
-            (Number.isFinite(row?.limitQuizzed) && Number(row.limitQuizzed) > 0)
+            (Number.isFinite(row?.masteryScore) && row.masteryScore > 0)
+            || row?.calculateScore
+            || (Number.isFinite(row?.limitQuizzed) && row.limitQuizzed > 0)
     ).length;
     const mergedSource = parsedFiles
         .map((row) => String(row?.source || '').trim())
@@ -693,8 +418,8 @@ function findConfigActivityForActivity(activity, configActivities) {
     if (configRows.length === 0) return null;
 
     const launchKey = normalizePathKey(activity?.launch || '');
-    const idPathKey = extractActivityPathFromId(activity?.id || '');
-    const idKey = normalizePathKey(activity?.id || '');
+    const idPathKey = extractActivityPathFromId(activity?.id || activity?.activityId || '');
+    const idKey = normalizePathKey(activity?.id || activity?.activityId || '');
     const candidates = [launchKey, idPathKey, idKey].filter(Boolean);
 
     for (const key of candidates) {
@@ -760,24 +485,23 @@ function mergeActivitiesWithConfig(activities, configActivities, contentDir = ''
 function buildCompletionPolicy(configMeta) {
     if (!configMeta) return null;
     const hasAssessments = Number(configMeta.assessmentCount || 0) > 0;
-    const hasScoredAssessments = Number(configMeta.scoredAssessmentCount || 0) > 0;
     const completedWhenDoAll = configMeta.completedWhenDoAllMasteryscore;
-    const requireAssessmentPass =
-        hasAssessments && completedWhenDoAll !== false;
+    const requireAssessmentPass = hasAssessments && completedWhenDoAll !== false;
 
     return {
         source: 'tincan-config',
         hasAssessments,
-        hasScoredAssessments,
+        hasScoredAssessments: Number(configMeta.scoredAssessmentCount || 0) > 0,
         requireAssessmentPass,
         completedWhenDoAllMasteryscore: completedWhenDoAll,
     };
 }
 
-function hydrateContentWithConfig(content) {
+export function hydrateContentWithConfig(content) {
     if (!content || content.type !== 'tincan') {
         return { content, changed: false };
     }
+
     const contentId = String(content.id || '').trim();
     if (!contentId) return { content, changed: false };
 

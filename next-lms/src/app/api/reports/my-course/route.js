@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireSession } from '@/lib/server/auth';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
-import { getCourseCompatMaps } from '@/lib/server/compat-db';
+import { getCourseCompatMaps, listContents } from '@/lib/server/compat-db';
 import { resolveEnrollmentSectionId } from '@/lib/server/section-runtime';
 
 const ENROLLMENT_STATUS_RANK = {
@@ -122,6 +122,9 @@ function deriveActivityIdentity(payload = {}, fallbackCourseName = 'Activity') {
     const taggedActivityName =
         getExtensionValueByKeySuffix(contextExtensions, '/activity-name')
         || getExtensionValueByKeySuffix(extensions, '/activity-name');
+    const taggedActivityIndex =
+        getExtensionValueByKeySuffix(contextExtensions, '/activity-index')
+        || getExtensionValueByKeySuffix(extensions, '/activity-index');
     const originalObjectId =
         getExtensionValueByKeySuffix(contextExtensions, '/original-object-id')
         || getExtensionValueByKeySuffix(extensions, '/original-object-id');
@@ -144,11 +147,19 @@ function deriveActivityIdentity(payload = {}, fallbackCourseName = 'Activity') {
     const activityName = shouldPreferInferred
         ? (inferredFromId || activityNameFromPayload || fallbackName)
         : activityNameFromPayload;
-    const activityKey = activityId || activityName || fallbackName;
+    const parsedActivityIndex = Number(taggedActivityIndex);
+    const activityIndex = Number.isFinite(parsedActivityIndex)
+        ? Math.max(0, Math.floor(parsedActivityIndex))
+        : null;
+    const baseActivityKey = activityId || activityName || fallbackName;
+    const activityKey = activityIndex !== null
+        ? `lesson-${activityIndex}:${baseActivityKey}`
+        : baseActivityKey;
 
     return {
         activityName: String(activityName || fallbackName).trim() || fallbackName,
         activityKey: String(activityKey || fallbackName).trim() || fallbackName,
+        activityIndex,
     };
 }
 
@@ -212,11 +223,12 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
             (toSafeNumber(extensions['https://w3id.org/xapi/video/extensions/length'], 0) / 60) ||
             (toSafeNumber(extensions.length, 0) / 60);
 
-        const { activityName, activityKey } = deriveActivityIdentity(payload, fallbackCourseName);
+        const { activityName, activityKey, activityIndex } = deriveActivityIdentity(payload, fallbackCourseName);
 
         return {
             activity: activityName,
             activityKey,
+            activityIndex,
             dateTime: toDateTimeText(rawTimestamp),
             rawTimestamp,
             timestampMs: currentTs,
@@ -249,25 +261,27 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
     for (let idx = 0; idx < normalized.length; idx += 1) {
         const item = normalized[idx];
         const isInitialized = item.verbId.includes('initialized');
+        if (isInitialized) {
+            flushCurrent();
+            current = null;
+            continue;
+        }
+
         const hasCurrent = Boolean(current);
         const gapMinutes = hasCurrent
             ? ((toSafeNumber(item.timestampMs, 0) - toSafeNumber(current.lastTimestampMs, 0)) / 60000)
             : 0;
         const shouldSplitByLongGap = hasCurrent && Number.isFinite(gapMinutes) && gapMinutes > 45;
-        const startsNewSession = !hasCurrent || isInitialized || shouldSplitByLongGap;
+        const activityChanged =
+            hasCurrent &&
+            String(item.activityKey || '').trim() !== String(current.activityKey || '').trim();
+        const isNewEntryVerb =
+            item.verbId.includes('experienced')
+            || item.verbId.includes('launched')
+            || item.verbId.includes('resumed');
+        const startsNewSession = !hasCurrent || shouldSplitByLongGap || activityChanged || isNewEntryVerb;
 
         if (startsNewSession) {
-            // If a new "initialized" arrives soon after the previous statement,
-            // treat that gap as time spent in the previous learning entry.
-            if (
-                hasCurrent
-                && isInitialized
-                && Number.isFinite(gapMinutes)
-                && gapMinutes > 0
-                && gapMinutes <= 45
-            ) {
-                current.minutesFromGap += gapMinutes;
-            }
             flushCurrent();
             current = {
                 activity: item.activity || fallbackCourseName,
@@ -474,6 +488,28 @@ export async function GET(request) {
 
         const courseCompatMaps = await getCourseCompatMaps([Number(selectedEnrollment.courseId)]);
         const courseThumbnail = courseCompatMaps?.thumbnailByCourseId?.[String(selectedEnrollment.courseId)] || '';
+        const mappedContentId = String(
+            courseCompatMaps?.contentByCourseId?.[String(selectedEnrollment.courseId)]
+            || ''
+        ).trim();
+
+        let lessonCountFromContent = 0;
+        if (mappedContentId) {
+            try {
+                const contents = await listContents();
+                const mappedContent = Array.isArray(contents)
+                    ? contents.find((content) => String(content?.id || '') === mappedContentId)
+                    : null;
+                const activityCount = Array.isArray(mappedContent?.activities)
+                    ? mappedContent.activities.length
+                    : 0;
+                if (activityCount > 0) {
+                    lessonCountFromContent = activityCount;
+                }
+            } catch {
+                // Ignore content-hydration failures and fallback to section count.
+            }
+        }
 
         const statements = await prisma.xapiStatement.findMany({
             where: { enrollmentId: Number(selectedEnrollment.id) },
@@ -513,7 +549,9 @@ export async function GET(request) {
         const totalStudyMinutes = Math.max(statementMinutes, fallbackMinutes, 0);
         const groupedSections = toGroupedSections(
             rows,
-            Number(availableSections.length || 0),
+            lessonCountFromContent > 0
+                ? lessonCountFromContent
+                : Number(availableSections.length || 0),
             String(selectedEnrollment?.courses?.title || 'Activity').trim() || 'Activity'
         );
 
