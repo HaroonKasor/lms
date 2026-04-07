@@ -4,6 +4,7 @@ import { requireSession } from '@/lib/server/auth';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
 import { getCourseCompatMaps, listContents } from '@/lib/server/compat-db';
 import { resolveEnrollmentSectionId } from '@/lib/server/section-runtime';
+import { parseXapiResultSnapshot } from '@/lib/xapi-result';
 
 const ENROLLMENT_STATUS_RANK = {
     COMPLETED: 5,
@@ -78,20 +79,14 @@ function formatScoreNumber(value) {
 }
 
 function deriveScoreSnapshot(result = {}) {
-    const raw = toOptionalNumber(result?.score?.raw);
-    const max = toOptionalNumber(result?.score?.max);
-    const scaled = toOptionalNumber(result?.score?.scaled);
-    const success = typeof result?.success === 'boolean' ? result.success : null;
-    const completion = typeof result?.completion === 'boolean' ? result.completion : null;
+    const snapshot = parseXapiResultSnapshot(result, { extensions: result?.extensions || {} });
+    const raw = toOptionalNumber(snapshot?.raw);
+    const max = toOptionalNumber(snapshot?.max);
+    const scaled = toOptionalNumber(snapshot?.scaled);
+    const success = typeof snapshot?.success === 'boolean' ? snapshot.success : null;
+    const completion = typeof snapshot?.completion === 'boolean' ? snapshot.completion : null;
 
-    const percentFromScaled = scaled !== null
-        ? (scaled <= 1 ? scaled * 100 : scaled)
-        : null;
-    const percentFromRawMax =
-        raw !== null && max !== null && max > 0
-            ? (raw / max) * 100
-            : null;
-    const percent = percentFromScaled ?? percentFromRawMax ?? null;
+    const percent = toOptionalNumber(snapshot?.percent);
     const hasScore = raw !== null || max !== null || scaled !== null;
     const hasResultFlag = success !== null || completion !== null;
 
@@ -271,6 +266,10 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
             ? row.statement_json
             : {};
         const result = payload?.result || {};
+        const mergedExtensions = {
+            ...(payload?.context?.extensions || {}),
+            ...(result?.extensions || {}),
+        };
         const rawTimestamp = payload?.timestamp || payload?.storedAt || row?.receivedAt;
         const currentTs = toSafeTime(rawTimestamp);
         const verbId = String(payload?.verb?.id || '').trim().toLowerCase();
@@ -278,6 +277,13 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
         // Keep explicit duration only from real xAPI duration field.
         // Runtime "length" is media total length and causes fake repeated values (e.g. 0.20 each row).
         const parsedDuration = parseIsoDurationToMinutes(result?.duration);
+        const extensionTimeRaw =
+            mergedExtensions['https://w3id.org/xapi/video/extensions/time']
+            ?? mergedExtensions.time
+            ?? result?.currentTime;
+        const extensionTimeMinutes = Number.isFinite(Number(extensionTimeRaw))
+            ? Math.max(0, Number(extensionTimeRaw) / 60)
+            : 0;
         const isEntryLikeVerb =
             verbId.includes('experienced') ||
             verbId.includes('launched') ||
@@ -286,11 +292,21 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
         // because they create noisy repeated rows that do not reflect real study time.
         const explicitDurationMinutes =
             isEntryLikeVerb && parsedDuration > 0 && parsedDuration <= 0.25
-                ? 0
-                : parsedDuration;
+                ? Math.max(0, extensionTimeMinutes)
+                : Math.max(parsedDuration, extensionTimeMinutes);
 
         const { activityName, activityKey, activityIndex } = deriveActivityIdentity(payload, fallbackCourseName);
-        const scoreSnapshot = deriveScoreSnapshot(result);
+        const scoreSnapshot = parseXapiResultSnapshot(result, { extensions: mergedExtensions });
+        const scoreSummary = deriveScoreSnapshot({
+            score: {
+                raw: scoreSnapshot?.raw,
+                max: scoreSnapshot?.max,
+                scaled: scoreSnapshot?.scaled,
+            },
+            success: scoreSnapshot?.success,
+            completion: scoreSnapshot?.completion,
+            extensions: mergedExtensions,
+        });
 
         return {
             activity: activityName,
@@ -301,7 +317,7 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
             timestampMs: currentTs,
             explicitDurationMinutes: Math.max(0, toSafeNumber(explicitDurationMinutes, 0)),
             verbId,
-            scoreSnapshot,
+            scoreSnapshot: scoreSummary,
         };
     });
 

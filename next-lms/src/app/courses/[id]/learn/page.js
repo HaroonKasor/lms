@@ -16,6 +16,7 @@ import {
     getProgress,
 } from '@/lib/xapi';
 import { getUser } from '@/lib/auth';
+import { parseXapiResultSnapshot } from '@/lib/xapi-result';
 import { toast } from 'react-toastify';
 
 const LEARNER_TOAST = { containerId: 'global-toast' };
@@ -1655,7 +1656,7 @@ export default function LearnPage() {
                         row: entry.row,
                         runtimeIndex: Number(entry.runtimeIndex),
                         runtimeOrder: order,
-                        runtimePage: order,
+                        runtimePage: Number(entry.runtimeIndex),
                         runtimeSource: 'treeArray',
                     }));
                 }
@@ -1672,7 +1673,7 @@ export default function LearnPage() {
                         row: entry.row,
                         runtimeIndex: Number(entry.runtimeIndex),
                         runtimeOrder: order,
-                        runtimePage: order,
+                        runtimePage: Number(entry.runtimeIndex),
                         runtimeSource: 'dataIndex',
                     }));
             }
@@ -3287,6 +3288,12 @@ export default function LearnPage() {
                 incoming?.result?.extensions && typeof incoming.result.extensions === 'object'
                     ? incoming.result.extensions
                     : {};
+            const incomingResultSnapshot = parseXapiResultSnapshot(incoming?.result || {}, {
+                extensions: {
+                    ...(incomingContextExtensions || {}),
+                    ...(incomingResultExtensions || {}),
+                },
+            });
             const readIncomingExtensionBySuffix = (suffix) => {
                 for (const source of [incomingContextExtensions, incomingResultExtensions]) {
                     for (const [key, value] of Object.entries(source || {})) {
@@ -3385,7 +3392,7 @@ export default function LearnPage() {
             if (result?.success) {
                 const completedByVerbSignal =
                     isCompletedVerb(incoming?.verb) ||
-                    incoming?.result?.completion === true;
+                    incomingResultSnapshot?.completion === true;
                 let shouldRefreshProgressFromServer = completedByVerbSignal;
 
                 if (matchedActivityIndex >= 0) {
@@ -3421,9 +3428,9 @@ export default function LearnPage() {
                     const current = nextActivityStatuses[matchedActivityIndex] || {};
                     const verbId = String(incoming?.verb?.id || '').toLowerCase();
                     const verbLabel = String(incoming?.verb?.display?.['en-US'] || incoming?.verb?.display?.en || '').toLowerCase();
-                    const incomingRaw = asFiniteNumber(incoming?.result?.score?.raw);
-                    const incomingScaled = asFiniteNumber(incoming?.result?.score?.scaled);
-                    const incomingMax = asFiniteNumber(incoming?.result?.score?.max);
+                    const incomingRaw = asFiniteNumber(incomingResultSnapshot?.raw);
+                    const incomingScaled = asFiniteNumber(incomingResultSnapshot?.scaled);
+                    const incomingMax = asFiniteNumber(incomingResultSnapshot?.max);
                     const matchedActivity = content?.activities?.[matchedActivityIndex];
                     const passingScore = getAssessmentPassingScore(matchedActivity);
                     const normalizedIncomingRaw =
@@ -3449,17 +3456,18 @@ export default function LearnPage() {
                             || verbLabel.includes('pass')
                             || verbLabel.includes('ผ่าน')
                             || incomingHasPassingScore
-                            || isTruthyFlag(incoming?.result?.passed)
+                            || incomingResultSnapshot?.success === true
+                            || incomingResultSnapshot?.passed === true
                         )
                         : Boolean(
-                            incoming?.result?.success === true
+                            incomingResultSnapshot?.success === true
                             || verbId.includes('pass')
                             || verbLabel.includes('pass')
                             || verbLabel.includes('ผ่าน')
                             || incomingHasPassingScore
                         );
                     const markedComplete = Boolean(
-                        incoming?.result?.completion === true
+                        incomingResultSnapshot?.completion === true
                         || isCompletedVerb(incoming?.verb)
                         || (matchedIsAssessment && markedPass)
                     );
@@ -3476,15 +3484,15 @@ export default function LearnPage() {
                             )
                         ),
                         status: String(current?.status || ''),
-                        success: typeof incoming?.result?.success === 'boolean'
-                            ? incoming.result.success
+                        success: typeof incomingResultSnapshot?.success === 'boolean'
+                            ? incomingResultSnapshot.success
                             : (typeof current?.success === 'boolean' ? current.success : null),
-                        completion: typeof incoming?.result?.completion === 'boolean'
-                            ? incoming.result.completion
+                        completion: typeof incomingResultSnapshot?.completion === 'boolean'
+                            ? incomingResultSnapshot.completion
                             : (typeof current?.completion === 'boolean' ? current.completion : null),
-                        scoreRaw: asFiniteNumber(incoming?.result?.score?.raw) ?? asFiniteNumber(current?.scoreRaw),
-                        scoreScaled: asFiniteNumber(incoming?.result?.score?.scaled) ?? asFiniteNumber(current?.scoreScaled),
-                        scoreMax: asFiniteNumber(incoming?.result?.score?.max) ?? asFiniteNumber(current?.scoreMax),
+                        scoreRaw: asFiniteNumber(incomingResultSnapshot?.raw) ?? asFiniteNumber(current?.scoreRaw),
+                        scoreScaled: asFiniteNumber(incomingResultSnapshot?.scaled) ?? asFiniteNumber(current?.scoreScaled),
+                        scoreMax: asFiniteNumber(incomingResultSnapshot?.max) ?? asFiniteNumber(current?.scoreMax),
                     };
 
                     const nextActivityStatusesSig = JSON.stringify(nextActivityStatuses);

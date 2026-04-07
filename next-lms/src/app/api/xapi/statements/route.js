@@ -6,6 +6,7 @@ import {
     normalizeUserKey,
     upsertLearningProgress,
 } from '@/lib/server/learning-db';
+import { parseXapiResultSnapshot, hasPassingAssessmentScoreSnapshot } from '@/lib/xapi-result';
 import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
 import { getSectionCompatMaps } from '@/lib/server/compat-db';
@@ -137,16 +138,19 @@ function readProgressExtensions(result = {}) {
         result.duration;
 
     const p = Number(progressRaw);
-    const scoreRaw = Number(result?.score?.raw);
-    const scoreScaled = Number(result?.score?.scaled);
+    const snapshot = parseXapiResultSnapshot(result, { extensions });
+    const scoreRaw = Number(snapshot?.raw);
+    const scoreScaled = Number(snapshot?.scaled);
+    const scoreMax = Number(snapshot?.max);
     return {
         progress: Number.isFinite(p) ? Math.max(0, Math.min(100, Math.round(p))) : undefined,
         currentTime: Number.isFinite(Number(currentTime)) ? Number(currentTime) : undefined,
         duration: Number.isFinite(Number(duration)) ? Number(duration) : undefined,
         scoreRaw: Number.isFinite(scoreRaw) ? scoreRaw : undefined,
         scoreScaled: Number.isFinite(scoreScaled) ? scoreScaled : undefined,
-        success: typeof result?.success === 'boolean' ? result.success : undefined,
-        completion: typeof result?.completion === 'boolean' ? result.completion : undefined,
+        scoreMax: Number.isFinite(scoreMax) ? scoreMax : undefined,
+        success: typeof snapshot?.success === 'boolean' ? snapshot.success : undefined,
+        completion: typeof snapshot?.completion === 'boolean' ? snapshot.completion : undefined,
     };
 }
 
@@ -225,13 +229,19 @@ async function updateProgressFromStatement(statement, contentId) {
     if (verbId.includes('completed')) {
         const durationSeconds = parseIsoDurationToSeconds(statement?.result?.duration);
         const result = statement?.result || {};
-        const explicitSuccess = typeof result?.success === 'boolean' ? result.success : undefined;
-        const explicitCompletion = typeof result?.completion === 'boolean' ? result.completion : undefined;
+        const snapshot = parseXapiResultSnapshot(result, {
+            extensions: {
+                ...(statement?.context?.extensions || {}),
+                ...(result?.extensions || {}),
+            },
+        });
+        const explicitSuccess = typeof snapshot?.success === 'boolean' ? snapshot.success : undefined;
+        const explicitCompletion = typeof snapshot?.completion === 'boolean' ? snapshot.completion : undefined;
         const hasExplicitFailure = explicitSuccess === false || explicitCompletion === false;
-        const scoreRaw = Number(result?.score?.raw);
-        const scoreScaled = Number(result?.score?.scaled);
-        const scoreMax = Number(result?.score?.max);
-        const hasPassingScore = hasPassingAssessmentScore({ scoreRaw, scoreScaled, scoreMax });
+        const scoreRaw = Number(snapshot?.raw);
+        const scoreScaled = Number(snapshot?.scaled);
+        const scoreMax = Number(snapshot?.max);
+        const hasPassingScore = hasPassingAssessmentScoreSnapshot(snapshot);
         const hasAssessmentEvidence =
             typeof explicitSuccess === 'boolean'
             || Number.isFinite(scoreRaw)
@@ -258,7 +268,7 @@ async function updateProgressFromStatement(statement, contentId) {
     }
 
     if (verbId.includes('progressed') || verbId.includes('play') || verbId.includes('pause') || verbId.includes('seek')) {
-        const { progress, currentTime, duration, scoreRaw, scoreScaled, success, completion } = readProgressExtensions(statement?.result);
+        const { progress, currentTime, duration, scoreRaw, scoreScaled, scoreMax, success, completion } = readProgressExtensions(statement?.result);
         const hasExplicitFailure = success === false || completion === false;
         const normalizedProgress = Number.isFinite(Number(progress))
             ? Number(progress)
@@ -267,7 +277,12 @@ async function updateProgressFromStatement(statement, contentId) {
             typeof success === 'boolean'
             || Number.isFinite(scoreRaw)
             || Number.isFinite(scoreScaled);
-        const hasPassingScore = hasPassingAssessmentScore({ scoreRaw, scoreScaled });
+        const hasPassingScore = hasPassingAssessmentScoreSnapshot({
+            raw: Number.isFinite(scoreRaw) ? scoreRaw : null,
+            scaled: Number.isFinite(scoreScaled) ? scoreScaled : null,
+            max: Number.isFinite(scoreMax) ? scoreMax : null,
+            percent: null,
+        });
         const assessmentLikeStatement = isAssessmentStatement(statement);
         const hasVerifiedCompletionSignal =
             completion === true &&
