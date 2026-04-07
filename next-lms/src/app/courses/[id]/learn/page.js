@@ -1548,7 +1548,11 @@ export default function LearnPage() {
         return null;
     }, []);
 
-    const scoreTinCanActivityRowMatch = useCallback((activity, row, { activityIndex = -1, rowOrdinal = -1 } = {}) => {
+    const scoreTinCanActivityRowMatch = useCallback((activity, row, {
+        activityIndex = -1,
+        rowOrdinal = -1,
+        rowOrder = -1,
+    } = {}) => {
         if (!activity || !row || typeof activity !== 'object' || typeof row !== 'object') return -1;
 
         const normalizeTitle = (value) => String(value || '')
@@ -1598,8 +1602,11 @@ export default function LearnPage() {
         ) {
             score += 8;
         }
-        if (Number.isFinite(activityIndex) && Number.isFinite(rowOrdinal) && activityIndex >= 0 && rowOrdinal >= 0) {
-            const distance = Math.abs(Number(activityIndex) - Number(rowOrdinal));
+        const distanceOrdinal = Number.isFinite(rowOrder) && rowOrder >= 0
+            ? rowOrder
+            : rowOrdinal;
+        if (Number.isFinite(activityIndex) && Number.isFinite(distanceOrdinal) && activityIndex >= 0 && distanceOrdinal >= 0) {
+            const distance = Math.abs(Number(activityIndex) - Number(distanceOrdinal));
             if (distance === 0) score += 6;
             else if (distance === 1) score += 3;
         }
@@ -1623,6 +1630,46 @@ export default function LearnPage() {
         return [];
     }, []);
 
+    const resolveTinCanRuntimeSource = useCallback(() => {
+        try {
+            const frameWindow = iframeRef.current?.contentWindow;
+            if (!frameWindow) return 'treeArray';
+            const currentIndex = Number(frameWindow?.currentPage);
+            if (!Number.isFinite(currentIndex) || currentIndex < 0) return 'treeArray';
+
+            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
+                ? frameWindow.currentState.dataIndex
+                : [];
+            const treeArray = Array.isArray(frameWindow?.treeArray) ? frameWindow.treeArray : [];
+
+            let innerKey = '';
+            try {
+                const innerSrc = frameWindow?.document?.getElementById('contentFrame')?.getAttribute('src')
+                    || frameWindow?.document?.getElementById('contentFrame')?.src
+                    || '';
+                innerKey = normalizeActivityPathKey(innerSrc);
+            } catch {
+                innerKey = '';
+            }
+
+            const matchesIndex = (rows) => {
+                if (!Array.isArray(rows) || rows.length === 0) return false;
+                const row = rows[currentIndex];
+                if (!row) return false;
+                const rowKey = getTinCanRuntimeRowPathKey(row);
+                if (!innerKey || !rowKey) return false;
+                return rowKey === innerKey || rowKey.endsWith(innerKey) || innerKey.endsWith(rowKey);
+            };
+
+            if (matchesIndex(dataIndex)) return 'dataIndex';
+            if (matchesIndex(treeArray)) return 'treeArray';
+            if (dataIndex.length && treeArray.length === 0) return 'dataIndex';
+            return 'treeArray';
+        } catch {
+            return 'treeArray';
+        }
+    }, [getTinCanRuntimeRowPathKey, normalizeActivityPathKey]);
+
     const getTinCanRuntimeRows = useCallback(() => {
         try {
             const frameWindow = iframeRef.current?.contentWindow;
@@ -1643,12 +1690,14 @@ export default function LearnPage() {
                 return hasLaunch;
             };
 
-            // IMPORTANT: treeArray keeps the runtime TOC/page ordering.
-            // dataIndex can be reordered/annotated by runtime status and may desync
-            // sidebar chapter indexes (e.g. click chapter 2 but jump chapter 9).
+            const runtimeSource = resolveTinCanRuntimeSource();
             const treeArray = Array.isArray(frameWindow?.treeArray) ? frameWindow.treeArray : [];
-            if (treeArray.length > 0) {
-                const pageRows = treeArray
+            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
+                ? frameWindow.currentState.dataIndex
+                : [];
+            const sourceRows = runtimeSource === 'dataIndex' ? dataIndex : treeArray;
+            if (sourceRows.length > 0) {
+                const pageRows = sourceRows
                     .map((row, index) => ({ row, runtimeIndex: index }))
                     .filter((entry) => isLaunchableRow(entry?.row));
                 if (pageRows.length > 0) {
@@ -1657,32 +1706,16 @@ export default function LearnPage() {
                         runtimeIndex: Number(entry.runtimeIndex),
                         runtimeOrder: order,
                         runtimePage: Number(entry.runtimeIndex),
-                        runtimeSource: 'treeArray',
+                        runtimeSource,
                     }));
                 }
-            }
-
-            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex)
-                ? frameWindow.currentState.dataIndex
-                : [];
-            if (dataIndex.length > 0) {
-                return dataIndex
-                    .map((row, index) => ({ row, runtimeIndex: index }))
-                    .filter((entry) => isLaunchableRow(entry?.row))
-                    .map((entry, order) => ({
-                        row: entry.row,
-                        runtimeIndex: Number(entry.runtimeIndex),
-                        runtimeOrder: order,
-                        runtimePage: Number(entry.runtimeIndex),
-                        runtimeSource: 'dataIndex',
-                    }));
             }
         } catch {
             // ignore iframe access errors
         }
 
         return [];
-    }, []);
+    }, [resolveTinCanRuntimeSource]);
 
     const TINCAN_STRONG_MATCH_SCORE = 30;
 
@@ -1699,12 +1732,14 @@ export default function LearnPage() {
         let bestDistance = Number.POSITIVE_INFINITY;
         for (let order = 0; order < runtimeRows.length; order++) {
             const entry = runtimeRows[order];
-            const rowOrdinal = Number.isFinite(Number(entry?.runtimeOrder)) ? Number(entry.runtimeOrder) : order;
+            const rowOrdinal = Number.isFinite(Number(entry?.runtimeIndex)) ? Number(entry.runtimeIndex) : order;
+            const rowOrder = Number.isFinite(Number(entry?.runtimeOrder)) ? Number(entry.runtimeOrder) : order;
             const score = scoreTinCanActivityRowMatch(activity, entry?.row, {
                 activityIndex: safeIndex,
                 rowOrdinal,
+                rowOrder,
             });
-            const distance = Math.abs(safeIndex - rowOrdinal);
+            const distance = Math.abs(safeIndex - rowOrder);
 
             if (score > bestScore || (score === bestScore && distance < bestDistance)) {
                 bestScore = score;
@@ -1739,7 +1774,10 @@ export default function LearnPage() {
             runtimeRows.find((entry) => Number(entry?.runtimePage) === runtimeIndex)
             || runtimeRows.find((entry) => Number(entry?.runtimeIndex) === runtimeIndex);
         const runtimeRow = runtimeEntry?.row;
-        const rowOrdinal = Number.isFinite(Number(runtimeEntry?.runtimeOrder))
+        const rowOrdinal = Number.isFinite(Number(runtimeEntry?.runtimeIndex))
+            ? Number(runtimeEntry.runtimeIndex)
+            : runtimeRows.findIndex((entry) => Number(entry?.runtimePage) === runtimeIndex);
+        const rowOrder = Number.isFinite(Number(runtimeEntry?.runtimeOrder))
             ? Number(runtimeEntry.runtimeOrder)
             : runtimeRows.findIndex((entry) => Number(entry?.runtimePage) === runtimeIndex);
 
@@ -1750,8 +1788,9 @@ export default function LearnPage() {
             const score = scoreTinCanActivityRowMatch(activities[i], runtimeRow, {
                 activityIndex: i,
                 rowOrdinal,
+                rowOrder,
             });
-            const distance = Math.abs(i - rowOrdinal);
+            const distance = Math.abs(i - rowOrder);
             if (score > bestScore || (score === bestScore && distance < bestDistance)) {
                 bestScore = score;
                 bestIndex = i;
@@ -1791,8 +1830,8 @@ export default function LearnPage() {
 
             const rowIndex = runtimeRows.findIndex((entry) => {
                 const rowKey = getTinCanRuntimeRowPathKey(entry?.row);
-                const rowOrdinal = Number.isFinite(Number(entry?.runtimeOrder))
-                    ? Number(entry.runtimeOrder)
+                const rowOrdinal = Number.isFinite(Number(entry?.runtimeIndex))
+                    ? Number(entry.runtimeIndex)
                     : runtimeRows.findIndex((runtimeEntry) => runtimeEntry === entry);
                 const pathMatched = rowKey && candidateKeys.some((candidateKey) => (
                     rowKey === candidateKey
@@ -1885,6 +1924,7 @@ export default function LearnPage() {
             const score = scoreTinCanActivityRowMatch(activity, entry?.row, {
                 activityIndex: safeIndex,
                 rowOrdinal,
+                rowOrder: rowOrdinal,
             });
             const distance = Math.abs(safeIndex - rowOrdinal);
 
