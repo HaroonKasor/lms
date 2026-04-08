@@ -1977,43 +1977,18 @@ export default function LearnPage() {
         return -1;
     }, [content?.activities, getActivityCandidatePathKeys]);
 
-    const detectActivityIndexFromIframe = useCallback(() => {
+    const detectActivityIndexFromIframe = useCallback((options = {}) => {
         if (!iframeRef.current || !content || !Array.isArray(content.activities) || content.activities.length === 0) return -1;
 
         const frameWindow = iframeRef.current.contentWindow;
-
-        if (frameWindow) {
-            try {
-                const runtimeRows = getTinCanRuntimeRows();
-                const runtimeDataReady = runtimeRows.length > 0;
-                const directIndex = Number(frameWindow.currentPage);
-                if (Number.isFinite(directIndex) && directIndex >= 0) {
-                    const mapped = mapRuntimePageToActivityIndex(directIndex);
-                    if (mapped >= 0) return mapped;
-                    // Fallback for packages that expose currentPage before runtime map is ready.
-                    if (!runtimeDataReady && directIndex < content.activities.length) {
-                        return Math.floor(directIndex);
-                    }
-                }
-
-                const lastSeenIndex = Number(frameWindow.currentState?.lastSeenIndex);
-                if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
-                    const mapped = mapRuntimePageToActivityIndex(lastSeenIndex);
-                    if (mapped >= 0) return mapped;
-                    if (!runtimeDataReady && lastSeenIndex < content.activities.length) {
-                        return Math.floor(lastSeenIndex);
-                    }
-                }
-            } catch {
-                // Ignore cross-frame access errors and fallback to runtime page matching.
-            }
-        }
+        if (!frameWindow) return -1;
+        const preferInnerOnly = options?.preferInnerOnly === true;
 
         // TinCan wrapper keeps the real activity in its inner iframe (#contentFrame).
+        // Prefer this source over currentPage because runtime page counters can be stale during transitions.
         try {
-            const innerSrc = frameWindow?.document?.getElementById('contentFrame')?.getAttribute('src')
-                || frameWindow?.document?.getElementById('contentFrame')?.src
-                || '';
+            const contentFrame = frameWindow.document?.getElementById('contentFrame');
+            const innerSrc = contentFrame?.getAttribute('src') || contentFrame?.src || '';
             const inner = normalizeActivityPathKey(innerSrc);
             if (inner) {
                 const exact = findUniqueActivityIndexByPathKey(inner, { allowLoose: false });
@@ -2022,23 +1997,53 @@ export default function LearnPage() {
                 if (loose >= 0) return loose;
             }
         } catch {
-            // ignore inner-frame access errors
+            // Ignore inner-frame access errors and try broader fallbacks.
         }
 
         let currentHref = '';
         try {
-            currentHref = frameWindow?.location?.href || '';
+            currentHref = frameWindow.location?.href || '';
         } catch {
             currentHref = '';
         }
-        if (!currentHref) return -1;
+        if (currentHref) {
+            const current = normalizeActivityPathKey(currentHref);
+            if (current) {
+                const exactCurrent = findUniqueActivityIndexByPathKey(current, { allowLoose: false });
+                if (exactCurrent >= 0) return exactCurrent;
+                const looseCurrent = findUniqueActivityIndexByPathKey(current, { allowLoose: true });
+                if (looseCurrent >= 0) return looseCurrent;
+            }
+        }
 
-        const current = normalizeActivityPathKey(currentHref);
-        if (!current) return -1;
-        const exactCurrent = findUniqueActivityIndexByPathKey(current, { allowLoose: false });
-        if (exactCurrent >= 0) return exactCurrent;
-        const looseCurrent = findUniqueActivityIndexByPathKey(current, { allowLoose: true });
-        if (looseCurrent >= 0) return looseCurrent;
+        if (preferInnerOnly) return -1;
+
+        // Fallback: runtime counters. Keep this last because wrappers can report selected page
+        // before the actual activity iframe has navigated.
+        try {
+            const runtimeRows = getTinCanRuntimeRows();
+            const runtimeDataReady = runtimeRows.length > 0;
+            const directIndex = Number(frameWindow.currentPage);
+            if (Number.isFinite(directIndex) && directIndex >= 0) {
+                const mapped = mapRuntimePageToActivityIndex(directIndex);
+                if (mapped >= 0) return mapped;
+                // Fallback for packages that expose currentPage before runtime map is ready.
+                if (!runtimeDataReady && directIndex < content.activities.length) {
+                    return Math.floor(directIndex);
+                }
+            }
+
+            const lastSeenIndex = Number(frameWindow.currentState?.lastSeenIndex);
+            if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
+                const mapped = mapRuntimePageToActivityIndex(lastSeenIndex);
+                if (mapped >= 0) return mapped;
+                if (!runtimeDataReady && lastSeenIndex < content.activities.length) {
+                    return Math.floor(lastSeenIndex);
+                }
+            }
+        } catch {
+            // Ignore cross-frame access errors.
+        }
 
         return -1;
     }, [content, getTinCanRuntimeRows, normalizeActivityPathKey, mapRuntimePageToActivityIndex, findUniqueActivityIndexByPathKey]);
@@ -2211,7 +2216,7 @@ export default function LearnPage() {
                         targetActivityTitle: String(content?.activities?.[targetIndex]?.name || content?.activities?.[targetIndex]?.title || ''),
                     });
 
-                    const detectedBefore = detectActivityIndexFromIframe();
+                    const detectedBefore = detectActivityIndexFromIframe({ preferInnerOnly: true });
                     if (detectedBefore === targetIndex) {
                         logLessonMapDebug('resume-jump-skip-detected-target', {
                             targetIndex,
@@ -2243,7 +2248,7 @@ export default function LearnPage() {
                                 frameWindow.drawTOC();
                             }
 
-                            const detectedAfter = detectActivityIndexFromIframe();
+                            const detectedAfter = detectActivityIndexFromIframe({ preferInnerOnly: true });
                             if (detectedAfter === targetIndex) {
                                 const after = Number(frameWindow.currentPage);
                                 logLessonMapDebug('resume-jump-applied', {

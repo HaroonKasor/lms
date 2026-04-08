@@ -453,7 +453,12 @@ export async function POST(request) {
             statementId: normalized.id,
         });
     } catch (err) {
-        console.error('[xapi/statements][POST] failed', err);
+        const meta = {
+            code: err?.code || null,
+            name: err?.name || null,
+            message: err?.message || null,
+        };
+        console.error('[xapi/statements][POST] failed', meta, err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 }

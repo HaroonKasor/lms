@@ -598,15 +598,22 @@ async function createXapiStatement({
     }
 
     const resolvedStatementId = String(statementId || '').trim() || createRegistrationUuid();
-    const row = await prisma.xapiStatement.create({
-        data: {
+    const parsedTimestamp = timestamp ? new Date(timestamp) : null;
+    const receivedAt = parsedTimestamp && Number.isFinite(parsedTimestamp.getTime()) ? parsedTimestamp : new Date();
+
+    const row = await prisma.xapiStatement.upsert({
+        where: {
+            statementId: resolvedStatementId,
+        },
+        update: {},
+        create: {
             enrollmentId: enrollment.id,
             statementId: resolvedStatementId,
             actorId: user.id,
             verbId: String(verbId || ''),
             objectId: String(objectId || ''),
             statement_json: payloadJson || {},
-            receivedAt: timestamp ? new Date(timestamp) : new Date(),
+            receivedAt,
         },
         include: {
             actor: { select: { username: true, email: true } },
