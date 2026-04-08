@@ -2316,7 +2316,9 @@ export default function LearnPage() {
 
     const applyTincanResumeToIframe = useCallback(() => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
-        if (!iframeRef.current || !resumeLoaded) return;
+        // Allow manual selection to bypass resumeLoaded guard so sidebar clicks work even before resume is fully loaded
+        const manualActiveCheck = Number.isFinite(Number(manualSelectionRef.current?.target)) && Date.now() < Number(manualSelectionRef.current?.until || 0);
+        if (!iframeRef.current || (!resumeLoaded && !manualActiveCheck)) return;
 
         const frameWindow = iframeRef.current.contentWindow;
         if (!frameWindow) return;
@@ -4540,6 +4542,8 @@ export default function LearnPage() {
             return;
         }
 
+        // Update selected index immediately so sidebar highlights the clicked lesson right away
+        setSelectedActivityIndex(safeIndex);
         manualSelectionRef.current = { target: safeIndex, until: Date.now() + 12000 };
         highestSeenActivityIndexRef.current = Math.max(
             Number(highestSeenActivityIndexRef.current || 0),

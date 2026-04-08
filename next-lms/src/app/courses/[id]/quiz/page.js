@@ -39,8 +39,12 @@ export default function QuizPage() {
             const res = await fetch(`/api/quizzes?id=${quizId}`);
             if (res.ok) {
                 const quiz = await res.json();
+                // FIX: Guard — quiz must have questions before starting
+                if (!Array.isArray(quiz.questions) || quiz.questions.length === 0) {
+                    toast.warning('แบบทดสอบนี้ยังไม่มีคำถาม กรุณาติดต่อผู้สอน', LEARNER_TOAST);
+                    return;
+                }
                 setSelectedQuiz(quiz);
-                // Parse questions but remove correctAnswer for display
                 const qs = quiz.questions.map(q => ({
                     ...q,
                     displayOptions: q.options,
@@ -49,8 +53,13 @@ export default function QuizPage() {
                 setAnswers({});
                 setResult(null);
                 setStarted(true);
+            } else {
+                toast.error('ไม่สามารถโหลดแบบทดสอบได้ กรุณาลองอีกครั้ง', LEARNER_TOAST);
             }
-        } catch (e) { console.error(e); }
+        } catch (e) {
+            console.error(e);
+            toast.error('เกิดข้อผิดพลาด กรุณาลองอีกครั้ง', LEARNER_TOAST);
+        }
     };
 
     const handleAnswer = (qIndex, value) => {
@@ -72,11 +81,17 @@ export default function QuizPage() {
                     answers,
                 }),
             });
+            // FIX: Always parse response and show error if not ok
+            const data = await res.json().catch(() => null);
             if (res.ok) {
-                const data = await res.json();
                 setResult(data.attempt);
+            } else {
+                const errMsg = data?.error || 'ไม่สามารถส่งคำตอบได้ กรุณาลองอีกครั้ง';
+                toast.error(errMsg, LEARNER_TOAST);
             }
-        } catch (e) { toast.error(e.message || 'Submit quiz failed', LEARNER_TOAST); }
+        } catch (e) {
+            toast.error(e.message || 'เกิดข้อผิดพลาด กรุณาลองอีกครั้ง', LEARNER_TOAST);
+        }
         setSubmitting(false);
     };
 
@@ -129,7 +144,7 @@ export default function QuizPage() {
                                     </>
                                 ) : (
                                     <>
-                                        <button onClick={() => { setResult(null); setAnswers({}); }}
+                                        <button onClick={() => { setResult(null); setAnswers({}); setStarted(false); }}
                                             className="bg-[#F87A53] hover:bg-[#e06a45] text-white px-6 py-3 rounded-full text-sm font-medium transition-colors">
                                             ลองอีกครั้ง
                                         </button>
@@ -244,4 +259,3 @@ export default function QuizPage() {
         </div>
     );
 }
-
