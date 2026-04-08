@@ -2,70 +2,11 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { requireSession } from '@/lib/server/auth';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
+import { buildAttemptSectionsFromStatements } from '@/lib/server/attempt-report-time';
 
 function toSafeNumber(value, fallback = 0) {
     const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
-}
-
-function parseIsoDurationToSeconds(value) {
-    const raw = String(value || '').trim();
-    if (!raw) return null;
-    if (/^\d+(\.\d+)?$/.test(raw)) return Number(raw);
-
-    const match = raw.match(/^P(?:T(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?)$/i);
-    if (!match) return null;
-
-    const hours = Number(match[1] || 0);
-    const minutes = Number(match[2] || 0);
-    const seconds = Number(match[3] || 0);
-    if (![hours, minutes, seconds].every(Number.isFinite)) return null;
-    return (hours * 3600) + (minutes * 60) + seconds;
-}
-
-function extractDurationSeconds(payload = {}) {
-    const result = payload?.result || {};
-    const ext = result?.extensions || {};
-    const byIso = parseIsoDurationToSeconds(result?.duration);
-    if (Number.isFinite(byIso) && byIso > 0) return byIso;
-
-    const candidates = [
-        ext['https://w3id.org/xapi/video/extensions/time'],
-        ext.time,
-        result.currentTime,
-        ext['https://w3id.org/xapi/video/extensions/length'],
-        ext.length,
-        result.length,
-    ];
-    for (const value of candidates) {
-        const n = Number(value);
-        if (Number.isFinite(n) && n >= 0) return n;
-    }
-    return 0;
-}
-
-function extractActivityTitle(payload = {}, fallback = 'Activity') {
-    return String(
-        payload?.object?.definition?.name?.['en-US']
-        || payload?.object?.definition?.name?.th
-        || payload?.object?.definition?.name?.en
-        || payload?.object?.id
-        || fallback
-    ).trim() || fallback;
-}
-
-function toDisplayDate(value) {
-    const date = new Date(value || Date.now());
-    if (Number.isNaN(date.getTime())) return '-';
-    return date.toLocaleString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false,
-    }).replace(',', ' at');
 }
 
 export async function GET(request) {
@@ -172,33 +113,7 @@ export async function GET(request) {
                 take: 1000,
             });
 
-            const grouped = new Map();
-            for (const row of statements) {
-                const payload = row?.statement_json && typeof row.statement_json === 'object'
-                    ? row.statement_json
-                    : {};
-                const activityTitle = extractActivityTitle(payload);
-                const seconds = extractDurationSeconds(payload);
-                const minutes = Number((seconds / 60).toFixed(2));
-
-                if (!grouped.has(activityTitle)) {
-                    grouped.set(activityTitle, []);
-                }
-                grouped.get(activityTitle).push({
-                    id: Number(row.id),
-                    date: toDisplayDate(payload?.timestamp || row.receivedAt),
-                    duration: Number.isFinite(minutes) ? minutes.toFixed(2) : '0.00',
-                });
-            }
-
-            sections = Array.from(grouped.entries()).map(([title, records]) => ({
-                title,
-                records: records.map((record, index) => ({
-                    id: index + 1,
-                    date: record.date,
-                    duration: record.duration,
-                })),
-            }));
+            sections = buildAttemptSectionsFromStatements(statements);
         }
 
         const selectedCourse = courses.find((course) => Number(course.id) === Number(selectedCourseId)) || null;

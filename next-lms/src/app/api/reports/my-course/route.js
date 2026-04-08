@@ -15,6 +15,7 @@ const ENROLLMENT_STATUS_RANK = {
     FAILED: 1,
     CANCELLED: 0,
 };
+const OVER_TIME_LIMIT_MINUTES = 60;
 
 function toSafeTime(value) {
     const ms = new Date(value || 0).getTime();
@@ -366,7 +367,7 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
         const gapMinutes = hasCurrent
             ? ((toSafeNumber(item.timestampMs, 0) - toSafeNumber(current.lastTimestampMs, 0)) / 60000)
             : 0;
-        const shouldSplitByLongGap = hasCurrent && Number.isFinite(gapMinutes) && gapMinutes > 45;
+        const shouldSplitByLongGap = hasCurrent && Number.isFinite(gapMinutes) && gapMinutes > OVER_TIME_LIMIT_MINUTES;
         const activityChanged =
             hasCurrent &&
             String(item.activityKey || '').trim() !== String(current.activityKey || '').trim();
@@ -379,6 +380,15 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
             && Number.isFinite(gapMinutes)
             && gapMinutes > 2;
         const startsNewSession = !hasCurrent || shouldSplitByLongGap || activityChanged || shouldSplitByEntryVerb;
+
+        if (
+            hasCurrent
+            && Number.isFinite(gapMinutes)
+            && gapMinutes > 0
+        ) {
+            // Keep Java-like duration guard: count timestamp gaps but cap each jump to avoid runaway idle time.
+            current.minutesFromGap += Math.min(gapMinutes, OVER_TIME_LIMIT_MINUTES);
+        }
 
         if (startsNewSession) {
             flushCurrent();
@@ -405,9 +415,6 @@ function buildSessionRowsFromStatements(statements = [], fallbackCourseName = 'A
             continue;
         }
 
-        if (Number.isFinite(gapMinutes) && gapMinutes > 0 && gapMinutes <= 45) {
-            current.minutesFromGap += gapMinutes;
-        }
         current.lastTimestampMs = item.timestampMs;
         current.maxExplicitMinutes = Math.max(
             Math.max(0, toSafeNumber(current.maxExplicitMinutes, 0)),
