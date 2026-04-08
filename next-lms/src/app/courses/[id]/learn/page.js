@@ -1984,17 +1984,25 @@ export default function LearnPage() {
 
         if (frameWindow) {
             try {
-                const runtimeDataReady = getTinCanRuntimeRows().length > 0;
+                const runtimeRows = getTinCanRuntimeRows();
+                const runtimeDataReady = runtimeRows.length > 0;
                 const directIndex = Number(frameWindow.currentPage);
-                if (runtimeDataReady && Number.isFinite(directIndex) && directIndex >= 0) {
+                if (Number.isFinite(directIndex) && directIndex >= 0) {
                     const mapped = mapRuntimePageToActivityIndex(directIndex);
                     if (mapped >= 0) return mapped;
+                    // Fallback for packages that expose currentPage before runtime map is ready.
+                    if (!runtimeDataReady && directIndex < content.activities.length) {
+                        return Math.floor(directIndex);
+                    }
                 }
 
                 const lastSeenIndex = Number(frameWindow.currentState?.lastSeenIndex);
-                if (runtimeDataReady && Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
+                if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
                     const mapped = mapRuntimePageToActivityIndex(lastSeenIndex);
                     if (mapped >= 0) return mapped;
+                    if (!runtimeDataReady && lastSeenIndex < content.activities.length) {
+                        return Math.floor(lastSeenIndex);
+                    }
                 }
             } catch {
                 // Ignore cross-frame access errors and fallback to runtime page matching.
@@ -2186,7 +2194,12 @@ export default function LearnPage() {
                 // Wait until TinCan runtime exposes goToPage; then keep retrying until target page is active.
                 if (typeof goToPage === 'function') {
                     let runtimeTargetIndex = mapActivityIndexToRuntimePage(targetIndex);
-                    if (runtimeTargetIndex < 0) return;
+                    const candidateTargets = Array.from(new Set([
+                        runtimeTargetIndex,
+                        targetIndex,
+                    ].filter((value) => Number.isFinite(Number(value)) && Number(value) >= 0)
+                        .map((value) => Math.floor(Number(value)))));
+                    if (candidateTargets.length === 0) return;
 
                     const roundTripIndex = mapRuntimePageToActivityIndex(runtimeTargetIndex);
 
@@ -2213,35 +2226,37 @@ export default function LearnPage() {
 
                     const current = Number(frameWindow.currentPage);
                     if (!Number.isFinite(current) || current !== runtimeTargetIndex || detectedBefore !== targetIndex) {
-                        // Fallback: disable linear check just for resume jump.
-                        const previousLinear = frameWindow.islinear;
-                        try {
-                            frameWindow.islinear = false;
-                        } catch {
-                            // ignore
-                        }
-                        goToPage(runtimeTargetIndex);
-                        try {
-                            frameWindow.islinear = previousLinear;
-                        } catch {
-                            // ignore
-                        }
-                        if (typeof frameWindow.drawTOC === 'function') {
-                            frameWindow.drawTOC();
-                        }
+                        for (const candidatePage of candidateTargets) {
+                            const previousLinear = frameWindow.islinear;
+                            try {
+                                frameWindow.islinear = false;
+                            } catch {
+                                // ignore
+                            }
+                            goToPage(candidatePage);
+                            try {
+                                frameWindow.islinear = previousLinear;
+                            } catch {
+                                // ignore
+                            }
+                            if (typeof frameWindow.drawTOC === 'function') {
+                                frameWindow.drawTOC();
+                            }
 
-                        const detectedAfter = detectActivityIndexFromIframe();
-                        if (detectedAfter === targetIndex) {
-                            const after = Number(frameWindow.currentPage);
-                            logLessonMapDebug('resume-jump-applied', {
-                                targetIndex,
-                                runtimeTargetIndex,
-                                currentRuntimePage: after,
-                                detectedActivityIndex: detectedAfter,
-                            });
-                            commitResolvedIndex(detectedAfter);
-                            clearInterval(timer);
-                            return;
+                            const detectedAfter = detectActivityIndexFromIframe();
+                            if (detectedAfter === targetIndex) {
+                                const after = Number(frameWindow.currentPage);
+                                logLessonMapDebug('resume-jump-applied', {
+                                    targetIndex,
+                                    runtimeTargetIndex,
+                                    candidatePage,
+                                    currentRuntimePage: after,
+                                    detectedActivityIndex: detectedAfter,
+                                });
+                                commitResolvedIndex(detectedAfter);
+                                clearInterval(timer);
+                                return;
+                            }
                         }
                     }
                 }
@@ -2251,7 +2266,10 @@ export default function LearnPage() {
 
             if (attempts >= maxAttempts) {
                 const detectedFinal = detectActivityIndexFromIframe();
-                if (detectedFinal >= 0) {
+                if (manualActive && detectedFinal !== targetIndex) {
+                    manualSelectionRef.current = { target: null, until: 0 };
+                    toast.warning('ไม่สามารถเปิดบทที่เลือกได้ในขณะนี้ กรุณาลองอีกครั้ง', LEARNER_TOAST);
+                } else if (detectedFinal >= 0) {
                     commitResolvedIndex(detectedFinal);
                 } else if (manualActive) {
                     manualSelectionRef.current = { target: null, until: 0 };
