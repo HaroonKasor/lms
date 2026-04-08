@@ -227,7 +227,8 @@ function LaunchPageContent() {
                 ref={iframeRef}
                 src={resolvedSrc}
                 className="w-screen h-screen border-0"
-                allow="autoplay; fullscreen"
+                allow="autoplay; fullscreen; accelerometer; camera; encrypted-media; gyroscope; picture-in-picture"
+                sandbox="allow-same-origin allow-scripts allow-presentation allow-popups allow-popups-to-escape-sandbox allow-forms allow-downloads"
                 title="Content Launch"
                 onLoad={() => setIsReady(true)}
             />
