@@ -208,6 +208,15 @@ export async function POST(request) {
         }
 
         const questions = quiz.questions || [];
+        
+        // ถ้าไม่มีคำถาม ไม่ให้ส่งผลได้ (ทั้งมี quiz แต่เป็น empty หรือ section นั้นไม่ควรมี quiz)
+        if (questions.length === 0) {
+            return NextResponse.json({ 
+                error: 'This quiz has no questions. Cannot submit empty quiz.',
+                code: 'EMPTY_QUIZ'
+            }, { status: 400 });
+        }
+
         const answerMap = Array.isArray(answers) ? answers : answers || {};
         let correct = 0;
 
@@ -219,7 +228,7 @@ export async function POST(request) {
             }
         });
 
-        const score = questions.length > 0 ? Math.round((correct / questions.length) * 100) : 0;
+        const score = Math.round((correct / questions.length) * 100);
         const passed = score >= toNumber(quiz.passingScore, 70);
         const maxAttempt = await prisma.quizAttempt.aggregate({
             where: { quizId: quiz.id, enrollmentId: enrollment.id },

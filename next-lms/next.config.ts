@@ -5,6 +5,26 @@ const nextConfig: NextConfig = {
   reactCompiler: true,
   async headers() {
     return [
+      // สำหรับหน้า launch (เล่น content/video)
+      {
+        source: '/launch',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=*, microphone=*, gyroscope=*, accelerometer=*' },
+          // ยอมให้ embed จากทุกแหล่ง
+          { key: 'Content-Security-Policy', value: "base-uri 'self'; frame-ancestors *; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://s.ytimg.com; frame-src 'self' https: blob:" },
+        ],
+      },
+      // สำหรับ API
+      {
+        source: '/api/:path*',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+        ],
+      },
+      // สำหรับ routes อื่น ๆ (default)
       {
         source: '/(.*)',
         headers: [
