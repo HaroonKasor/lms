@@ -1232,98 +1232,154 @@ export default function LearnPage() {
         if (!frameWindow) return false;
         if (String(content?.type || '').toLowerCase() !== 'tincan') return false;
         try {
-            const currentState = (frameWindow.currentState && typeof frameWindow.currentState === 'object')
-                ? frameWindow.currentState
-                : {};
-            if (!frameWindow.currentState || typeof frameWindow.currentState !== 'object') {
-                frameWindow.currentState = currentState;
-            }
-
-            const dataIndex = Array.isArray(currentState.dataIndex) ? currentState.dataIndex : [];
-            if (!Array.isArray(currentState.dataIndex)) {
-                currentState.dataIndex = dataIndex;
-            }
-            const treeArray = Array.isArray(frameWindow.treeArray) ? frameWindow.treeArray : [];
-            if (!Array.isArray(frameWindow.treeArray)) {
-                frameWindow.treeArray = treeArray;
-            }
-
-            const rawCurrentPage = Number(frameWindow.currentPage);
-            const maxKnownRows = Math.max(dataIndex.length, treeArray.length);
-            if (maxKnownRows > 0 && Number.isFinite(rawCurrentPage) && rawCurrentPage >= maxKnownRows) {
-                frameWindow.currentPage = maxKnownRows - 1;
-            } else if (maxKnownRows > 0 && Number.isFinite(rawCurrentPage) && rawCurrentPage < 0) {
-                frameWindow.currentPage = 0;
-            }
-
-            const safeCurrentPage = Number.isFinite(Number(frameWindow.currentPage))
-                ? Math.max(0, Math.floor(Number(frameWindow.currentPage)))
-                : 0;
-
-            const ensureRow = (rows, index, fallbackRow = null) => {
-                if (!Array.isArray(rows) || !Number.isFinite(index) || index < 0) return;
-                const fallback = fallbackRow && typeof fallbackRow === 'object' ? fallbackRow : {};
-                if (!rows[index] || typeof rows[index] !== 'object') {
-                    rows[index] = {};
-                }
-                const row = rows[index];
-                const fallbackTitle = String(
-                    fallback?.title
-                    || fallback?.name
-                    || fallback?.topic
-                    || fallback?.label
-                    || fallback?.text
-                    || ''
-                ).trim();
-                if (!String(row?.title || '').trim()) {
-                    row.title = fallbackTitle || `Lesson ${index + 1}`;
-                }
-
-                const totalTime = Number(
-                    row?.totalTime
-                    ?? fallback?.totalTime
-                    ?? fallback?.duration
-                    ?? fallback?.length
-                    ?? 0
-                );
-                row.totalTime = Number.isFinite(totalTime) && totalTime >= 0 ? totalTime : 0;
-                const limitAttempted = Number(
-                    row?.limitattempted
-                    ?? row?.limitAttempted
-                    ?? fallback?.limitattempted
-                    ?? fallback?.limitAttempted
-                    ?? 0
-                );
-                row.limitattempted = Number.isFinite(limitAttempted) ? Math.max(0, Math.floor(limitAttempted)) : 0;
-                const limitQuizzed = Number(
-                    row?.limitquizzed
-                    ?? row?.limitQuizzed
-                    ?? fallback?.limitquizzed
-                    ?? fallback?.limitQuizzed
-                    ?? 0
-                );
-                row.limitquizzed = Number.isFinite(limitQuizzed) ? Math.max(0, Math.floor(limitQuizzed)) : 0;
-
-                if (typeof row.attempted !== 'boolean') row.attempted = Boolean(fallback?.attempted);
-                if (typeof row.completed !== 'boolean') row.completed = Boolean(fallback?.completed);
-                if (typeof row.passed !== 'boolean') row.passed = Boolean(fallback?.passed);
-                if (typeof row.quizzed !== 'boolean') row.quizzed = Boolean(fallback?.quizzed);
+            const windows = [];
+            const pushWindow = (candidate) => {
+                if (!candidate) return;
+                if (windows.includes(candidate)) return;
+                windows.push(candidate);
             };
 
-            const targetRowCount = Math.max(
-                maxKnownRows,
-                Number.isFinite(safeCurrentPage) ? safeCurrentPage + 1 : 0
-            );
-            if (targetRowCount > 0) {
-                for (let index = 0; index < targetRowCount; index += 1) {
-                    const treeRow = Array.isArray(treeArray) ? treeArray[index] : null;
-                    const dataRow = Array.isArray(dataIndex) ? dataIndex[index] : null;
-                    ensureRow(treeArray, index, dataRow);
-                    ensureRow(dataIndex, index, treeRow);
+            pushWindow(frameWindow);
+            try {
+                pushWindow(frameWindow.document?.getElementById('contentFrame')?.contentWindow);
+            } catch {
+                // ignore cross-frame access errors
+            }
+
+            for (const win of windows) {
+                const currentState = (win.currentState && typeof win.currentState === 'object')
+                    ? win.currentState
+                    : {};
+                if (!win.currentState || typeof win.currentState !== 'object') {
+                    win.currentState = currentState;
+                }
+
+                const dataIndex = Array.isArray(currentState.dataIndex) ? currentState.dataIndex : [];
+                if (!Array.isArray(currentState.dataIndex)) {
+                    currentState.dataIndex = dataIndex;
+                }
+                const treeArray = Array.isArray(win.treeArray) ? win.treeArray : [];
+                if (!Array.isArray(win.treeArray)) {
+                    win.treeArray = treeArray;
+                }
+
+                const rawCurrentPage = Number(win.currentPage);
+                const safeCurrentPage = Number.isFinite(rawCurrentPage)
+                    ? Math.max(0, Math.floor(rawCurrentPage))
+                    : 0;
+                if (!Number.isFinite(rawCurrentPage) || rawCurrentPage < 0) {
+                    win.currentPage = safeCurrentPage;
+                }
+                const lastSeenIndex = Number(currentState.lastSeenIndex);
+                if (!Number.isFinite(lastSeenIndex) || lastSeenIndex < 0) {
+                    currentState.lastSeenIndex = safeCurrentPage;
+                }
+
+                const ensureRow = (rows, index, fallbackRow = null) => {
+                    if (!Array.isArray(rows) || !Number.isFinite(index) || index < 0) return;
+                    const fallback = fallbackRow && typeof fallbackRow === 'object' ? fallbackRow : {};
+                    if (!rows[index] || typeof rows[index] !== 'object') {
+                        rows[index] = {};
+                    }
+                    const row = rows[index];
+                    const fallbackTitle = String(
+                        fallback?.title
+                        || fallback?.name
+                        || fallback?.topic
+                        || fallback?.label
+                        || fallback?.text
+                        || ''
+                    ).trim();
+                    if (!String(row?.title || '').trim()) {
+                        row.title = fallbackTitle || `Lesson ${index + 1}`;
+                    }
+
+                    const totalTime = Number(
+                        row?.totalTime
+                        ?? row?.totaltime
+                        ?? fallback?.totalTime
+                        ?? fallback?.totaltime
+                        ?? fallback?.duration
+                        ?? fallback?.length
+                        ?? 0
+                    );
+                    const normalizedTotalTime = Number.isFinite(totalTime) && totalTime >= 0 ? totalTime : 0;
+                    row.totalTime = normalizedTotalTime;
+                    row.totaltime = normalizedTotalTime;
+
+                    const limitAttempted = Number(
+                        row?.limitattempted
+                        ?? row?.limitAttempted
+                        ?? row?.attemptLimit
+                        ?? fallback?.limitattempted
+                        ?? fallback?.limitAttempted
+                        ?? fallback?.attemptLimit
+                        ?? 0
+                    );
+                    const normalizedLimitAttempted = Number.isFinite(limitAttempted)
+                        ? Math.max(0, Math.floor(limitAttempted))
+                        : 0;
+                    row.limitattempted = normalizedLimitAttempted;
+                    row.limitAttempted = normalizedLimitAttempted;
+                    row.attemptLimit = normalizedLimitAttempted;
+
+                    const limitQuizzed = Number(
+                        row?.limitquizzed
+                        ?? row?.limitQuizzed
+                        ?? row?.quizLimit
+                        ?? fallback?.limitquizzed
+                        ?? fallback?.limitQuizzed
+                        ?? fallback?.quizLimit
+                        ?? 0
+                    );
+                    const normalizedLimitQuizzed = Number.isFinite(limitQuizzed)
+                        ? Math.max(0, Math.floor(limitQuizzed))
+                        : 0;
+                    row.limitquizzed = normalizedLimitQuizzed;
+                    row.limitQuizzed = normalizedLimitQuizzed;
+                    row.quizLimit = normalizedLimitQuizzed;
+
+                    if (typeof row.attempted !== 'boolean') row.attempted = Boolean(fallback?.attempted);
+                    if (typeof row.completed !== 'boolean') row.completed = Boolean(fallback?.completed);
+                    if (typeof row.passed !== 'boolean') row.passed = Boolean(fallback?.passed);
+                    if (typeof row.quizzed !== 'boolean') row.quizzed = Boolean(fallback?.quizzed);
+                };
+
+                const maxKnownRows = Math.max(dataIndex.length, treeArray.length);
+                const targetRowCount = Math.max(
+                    maxKnownRows,
+                    safeCurrentPage + 1,
+                    // Some legacy runtimes index dataIndex by currentPage in 1-based mode.
+                    safeCurrentPage + 2
+                );
+                if (targetRowCount > 0) {
+                    for (let index = 0; index < targetRowCount; index += 1) {
+                        const treeRow = Array.isArray(treeArray) ? treeArray[index] : null;
+                        const dataRow = Array.isArray(dataIndex) ? dataIndex[index] : null;
+                        ensureRow(treeArray, index, dataRow);
+                        ensureRow(dataIndex, index, treeRow);
+                    }
+                }
+
+                currentState.dataIndex = dataIndex;
+                win.treeArray = treeArray;
+            }
+
+            // Share canonical state from outer wrapper to inner runtime window when available.
+            if (windows.length >= 2) {
+                const canonical = windows[0];
+                const follower = windows[1];
+                try {
+                    if (canonical?.currentState && typeof canonical.currentState === 'object') {
+                        follower.currentState = canonical.currentState;
+                    }
+                    if (Array.isArray(canonical?.treeArray)) {
+                        follower.treeArray = canonical.treeArray;
+                    }
+                } catch {
+                    // ignore assignment failures
                 }
             }
-            currentState.dataIndex = dataIndex;
-            frameWindow.treeArray = treeArray;
             return true;
         } catch {
             return false;
@@ -2438,31 +2494,15 @@ export default function LearnPage() {
             : -1;
 
         // Merge server/local resume safely:
-        // - Never regress to an earlier chapter.
-        // - Avoid suspicious stale local jump that is too far ahead.
+        // prefer the furthest locally-known lesson to avoid stale server row resetting learner to chapter 1.
         let merged = idxFromCurrent >= 0 ? idxFromCurrent : -1;
-        if (idxFromSaved >= 0) {
-            if (merged < 0) {
-                merged = idxFromSaved;
-            } else if (idxFromSaved >= merged) {
-                const staleAhead = !isCourseCompleted && idxFromSaved > merged + 2;
-                if (!staleAhead) {
-                    merged = idxFromSaved;
-                }
-            }
-        }
-        if (Number.isFinite(idxFromSavedPath) && idxFromSavedPath >= 0) {
-            if (merged < 0) {
-                merged = idxFromSavedPath;
-            } else if (idxFromSavedPath >= merged) {
-                const staleAheadByPath = !isCourseCompleted && idxFromSavedPath > merged + 2;
-                if (!staleAheadByPath) {
-                    merged = idxFromSavedPath;
-                }
-            }
-        }
-        if (idxFromHighestSeen >= 0) {
-            merged = Math.max(merged, idxFromHighestSeen);
+        const bestLocal = Math.max(
+            Number.isFinite(idxFromSaved) ? idxFromSaved : -1,
+            Number.isFinite(idxFromSavedPath) ? idxFromSavedPath : -1,
+            Number.isFinite(idxFromHighestSeen) ? idxFromHighestSeen : -1
+        );
+        if (bestLocal >= 0) {
+            merged = Math.max(merged, bestLocal);
         }
 
         idx = Math.max(0, merged);
@@ -2504,18 +2544,27 @@ export default function LearnPage() {
         completionLockRef.current = false;
         resumeGuardUntilRef.current = 0;
         manualSelectionRef.current = { target: null, until: 0 };
-        highestSeenActivityIndexRef.current = 0;
+        const persistedResumeIndex = content.type === 'tincan'
+            ? readTincanResumeIndex()
+            : null;
+        const safePersistedResumeIndex = Number.isFinite(Number(persistedResumeIndex)) && Number(persistedResumeIndex) >= 0
+            ? Math.floor(Number(persistedResumeIndex))
+            : 0;
+        highestSeenActivityIndexRef.current = safePersistedResumeIndex;
         trackedStudySecondsRef.current = 0;
         trackedStudyTickAtRef.current = 0;
         lastUserInteractionAtRef.current = Date.now();
         if (content.type === 'tincan' && content.activities?.length > 0) {
-            setSelectedActivityIndex(0);
+            const maxIndex = Math.max(0, content.activities.length - 1);
+            const initialResumeIndex = Math.max(0, Math.min(maxIndex, safePersistedResumeIndex));
+            setSelectedActivityIndex(initialResumeIndex);
+            resumeGuardUntilRef.current = initialResumeIndex > 0 ? Date.now() + 10000 : 0;
             // Always start from TinCan wrapper page, not activity launch page.
             setIframeSrc(resolvePlayerSrc(content.entryPoint));
             return;
         }
         setIframeSrc(resolvePlayerSrc(content.entryPoint));
-    }, [content, resolvePlayerSrc, clearIframeInteractionTracking]);
+    }, [content, resolvePlayerSrc, clearIframeInteractionTracking, readTincanResumeIndex]);
 
     useEffect(() => {
         if (!content || content.type !== 'tincan' || !resumeLoaded) return;
@@ -3999,23 +4048,38 @@ export default function LearnPage() {
         // Notify opener tabs (e.g. /my-learning) to refresh data automatically.
         notifyLearningRefresh();
 
-        try {
-            window.close();
-        } catch {
-            // ignore
+        const canAttemptClose = Boolean(window.opener && !window.opener.closed);
+        if (canAttemptClose) {
+            try {
+                window.close();
+            } catch {
+                // ignore
+            }
         }
 
         // If browser blocks close (common for manually opened tabs), redirect back.
         setTimeout(() => {
-            window.location.href = fallbackUrl;
+            if (!window.closed) {
+                window.location.href = fallbackUrl;
+            }
         }, 120);
     }, [content, getPrimaryActivityResumePath, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, notifyLearningRefresh, persistTincanResumeIndex, persistTincanResumePath, persistWebResumeIndex, persistWebStatusSnapshot, computeTinCanProgress, status, tinCanActivityStatus, isTinCanLessonPassed, canFinalizeTinCanCompletion, canFinalizeLegacyWebCompletion, detectActivityIndexFromIframe, detectLegacyWebPageIndex, getLegacyWebPageTotal, readTincanResumeIndex, readWebResumeIndex, selectedActivityIndex, getCurrentWebStatusSnapshot, applyWebStatusToRuntime, syncProgressWithTrackedTime, mapRuntimePageToActivityIndex, requireAssessmentPass, hasAssessmentFailureSignals, syncTinCanActivityStatusFromIframe]);
 
     const bindIframeCloseHandler = useCallback(() => {
         const frameWindow = iframeRef.current?.contentWindow;
         if (!frameWindow) return;
+        const bindClose = (win) => {
+            if (!win) return;
+            try {
+                win.close = handleCloseLaunch;
+            } catch {
+                // ignore
+            }
+        };
         try {
-            frameWindow.close = handleCloseLaunch;
+            bindClose(frameWindow);
+            const innerWindow = frameWindow.document?.getElementById('contentFrame')?.contentWindow;
+            bindClose(innerWindow);
         } catch {
             // ignore
         }
