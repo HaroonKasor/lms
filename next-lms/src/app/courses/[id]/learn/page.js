@@ -1228,6 +1228,80 @@ export default function LearnPage() {
         return windows;
     }, []);
 
+    const hardenTinCanRuntimeWindow = useCallback((frameWindow) => {
+        if (!frameWindow) return false;
+        if (String(content?.type || '').toLowerCase() !== 'tincan') return false;
+        try {
+            const currentState = (frameWindow.currentState && typeof frameWindow.currentState === 'object')
+                ? frameWindow.currentState
+                : {};
+            if (!frameWindow.currentState || typeof frameWindow.currentState !== 'object') {
+                frameWindow.currentState = currentState;
+            }
+
+            const dataIndex = Array.isArray(currentState.dataIndex) ? currentState.dataIndex : [];
+            if (!Array.isArray(currentState.dataIndex)) {
+                currentState.dataIndex = dataIndex;
+            }
+            const treeArray = Array.isArray(frameWindow.treeArray) ? frameWindow.treeArray : [];
+
+            const rawCurrentPage = Number(frameWindow.currentPage);
+            const maxKnownRows = Math.max(dataIndex.length, treeArray.length);
+            if (maxKnownRows > 0 && Number.isFinite(rawCurrentPage) && rawCurrentPage >= maxKnownRows) {
+                frameWindow.currentPage = maxKnownRows - 1;
+            } else if (maxKnownRows > 0 && Number.isFinite(rawCurrentPage) && rawCurrentPage < 0) {
+                frameWindow.currentPage = 0;
+            }
+
+            const safeCurrentPage = Number.isFinite(Number(frameWindow.currentPage))
+                ? Math.max(0, Math.floor(Number(frameWindow.currentPage)))
+                : 0;
+
+            const ensureRow = (rows, index, fallbackRow = null) => {
+                if (!Array.isArray(rows) || !Number.isFinite(index) || index < 0) return;
+                const fallback = fallbackRow && typeof fallbackRow === 'object' ? fallbackRow : {};
+                if (!rows[index] || typeof rows[index] !== 'object') {
+                    rows[index] = {};
+                }
+                const row = rows[index];
+                const fallbackTitle = String(
+                    fallback?.title
+                    || fallback?.name
+                    || fallback?.topic
+                    || fallback?.label
+                    || fallback?.text
+                    || ''
+                ).trim();
+                if (!String(row?.title || '').trim()) {
+                    row.title = fallbackTitle || `Lesson ${index + 1}`;
+                }
+
+                const totalTime = Number(
+                    row?.totalTime
+                    ?? fallback?.totalTime
+                    ?? fallback?.duration
+                    ?? fallback?.length
+                    ?? 0
+                );
+                row.totalTime = Number.isFinite(totalTime) && totalTime >= 0 ? totalTime : 0;
+
+                if (typeof row.attempted !== 'boolean') row.attempted = Boolean(fallback?.attempted);
+                if (typeof row.completed !== 'boolean') row.completed = Boolean(fallback?.completed);
+                if (typeof row.passed !== 'boolean') row.passed = Boolean(fallback?.passed);
+                if (typeof row.quizzed !== 'boolean') row.quizzed = Boolean(fallback?.quizzed);
+            };
+
+            const treeRow = Array.isArray(treeArray) ? treeArray[safeCurrentPage] : null;
+            const dataRow = Array.isArray(dataIndex) ? dataIndex[safeCurrentPage] : null;
+            ensureRow(treeArray, safeCurrentPage, dataRow);
+            ensureRow(dataIndex, safeCurrentPage, treeRow);
+            currentState.dataIndex = dataIndex;
+            return true;
+        } catch {
+            return false;
+        }
+    }, [content?.type]);
+
     const detectLegacyWebPageIndex = useCallback(() => {
         const windows = getLegacyWebRuntimeWindows();
         for (const win of windows) {
@@ -2055,6 +2129,7 @@ export default function LearnPage() {
 
         try {
             const frameWindow = iframeRef.current?.contentWindow;
+            hardenTinCanRuntimeWindow(frameWindow);
             const dataIndex = frameWindow?.currentState?.dataIndex;
             if (!Array.isArray(dataIndex)) {
                 return Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
@@ -2153,7 +2228,7 @@ export default function LearnPage() {
             // ignore iframe state read errors
             return Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
         }
-    }, [content, isAssessmentActivity, getAssessmentPassingScore, getTinCanRuntimeRows, findRuntimePageIndexForActivity, findTinCanStatusRowForActivity]);
+    }, [content, isAssessmentActivity, getAssessmentPassingScore, getTinCanRuntimeRows, findRuntimePageIndexForActivity, findTinCanStatusRowForActivity, hardenTinCanRuntimeWindow]);
 
     const applyTincanResumeToIframe = useCallback(() => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
@@ -2195,6 +2270,7 @@ export default function LearnPage() {
         const timer = setInterval(() => {
             attempts += 1;
             try {
+                hardenTinCanRuntimeWindow(frameWindow);
                 const goToPage = frameWindow.goToPage;
                 // Wait until TinCan runtime exposes goToPage; then keep retrying until target page is active.
                 if (typeof goToPage === 'function') {
@@ -2282,7 +2358,7 @@ export default function LearnPage() {
                 clearInterval(timer);
             }
         }, 250);
-    }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug, detectActivityIndexFromIframe, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath]);
+    }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug, detectActivityIndexFromIframe, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, hardenTinCanRuntimeWindow]);
 
     const restoreTincanPositionFromProgress = useCallback((entry) => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
@@ -3928,6 +4004,7 @@ export default function LearnPage() {
                 const frameWindow = iframeRef.current?.contentWindow;
                 const frameDoc = frameWindow?.document;
                 if (!frameDoc) return;
+                hardenTinCanRuntimeWindow(frameWindow);
 
                 const menuBar = frameDoc.getElementById('menuBar');
                 const menuToc = frameDoc.getElementById('menuTOC');
@@ -4076,7 +4153,7 @@ export default function LearnPage() {
                 clearInterval(timer);
             }
         }, 250);
-    }, [content?.type]);
+    }, [content?.type, hardenTinCanRuntimeWindow]);
 
     const forceTinCanReflow = useCallback(() => {
         if (!iframeRef.current) return;
@@ -4094,6 +4171,7 @@ export default function LearnPage() {
             try {
                 const frameWindow = iframeRef.current?.contentWindow;
                 if (frameWindow) {
+                    hardenTinCanRuntimeWindow(frameWindow);
                     // Let package script recalc, then immediately override with our full-bleed chrome.
                     if (typeof frameWindow.updateOC === 'function') frameWindow.updateOC();
                     if (typeof frameWindow.SetupIFrame === 'function') frameWindow.SetupIFrame();
@@ -4119,7 +4197,7 @@ export default function LearnPage() {
         };
 
         tick();
-    }, [content?.type, applyTinCanWrapperChrome]);
+    }, [content?.type, applyTinCanWrapperChrome, hardenTinCanRuntimeWindow]);
 
     const queuePlayerReflow = useCallback(() => {
         const pending = Array.isArray(playerReflowTimeoutsRef.current)
@@ -4360,7 +4438,10 @@ export default function LearnPage() {
             targetActivityTitle: String(activities?.[safeIndex]?.name || activities?.[safeIndex]?.title || ''),
         });
         if (chapterLockEnabled && safeIndex > maxUnlocked) {
-            toast.warning('กรุณาเรียนบทก่อนหน้าให้ผ่านก่อน จึงจะไปบทถัดไปได้', LEARNER_TOAST);
+            toast.warning(
+                'กรุณาเรียนบทก่อนหน้าให้ผ่านก่อน จึงจะไปบทถัดไปได้',
+                { ...LEARNER_TOAST, toastId: 'learner-tincan-lock-warning' }
+            );
             return;
         }
 
@@ -4421,7 +4502,10 @@ export default function LearnPage() {
         if (chapterLockEnabled) {
             const maxUnlocked = getMaxUnlockedWebPageIndex();
             if (safeIndex > maxUnlocked) {
-                toast.warning('กรุณาเรียนหน้าก่อนหน้าให้ผ่านก่อน จึงจะไปหน้าถัดไปได้', LEARNER_TOAST);
+                toast.warning(
+                    'กรุณาเรียนหน้าก่อนหน้าให้ผ่านก่อน จึงจะไปหน้าถัดไปได้',
+                    { ...LEARNER_TOAST, toastId: 'learner-web-lock-warning' }
+                );
                 return;
             }
         }
@@ -4691,6 +4775,9 @@ export default function LearnPage() {
                         : (resumePositionIndex >= 0 ? resumePositionIndex : 0)
                 )
             );
+        const maxUnlockedLessonIndex = isTinCanContent
+            ? Math.max(0, Math.min(lessonItems.length - 1, getMaxUnlockedActivityIndex()))
+            : Math.max(0, Math.min(lessonItems.length - 1, getMaxUnlockedWebPageIndex()));
         const inferredCompletedThrough = isTinCanContent
             ? (normalizedStatus === 'COMPLETED'
                 ? lessonItems.length - 1
@@ -4721,6 +4808,8 @@ export default function LearnPage() {
             if (completedFlags[index]) return 'completed';
             if (isTinCanContent) {
                 const st = tinCanActivityStatus[index];
+                const futureLocked = chapterLockEnabled && index > maxUnlockedLessonIndex;
+                if (futureLocked) return 'not_started';
                 if (st?.attempted || st?.quizzed) return 'attempted';
             } else {
                 const st = webStatusSnapshot[index];
