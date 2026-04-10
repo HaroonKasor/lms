@@ -5013,7 +5013,8 @@ export default function LearnPage() {
                                     transform: 'translateZ(0)',
                                     willChange: 'transform,width,opacity',
                                 }}
-                                allow="fullscreen; autoplay"
+                                allow="fullscreen; autoplay; camera; microphone; geolocation"
+                                sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation"
                                 title={content.title}
                                 onLoad={() => {
                                     setIsTinCanFrameReady(false);
@@ -5115,7 +5116,8 @@ export default function LearnPage() {
                                             transform: 'translateZ(0)',
                                             willChange: 'transform,width,opacity',
                                         }}
-                                        allow="fullscreen"
+                                        allow="fullscreen; autoplay; camera; microphone; geolocation"
+                                        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation"
                                         title={content.title}
                                         onLoad={() => {
                                             setIsTinCanFrameReady(false);
