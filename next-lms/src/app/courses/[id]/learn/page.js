@@ -5003,6 +5003,7 @@ export default function LearnPage() {
                         />
                     ) : (
                         <>
+                            {console.log('[DEBUG] iframe src:', iframeSrc || resolvePlayerSrc(content.entryPoint), 'entryPoint:', content.entryPoint, 'type:', content.type)}
                             <iframe
                                 key={iframeRenderKey}
                                 ref={iframeRef}
@@ -5106,6 +5107,7 @@ export default function LearnPage() {
                                 />
                             ) : content.type === 'tincan' || content.type === 'web' ? (
                                 <>
+                                    {console.log('[DEBUG] iframe(non-launch) src:', iframeSrc || resolvePlayerSrc(content.entryPoint), 'entryPoint:', content.entryPoint, 'type:', content.type)}
                                     <iframe
                                         key={iframeRenderKey}
                                         ref={iframeRef}
