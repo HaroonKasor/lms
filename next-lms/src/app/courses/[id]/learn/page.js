@@ -337,6 +337,8 @@ export default function LearnPage() {
     const trackedStudyTickAtRef = useRef(0);
     const lastUserInteractionAtRef = useRef(0);
     const iframeInteractionCleanupRef = useRef(null);
+    const iframeDeferredSyncTimeoutRef = useRef(null);
+    const innerFrameLoadCleanupRef = useRef(null);
     const playerReflowTimeoutsRef = useRef([]);
     const reflowSessionRef = useRef(0);
     const completionLockRef = useRef(false);
@@ -365,6 +367,28 @@ export default function LearnPage() {
             // ignore cleanup errors
         } finally {
             iframeInteractionCleanupRef.current = null;
+        }
+    }, []);
+    const clearInnerFrameLoadBinding = useCallback(() => {
+        try {
+            if (typeof innerFrameLoadCleanupRef.current === 'function') {
+                innerFrameLoadCleanupRef.current();
+            }
+        } catch {
+            // ignore cleanup errors
+        } finally {
+            innerFrameLoadCleanupRef.current = null;
+        }
+    }, []);
+    const clearIframeDeferredSync = useCallback(() => {
+        try {
+            if (iframeDeferredSyncTimeoutRef.current) {
+                clearTimeout(iframeDeferredSyncTimeoutRef.current);
+            }
+        } catch {
+            // ignore cleanup errors
+        } finally {
+            iframeDeferredSyncTimeoutRef.current = null;
         }
     }, []);
 
@@ -399,8 +423,10 @@ export default function LearnPage() {
             pending.forEach((timer) => clearTimeout(timer));
             playerReflowTimeoutsRef.current = [];
             clearIframeInteractionTracking();
+            clearInnerFrameLoadBinding();
+            clearIframeDeferredSync();
         };
-    }, [clearIframeInteractionTracking]);
+    }, [clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync]);
 
     useEffect(() => {
         setCurrentUser(getUser());
@@ -1320,6 +1346,41 @@ export default function LearnPage() {
                 if (!Array.isArray(win.treeArray)) {
                     win.treeArray = treeArray;
                 }
+                const ensureIndexedStateContainers = (index) => {
+                    if (!Number.isFinite(Number(index)) || Number(index) < 0) return;
+                    const safeIndex = Math.floor(Number(index));
+                    const slots = [Math.max(0, safeIndex - 1), safeIndex, safeIndex + 1];
+                    const containerKeys = [
+                        'pageScore',
+                        'pageScores',
+                        'scoreByPage',
+                        'questionScore',
+                        'questionScores',
+                        'quizScore',
+                        'quizScores',
+                        'resultByPage',
+                        'statusByPage',
+                        'pageStatus',
+                        'attemptByPage',
+                        'attemptedByPage',
+                    ];
+
+                    for (const holder of [currentState, win]) {
+                        if (!holder || typeof holder !== 'object') continue;
+                        for (const key of containerKeys) {
+                            if (!Array.isArray(holder[key])) {
+                                const existing = holder[key];
+                                holder[key] = Array.isArray(existing) ? existing : [];
+                            }
+                            const bucket = holder[key];
+                            for (const slot of slots) {
+                                if (!bucket[slot] || typeof bucket[slot] !== 'object') {
+                                    bucket[slot] = {};
+                                }
+                            }
+                        }
+                    }
+                };
 
                 const rawCurrentPage = Number(win.currentPage);
                 const safeCurrentPage = Number.isFinite(rawCurrentPage)
@@ -1418,13 +1479,17 @@ export default function LearnPage() {
                         ensureRow(dataIndex, index, treeRow);
                     }
                 }
+                ensureIndexedStateContainers(safeCurrentPage);
+                ensureIndexedStateContainers(safeCurrentPage + 1);
 
                 currentState.dataIndex = dataIndex;
                 win.treeArray = treeArray;
 
                 const needsRuntimeHeal = (error) => {
                     const message = String(error?.message || '').toLowerCase();
-                    if (!message.includes('cannot read properties of undefined')) return false;
+                    const hasReadUndefined = message.includes('cannot read properties of undefined');
+                    const hasSetUndefined = message.includes('cannot set properties of undefined');
+                    if (!hasReadUndefined && !hasSetUndefined) return false;
                     return (
                         message.includes('limitattempted')
                         || message.includes('title')
@@ -1432,6 +1497,7 @@ export default function LearnPage() {
                         || message.includes('passed')
                         || message.includes('attempted')
                         || message.includes('quizzed')
+                        || message.includes("setting '0'")
                     );
                 };
 
@@ -1445,6 +1511,7 @@ export default function LearnPage() {
                         const dataRow = Array.isArray(dataIndex) ? dataIndex[idx] : null;
                         ensureRow(treeArray, idx, dataRow);
                         ensureRow(dataIndex, idx, treeRow);
+                        ensureIndexedStateContainers(idx);
                     }
                 };
 
@@ -1480,6 +1547,11 @@ export default function LearnPage() {
                 wrapRuntimeFunctionSafely('updateStatus');
                 wrapRuntimeFunctionSafely('SetupIFrame');
                 wrapRuntimeFunctionSafely('setContentStatusPassed');
+                wrapRuntimeFunctionSafely('setCurrentPageScore');
+                wrapRuntimeFunctionSafely('setCurrentPageStatus');
+                wrapRuntimeFunctionSafely('setCurrentPageAttempted');
+                wrapRuntimeFunctionSafely('displayMsg');
+                wrapRuntimeFunctionSafely('checkAnswer');
             }
 
             // Share canonical state from outer wrapper to inner runtime window when available.
@@ -2664,6 +2736,8 @@ export default function LearnPage() {
     useEffect(() => {
         if (!content) return;
         clearIframeInteractionTracking();
+        clearInnerFrameLoadBinding();
+        clearIframeDeferredSync();
         setResumeLoaded(false);
         setIsTinCanFrameReady(false);
         setProgress(0);
@@ -2699,7 +2773,7 @@ export default function LearnPage() {
             return;
         }
         setIframeSrc(resolvePlayerSrc(content.entryPoint));
-    }, [content, resolvePlayerSrc, clearIframeInteractionTracking, readTincanResumeIndex]);
+    }, [content, resolvePlayerSrc, clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync, readTincanResumeIndex]);
 
     useEffect(() => {
         if (!content || content.type !== 'tincan' || !resumeLoaded) return;
@@ -4434,6 +4508,58 @@ export default function LearnPage() {
 
         tick();
     }, [content?.type, applyTinCanWrapperChrome, hardenTinCanRuntimeWindow]);
+    const runIframeRuntimeSync = useCallback(() => {
+        const frameWindow = iframeRef.current?.contentWindow;
+        hardenTinCanRuntimeWindow(frameWindow);
+        applyTinCanWrapperChrome();
+        bindIframeCloseHandler();
+        bindIframeInteractionTracking();
+        applyTincanResumeToIframe();
+        applyLegacyWebResumeToIframe();
+        syncTinCanActivityStatusFromIframe();
+        syncTincanPositionFromIframe();
+    }, [
+        hardenTinCanRuntimeWindow,
+        applyTinCanWrapperChrome,
+        bindIframeCloseHandler,
+        bindIframeInteractionTracking,
+        applyTincanResumeToIframe,
+        applyLegacyWebResumeToIframe,
+        syncTinCanActivityStatusFromIframe,
+        syncTincanPositionFromIframe,
+    ]);
+    const scheduleDeferredIframeRuntimeSync = useCallback(() => {
+        clearIframeDeferredSync();
+        iframeDeferredSyncTimeoutRef.current = setTimeout(() => {
+            iframeDeferredSyncTimeoutRef.current = null;
+            runIframeRuntimeSync();
+            forceTinCanReflow();
+        }, 1200);
+    }, [clearIframeDeferredSync, runIframeRuntimeSync, forceTinCanReflow]);
+    const bindInnerContentFrameLoadHandler = useCallback(() => {
+        clearInnerFrameLoadBinding();
+        try {
+            const frameWindow = iframeRef.current?.contentWindow;
+            const frameDoc = frameWindow?.document;
+            const contentFrameEl = frameDoc?.getElementById('contentFrame');
+            if (!contentFrameEl || typeof contentFrameEl.addEventListener !== 'function') return;
+
+            const onInnerLoad = () => {
+                runIframeRuntimeSync();
+                scheduleDeferredIframeRuntimeSync();
+            };
+            contentFrameEl.addEventListener('load', onInnerLoad);
+            innerFrameLoadCleanupRef.current = () => {
+                try {
+                    contentFrameEl.removeEventListener('load', onInnerLoad);
+                } catch {
+                    // ignore cleanup errors
+                }
+            };
+        } catch {
+            // ignore cross-frame access errors
+        }
+    }, [clearInnerFrameLoadBinding, runIframeRuntimeSync, scheduleDeferredIframeRuntimeSync]);
 
     const queuePlayerReflow = useCallback(() => {
         const pending = Array.isArray(playerReflowTimeoutsRef.current)
@@ -5167,31 +5293,17 @@ export default function LearnPage() {
                                     willChange: 'transform,width,opacity',
                                 }}
                                 allow="fullscreen; autoplay; camera; microphone; geolocation"
-                                sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation"
+                                sandbox="allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation"
                                 title={content.title}
                                 onLoad={() => {
                                     setIsTinCanFrameReady(false);
-                                    const frameWindow = iframeRef.current?.contentWindow;
-                                    hardenTinCanRuntimeWindow(frameWindow);
                                     if (frameRevealTimeoutRef.current) clearTimeout(frameRevealTimeoutRef.current);
                                     frameRevealTimeoutRef.current = setTimeout(() => {
                                         setIsTinCanFrameReady(true);
                                     }, 1800);
-
-                                    applyTinCanWrapperChrome();
-                                    bindIframeCloseHandler();
-                                    bindIframeInteractionTracking();
-                                    applyTincanResumeToIframe();
-                                    applyLegacyWebResumeToIframe();
-                                    syncTinCanActivityStatusFromIframe();
-                                    syncTincanPositionFromIframe();
-                                    setTimeout(() => {
-                                        hardenTinCanRuntimeWindow(iframeRef.current?.contentWindow);
-                                        applyLegacyWebResumeToIframe();
-                                        syncTinCanActivityStatusFromIframe();
-                                        syncTincanPositionFromIframe();
-                                        forceTinCanReflow();
-                                    }, 1200);
+                                    bindInnerContentFrameLoadHandler();
+                                    runIframeRuntimeSync();
+                                    scheduleDeferredIframeRuntimeSync();
                                 }}
                             />
                             {content.type === 'tincan' && !isTinCanFrameReady && (
@@ -5272,7 +5384,7 @@ export default function LearnPage() {
                                             willChange: 'transform,width,opacity',
                                         }}
                                         allow="fullscreen; autoplay; camera; microphone; geolocation"
-                                        sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation"
+                                        sandbox="allow-same-origin allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-presentation allow-top-navigation-by-user-activation"
                                         title={content.title}
                                         onLoad={() => {
                                             setIsTinCanFrameReady(false);
@@ -5280,20 +5392,9 @@ export default function LearnPage() {
                                             frameRevealTimeoutRef.current = setTimeout(() => {
                                                 setIsTinCanFrameReady(true);
                                             }, 1800);
-
-                                            applyTinCanWrapperChrome();
-                                            bindIframeCloseHandler();
-                                            bindIframeInteractionTracking();
-                                            applyTincanResumeToIframe();
-                                            applyLegacyWebResumeToIframe();
-                                            syncTinCanActivityStatusFromIframe();
-                                            syncTincanPositionFromIframe();
-                                            setTimeout(() => {
-                                                applyLegacyWebResumeToIframe();
-                                                syncTinCanActivityStatusFromIframe();
-                                                syncTincanPositionFromIframe();
-                                                forceTinCanReflow();
-                                            }, 1200);
+                                            bindInnerContentFrameLoadHandler();
+                                            runIframeRuntimeSync();
+                                            scheduleDeferredIframeRuntimeSync();
                                         }}
                                     />
                                     {content.type === 'tincan' && !isTinCanFrameReady && (
