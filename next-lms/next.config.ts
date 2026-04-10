@@ -16,6 +16,16 @@ const nextConfig: NextConfig = {
           { key: 'Content-Security-Policy', value: "base-uri 'self'; frame-ancestors *; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.youtube.com https://s.ytimg.com; frame-src 'self' https: blob:" },
         ],
       },
+      // สำหรับหน้า learn (แบบฝึก/exercise)
+      {
+        source: '/courses/:id/learn',
+        headers: [
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=*, microphone=*, gyroscope=*, accelerometer=*' },
+          { key: 'Content-Security-Policy', value: "base-uri 'self'; frame-ancestors 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; frame-src 'self' https: blob:" },
+        ],
+      },
       // สำหรับ API
       {
         source: '/api/:path*',
