@@ -111,7 +111,7 @@ export default function ChatPanel({ isOpen, onClose }) {
 
     return (
         <div
-            className="fixed top-[80px] right-0 z-[90] h-[calc(100vh-80px)] w-[320px] bg-white border-l border-gray-200 flex flex-col shadow-2xl"
+            className="fixed top-[80px] right-0 z-[90] h-[calc(100vh-80px)] w-[88vw] max-w-[340px] sm:w-[320px] bg-white border-l border-gray-200 flex flex-col shadow-2xl"
             style={{ animation: "chatPanelSlideIn 0.25s ease-out" }}
         >
             <style>{`

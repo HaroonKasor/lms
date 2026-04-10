@@ -337,7 +337,7 @@ export default function AdminLmsDashboard({ children }) {
     }, [pathname]);
 
     const renderSidebar = () => (
-        <aside className="flex flex-col items-start px-[16px] pt-[16px] pb-[24px] gap-[8px] w-[190px] min-h-[480px] h-fit bg-[#FFFFFF] rounded-[16px] shadow-sm shrink-0 border border-[#D1E3FB]">
+        <aside className="flex flex-col items-start px-[16px] pt-[16px] pb-[24px] gap-[8px] w-full md:w-[190px] max-w-[280px] min-h-[480px] h-fit bg-[#FFFFFF] rounded-[16px] shadow-sm shrink-0 border border-[#D1E3FB]">
             {menuItems.map((item, idx) => {
                 const isChildActive = item.subItems?.some((sub) => isSubItemActive(sub));
                 const matchPrefix = String(item?.matchPrefix || item?.path || '').trim();
@@ -416,7 +416,7 @@ export default function AdminLmsDashboard({ children }) {
 
             {/* Background Gradient (simulating the 1428px height from design) */}
             <div
-                className="absolute top-[80px] w-[1920px] left-1/2 -translate-x-1/2 h-[1428px] pointer-events-none"
+                className="absolute inset-x-0 top-[80px] bottom-0 pointer-events-none"
                 style={{
                     background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)',
                     boxShadow: '0px 1px 2px rgba(0, 0, 0, 0.3), 0px 1px 3px 1px rgba(0, 0, 0, 0.15)',
@@ -653,6 +653,13 @@ export default function AdminLmsDashboard({ children }) {
 
                     .admin-dashboard-main .overflow-x-auto > table {
                         min-width: 680px !important;
+                    }
+                }
+
+                @media (max-width: 1023px) {
+                    .admin-dashboard-main {
+                        padding-left: 0 !important;
+                        padding-right: 0 !important;
                     }
                 }
             `}</style>

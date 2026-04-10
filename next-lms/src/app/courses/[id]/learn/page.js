@@ -296,7 +296,7 @@ export default function LearnPage() {
     const [isTinCanFrameReady, setIsTinCanFrameReady] = useState(false);
     const [tinCanActivityStatus, setTinCanActivityStatus] = useState([]);
     const [progressUserId, setProgressUserId] = useState('anonymous');
-    const [isLearningSidebarOpen, setIsLearningSidebarOpen] = useState(true);
+    const [isLearningSidebarOpen, setIsLearningSidebarOpen] = useState(false);
     const [isLearningAiOpen, setIsLearningAiOpen] = useState(false);
     const packageLinearEnabled = useMemo(() => {
         const raw = content?.packageConfig?.isLinear;
@@ -370,6 +370,13 @@ export default function LearnPage() {
 
     useEffect(() => {
         setMounted(true);
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        if (window.innerWidth >= 1024) {
+            setIsLearningSidebarOpen(true);
+        }
     }, []);
 
     // Learning player should always start with global chatbot closed.
@@ -465,23 +472,31 @@ export default function LearnPage() {
         if (routeKey) return routeKey;
         return String(resolvedContentId || '').trim();
     }, [course?.id, routeId, resolvedContentId]);
+    const effectiveSectionId = useMemo(() => {
+        const active = Number(activeSectionId);
+        if (Number.isInteger(active) && active > 0) return active;
+        const requested = Number(requestedSectionId);
+        if (Number.isInteger(requested) && requested > 0) return requested;
+        return null;
+    }, [activeSectionId, requestedSectionId]);
     const iframeRenderKey = useMemo(() => {
         const contentKey = String(content?.id || routeId || 'unknown');
-        const sectionKey = Number.isInteger(Number(activeSectionId)) && Number(activeSectionId) > 0
-            ? String(Number(activeSectionId))
+        const sectionKey = Number.isInteger(Number(effectiveSectionId)) && Number(effectiveSectionId) > 0
+            ? String(Number(effectiveSectionId))
             : 'default';
         return `${contentKey}:${sectionKey}:${isLaunchMode ? 'launch' : 'default'}`;
-    }, [content?.id, routeId, activeSectionId, isLaunchMode]);
-    const scopedStorageSuffix = useMemo(() => {
+    }, [content?.id, routeId, effectiveSectionId, isLaunchMode]);
+    const scopedStorageSuffixes = useMemo(() => {
         const userKey = sanitizeStorageScope(canonicalProgressUserId || 'anonymous') || 'anonymous';
-        const sectionKey = Number.isInteger(Number(activeSectionId)) && Number(activeSectionId) > 0
-            ? `:section:${Number(activeSectionId)}`
+        const sectionKey = Number.isInteger(Number(effectiveSectionId)) && Number(effectiveSectionId) > 0
+            ? `:section:${Number(effectiveSectionId)}`
             : '';
-        const enrollmentKey = Number.isInteger(Number(enrollmentId)) && Number(enrollmentId) > 0
-            ? `:enrollment:${Number(enrollmentId)}`
+        const stableSuffix = `:user:${userKey}${sectionKey}`;
+        const legacyEnrollmentSuffix = Number.isInteger(Number(enrollmentId)) && Number(enrollmentId) > 0
+            ? `:user:${userKey}:enrollment:${Number(enrollmentId)}${sectionKey}`
             : '';
-        return `:user:${userKey}${enrollmentKey}${sectionKey}`;
-    }, [canonicalProgressUserId, enrollmentId, activeSectionId]);
+        return Array.from(new Set([stableSuffix, legacyEnrollmentSuffix].filter(Boolean)));
+    }, [canonicalProgressUserId, enrollmentId, effectiveSectionId]);
     const tincanResumeStorageKeys = useMemo(() => {
         const values = [
             String(progressContentId || '').trim(),
@@ -489,9 +504,15 @@ export default function LearnPage() {
             String(routeId || '').trim(),
         ].filter(Boolean);
 
-        const unique = Array.from(new Set(values));
-        return unique.map((value) => `lms_tincan_resume:${value}${scopedStorageSuffix}`);
-    }, [progressContentId, course?.id, routeId, scopedStorageSuffix]);
+        const uniqueValues = Array.from(new Set(values));
+        const keys = [];
+        for (const value of uniqueValues) {
+            for (const suffix of scopedStorageSuffixes) {
+                keys.push(`lms_tincan_resume:${value}${suffix}`);
+            }
+        }
+        return Array.from(new Set(keys));
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffixes]);
     const tincanResumePathStorageKeys = useMemo(() => {
         const values = [
             String(progressContentId || '').trim(),
@@ -499,9 +520,15 @@ export default function LearnPage() {
             String(routeId || '').trim(),
         ].filter(Boolean);
 
-        const unique = Array.from(new Set(values));
-        return unique.map((value) => `lms_tincan_resume_path:${value}${scopedStorageSuffix}`);
-    }, [progressContentId, course?.id, routeId, scopedStorageSuffix]);
+        const uniqueValues = Array.from(new Set(values));
+        const keys = [];
+        for (const value of uniqueValues) {
+            for (const suffix of scopedStorageSuffixes) {
+                keys.push(`lms_tincan_resume_path:${value}${suffix}`);
+            }
+        }
+        return Array.from(new Set(keys));
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffixes]);
     const webResumeStorageKeys = useMemo(() => {
         const values = [
             String(progressContentId || '').trim(),
@@ -509,9 +536,15 @@ export default function LearnPage() {
             String(routeId || '').trim(),
         ].filter(Boolean);
 
-        const unique = Array.from(new Set(values));
-        return unique.map((value) => `lms_web_resume:${value}${scopedStorageSuffix}`);
-    }, [progressContentId, course?.id, routeId, scopedStorageSuffix]);
+        const uniqueValues = Array.from(new Set(values));
+        const keys = [];
+        for (const value of uniqueValues) {
+            for (const suffix of scopedStorageSuffixes) {
+                keys.push(`lms_web_resume:${value}${suffix}`);
+            }
+        }
+        return Array.from(new Set(keys));
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffixes]);
     const webStatusStorageKeys = useMemo(() => {
         const values = [
             String(progressContentId || '').trim(),
@@ -519,9 +552,15 @@ export default function LearnPage() {
             String(routeId || '').trim(),
         ].filter(Boolean);
 
-        const unique = Array.from(new Set(values));
-        return unique.map((value) => `lms_web_status:${value}${scopedStorageSuffix}`);
-    }, [progressContentId, course?.id, routeId, scopedStorageSuffix]);
+        const uniqueValues = Array.from(new Set(values));
+        const keys = [];
+        for (const value of uniqueValues) {
+            for (const suffix of scopedStorageSuffixes) {
+                keys.push(`lms_web_status:${value}${suffix}`);
+            }
+        }
+        return Array.from(new Set(keys));
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffixes]);
 
     const persistTincanResumeIndex = useCallback((idx) => {
         if (!content || content.type !== 'tincan') return;
@@ -2849,8 +2888,14 @@ export default function LearnPage() {
         const normalizedPayload = shouldKeepCompleted
             ? { ...payload, status: 'COMPLETED', progress: 100 }
             : payload;
+        const normalizedSectionId = Number(normalizedPayload?.sectionId);
+        const sectionIdForWrite =
+            Number.isInteger(normalizedSectionId) && normalizedSectionId > 0
+                ? normalizedSectionId
+                : effectiveSectionId;
         const result = await updateProgress({
             ...normalizedPayload,
+            sectionId: sectionIdForWrite,
         });
         const reason = String(result?.reason || '').toUpperCase();
         const statusCode = Number(result?.status || 0);
@@ -2879,7 +2924,7 @@ export default function LearnPage() {
             completionLockRef.current = false;
         }
         return result;
-    }, [getTrackedStudySeconds, hasAssessmentFailureSignals]);
+    }, [getTrackedStudySeconds, hasAssessmentFailureSignals, effectiveSectionId]);
 
     useEffect(() => {
         progressWriteBlockRef.current = { disabled: false, reason: '' };
@@ -3239,7 +3284,7 @@ export default function LearnPage() {
             const uniqueCandidates = Array.from(new Set(progressUserCandidates));
             const rowsByCandidate = new Map();
             for (const candidate of uniqueCandidates) {
-                const progressData = await getProgress(progressContentId, candidate, activeSectionId);
+                const progressData = await getProgress(progressContentId, candidate, effectiveSectionId);
                 if (Array.isArray(progressData) && progressData.length > 0) {
                     rowsByCandidate.set(candidate, progressData.map((row) => ({ ...row, __candidateUserId: candidate })));
                 }
@@ -3405,10 +3450,10 @@ export default function LearnPage() {
             setProgressUserId(selectedUserId);
             setResumeLoaded(true);
         };
-        if (content && progressContentId && progressUserCandidates.length > 0 && Number(enrollmentId) > 0) {
+        if (content && progressContentId && progressUserCandidates.length > 0) {
             loadProgress();
         }
-    }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, activeSectionId, enrollmentId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass]);
+    }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, effectiveSectionId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass]);
 
     // Load xAPI statements for this content
     useEffect(() => {
@@ -5044,11 +5089,13 @@ export default function LearnPage() {
             >
                 {hasStructuredLessons && (
                     <div
-                        className={`h-full overflow-hidden transition-[width,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                            isLearningSidebarOpen ? 'w-[300px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
+                        className={`h-full overflow-hidden transition-[width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                            isLearningSidebarOpen
+                                ? 'fixed inset-y-0 left-0 z-[45] w-[85vw] max-w-[300px] opacity-100 translate-x-0 shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-[300px] lg:max-w-none lg:shadow-none'
+                                : 'w-0 opacity-0 -translate-x-full pointer-events-none lg:translate-x-0'
                         }`}
                     >
-                        <div className="h-full w-[300px]">
+                        <div className="h-full w-[85vw] max-w-[300px] lg:w-[300px]">
                             <LearningLessonSidebar
                                 lessons={lessonModules}
                                 activeLesson={selectedLessonIndex + 1}
@@ -5066,6 +5113,18 @@ export default function LearnPage() {
                             />
                         </div>
                     </div>
+                )}
+
+                {(isLearningSidebarOpen || isLearningAiOpen) && (
+                    <button
+                        type="button"
+                        aria-label="Close side panels"
+                        onClick={() => {
+                            handleCloseLearningSidebar();
+                            handleCloseLearningAi();
+                        }}
+                        className="fixed inset-0 z-[38] bg-black/45 backdrop-blur-[1px] lg:hidden"
+                    />
                 )}
 
                 <LearningVideoPlayer
@@ -5148,11 +5207,13 @@ export default function LearnPage() {
                 </LearningVideoPlayer>
 
                 <div
-                    className={`h-full overflow-hidden transition-[width,opacity] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                        isLearningAiOpen ? 'w-[320px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
+                    className={`h-full overflow-hidden transition-[width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                        isLearningAiOpen
+                            ? 'fixed inset-y-0 right-0 z-[45] w-[88vw] max-w-[320px] opacity-100 translate-x-0 shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-[320px] lg:max-w-none lg:shadow-none'
+                            : 'w-0 opacity-0 translate-x-full pointer-events-none lg:translate-x-0'
                     }`}
                 >
-                    <div className="h-full w-[320px]">
+                    <div className="h-full w-[88vw] max-w-[320px] lg:w-[320px]">
                         <LearningAiAssistant onClose={handleCloseLearningAi} />
                     </div>
                 </div>
@@ -5164,7 +5225,7 @@ export default function LearnPage() {
         <div className="min-h-screen bg-[#0f0f1a] font-['Outfit',sans-serif]">
             <Navbar />
 
-            <div className="max-w-[1400px] mx-auto px-4 sm:px-6 pt-5 sm:pt-6 pb-16 sm:pb-20">
+            <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 pt-5 sm:pt-6 pb-16 sm:pb-20">
                 {/* Breadcrumb */}
                 <div className="flex items-center gap-2 text-[14px] text-white/50 mb-6">
                     <a href={course ? `/courses/${course.id}` : '/courses'} className="hover:text-white transition-colors">
@@ -5204,7 +5265,7 @@ export default function LearnPage() {
                                         key={iframeRenderKey}
                                         ref={iframeRef}
                                         src={iframeSrc || resolvePlayerSrc(content.entryPoint)}
-                                        className="w-full h-[600px] border-none transition-opacity duration-150"
+                                        className="w-full h-[58vh] min-h-[320px] sm:min-h-[420px] lg:min-h-[520px] border-none transition-opacity duration-150"
                                         style={{
                                             opacity: content.type === 'tincan' && !isTinCanFrameReady ? 0 : 1,
                                             transform: 'translateZ(0)',
@@ -5298,7 +5359,7 @@ export default function LearnPage() {
                     </div>
 
                     {/* Sidebar: Progress & xAPI Log */}
-                    <div className="w-full xl:w-[360px] shrink-0 flex flex-col gap-6">
+                    <div className="w-full xl:w-[340px] 2xl:w-[360px] shrink-0 flex flex-col gap-6">
                         {/* Progress Card */}
                         <div className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10">
                             <h3 className="text-white text-[16px] font-semibold mb-4">📊 Learning Progress</h3>

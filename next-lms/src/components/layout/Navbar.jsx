@@ -100,11 +100,14 @@ export default function Navbar() {
     const [loadingNotifications, setLoadingNotifications] = useState(false);
     const [notificationToasts, setNotificationToasts] = useState([]);
     const [showChat, setShowChat] = useState(false);
+    const [showMobileNav, setShowMobileNav] = useState(false);
     const [chatPrefLoaded, setChatPrefLoaded] = useState(false);
     const productsRef = useRef(null);
     const userMenuRef = useRef(null);
     const notificationRef = useRef(null);
     const chatRef = useRef(null);
+    const mobileMenuRef = useRef(null);
+    const mobileMenuButtonRef = useRef(null);
     const notificationSnapshotRef = useRef({ initialized: false, ids: new Set() });
     const toastTimersRef = useRef(new Map());
     const notificationRequestInFlightRef = useRef(false);
@@ -345,6 +348,10 @@ export default function Navbar() {
     }, [showChat, chatPrefLoaded]);
 
     useEffect(() => {
+        setShowMobileNav(false);
+    }, [pathname]);
+
+    useEffect(() => {
         if (isPublicPage || !user) return undefined;
 
         let active = true;
@@ -438,10 +445,19 @@ export default function Navbar() {
             if (notificationRef.current && !notificationRef.current.contains(e.target)) {
                 setShowNotifications(false);
             }
+            if (
+                showMobileNav &&
+                mobileMenuRef.current &&
+                !mobileMenuRef.current.contains(e.target) &&
+                mobileMenuButtonRef.current &&
+                !mobileMenuButtonRef.current.contains(e.target)
+            ) {
+                setShowMobileNav(false);
+            }
         };
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
-    }, []);
+    }, [showMobileNav]);
 
     // Nav items for logged-in users
     const navItems = [
@@ -453,32 +469,32 @@ export default function Navbar() {
 
     return (
         <>
-            <header className="w-full h-[80px] bg-white flex items-center justify-between shrink-0 z-40 relative sticky top-0 font-['Outfit',sans-serif] border-b border-[#eaedf5]" style={{ padding: '0 80px' }}>
+            <header className="w-full h-[80px] bg-white flex items-center justify-between shrink-0 z-40 relative sticky top-0 font-['Outfit',sans-serif] border-b border-[#eaedf5] px-3 sm:px-4 md:px-6 lg:px-10 xl:px-14 2xl:px-20">
 
             {/* Left: Logo + Nav */}
-            <div className="flex items-center gap-20">
+            <div className="flex min-w-0 items-center gap-3 sm:gap-6 lg:gap-10 xl:gap-16">
                 {/* Logo */}
                 <Link href={isPublicPage ? '/' : '/dashboard'} className="flex items-center shrink-0">
                     <img src="/skillup_logo.png" alt="SkillUp" className="w-[48px] h-[48px] object-contain" />
                 </Link>
 
                 {/* Nav Links */}
-                <nav className="hidden lg:flex items-center gap-8">
+                <nav className="hidden lg:flex items-center gap-6 xl:gap-8">
                     {isPublicPage ? (
                         <>
-                            <Link href="#features" className="text-[#052143] font-normal text-lg hover:text-[#687EFF] transition-colors">
+                            <Link href="#features" className="text-[#052143] font-normal text-base xl:text-lg hover:text-[#687EFF] transition-colors">
                                 Features
                             </Link>
-                            <Link href="#testimonials" className="text-[#052143] font-normal text-lg hover:text-[#687EFF] transition-colors">
+                            <Link href="#testimonials" className="text-[#052143] font-normal text-base xl:text-lg hover:text-[#687EFF] transition-colors">
                                 Testimonials
                             </Link>
-                            <Link href="#pricing" className="text-[#052143] font-normal text-lg hover:text-[#687EFF] transition-colors">
+                            <Link href="#pricing" className="text-[#052143] font-normal text-base xl:text-lg hover:text-[#687EFF] transition-colors">
                                 Pricing
                             </Link>
-                            <Link href="/about" className="text-[#052143] font-normal text-lg hover:text-[#687EFF] transition-colors">
+                            <Link href="/about" className="text-[#052143] font-normal text-base xl:text-lg hover:text-[#687EFF] transition-colors">
                                 About
                             </Link>
-                            <Link href="/contact" className="text-[#052143] font-normal text-lg hover:text-[#687EFF] transition-colors">
+                            <Link href="/contact" className="text-[#052143] font-normal text-base xl:text-lg hover:text-[#687EFF] transition-colors">
                                 Contact
                             </Link>
                         </>
@@ -515,9 +531,9 @@ export default function Navbar() {
             </div>
 
             {/* Right: Actions & User Profile */}
-            <div className="flex items-center gap-0 shrink-0">
+            <div className="relative flex items-center gap-2 sm:gap-3 shrink-0">
                 {isPublicPage ? (
-                    <div className="flex items-center gap-4 shrink-0">
+                    <div className="hidden sm:flex items-center gap-4 shrink-0">
                         <Link href="/login" className="text-[#052143] hover:text-[#687EFF] font-medium transition-colors text-lg">
                             Log in
                         </Link>
@@ -528,7 +544,7 @@ export default function Navbar() {
                 ) : (
                     <>
                         {/* Grid Icon (3x3) with Dropdown */}
-                        <div className="relative" ref={productsRef}>
+                        <div className="relative hidden md:block" ref={productsRef}>
                             <div
                                 className="cursor-pointer shrink-0 w-8 h-8 flex items-center justify-center hover:opacity-70 transition-opacity"
                                 onClick={() => setShowProducts(!showProducts)}
@@ -543,7 +559,7 @@ export default function Navbar() {
 
                             {/* My Products Dropdown */}
                             {showProducts && (
-                                <div className="absolute top-full right-0 mt-3 w-[367px] bg-white border border-[#D9DEFF] rounded-2xl shadow-[0_2px_5px_5px_rgba(0,0,0,0.05)] z-50 p-7">
+                                <div className="absolute top-full right-0 mt-3 w-[min(367px,calc(100vw-1.5rem))] bg-white border border-[#D9DEFF] rounded-2xl shadow-[0_2px_5px_5px_rgba(0,0,0,0.05)] z-50 p-5 sm:p-7">
                                     <h3 className="text-[#052143] font-medium text-xl mb-6">My Products</h3>
                                     <div className="flex flex-col gap-6">
                                         {[
@@ -618,7 +634,7 @@ export default function Navbar() {
                         </div>
 
                         {/* Vertical Divider */}
-                        <div className="w-[1.2px] h-[47px] bg-[#D1E3FB] mx-5"></div>
+                        <div className="hidden md:block w-[1.2px] h-[47px] bg-[#D1E3FB] mx-5"></div>
 
                         {/* User Profile with Dropdown */}
                         <div className="relative" ref={userMenuRef}>
@@ -645,7 +661,7 @@ export default function Navbar() {
 
                             {/* User Dropdown */}
                             {showUserMenu && (
-                                <div className="absolute top-full right-0 mt-3 w-[220px] bg-white border border-[#D9DEFF] rounded-2xl shadow-[0_2px_5px_5px_rgba(0,0,0,0.05)] z-50 overflow-hidden">
+                                <div className="absolute top-full right-0 mt-3 w-[min(220px,calc(100vw-1.5rem))] bg-white border border-[#D9DEFF] rounded-2xl shadow-[0_2px_5px_5px_rgba(0,0,0,0.05)] z-50 overflow-hidden">
                                     {/* User Info */}
                                     <div className="px-5 pt-5 pb-4">
                                         <p className="text-[#052143] font-medium text-base">{displayName}</p>
@@ -699,7 +715,7 @@ export default function Navbar() {
                         </div>
 
                         {/* Notification Icon */}
-                        <div className="relative ml-5" ref={notificationRef}>
+                        <div className="relative ml-1 sm:ml-5" ref={notificationRef}>
                             <button
                                 type="button"
                                 onClick={() => setShowNotifications((v) => !v)}
@@ -790,7 +806,7 @@ export default function Navbar() {
                         </div>
 
                         {/* AI Chat Icon */}
-                        <div className="relative ml-4" ref={chatRef}>
+                        <div className="relative ml-1 sm:ml-4" ref={chatRef}>
                             <button
                                 onClick={() => setShowChat((v) => !v)}
                                 title="SkillBot AI Assistant"
@@ -802,11 +818,99 @@ export default function Navbar() {
                         </div>
                     </>
                 )}
+
+                {isPublicPage ? (
+                    <Link
+                        href="/login"
+                        className="inline-flex sm:hidden items-center justify-center rounded-full border border-[#D1E3FB] px-3 py-1.5 text-[13px] font-medium text-[#052143]"
+                    >
+                        Log in
+                    </Link>
+                ) : null}
+
+                <button
+                    ref={mobileMenuButtonRef}
+                    type="button"
+                    onClick={() => setShowMobileNav((value) => !value)}
+                    className="inline-flex lg:hidden h-9 w-9 items-center justify-center rounded-full border border-[#D1E3FB] text-[#052143] hover:border-[#687EFF] hover:text-[#687EFF] transition-colors"
+                    aria-label="Toggle menu"
+                    aria-expanded={showMobileNav}
+                >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
             </div>
             </header>
 
+            {showMobileNav ? (
+                <div className="lg:hidden fixed inset-0 z-[65] bg-black/30 px-3 pt-[84px]">
+                    <div
+                        ref={mobileMenuRef}
+                        className="ml-auto w-full max-w-[340px] rounded-2xl border border-[#D1E3FB] bg-white p-3 shadow-[0_24px_60px_rgba(0,0,0,0.18)]"
+                    >
+                        <nav className="grid gap-1">
+                            {(isPublicPage
+                                ? [
+                                    { href: '/about', label: 'About' },
+                                    { href: '/contact', label: 'Contact' },
+                                    { href: '/pricing', label: 'Pricing' },
+                                ]
+                                : [
+                                    ...navItems,
+                                    ...(isAdmin ? [{ href: '/admin-dashboard', label: 'Backend' }] : []),
+                                ]
+                            ).map((item) => (
+                                <Link
+                                    key={`mobile-nav-${item.href}`}
+                                    href={item.href}
+                                    onClick={() => setShowMobileNav(false)}
+                                    className={`rounded-xl px-3 py-2.5 text-[14px] font-medium transition-colors ${
+                                        isActive(item.href)
+                                            ? 'bg-[#EEF2FF] text-[#687EFF]'
+                                            : 'text-[#052143] hover:bg-[#F7F9FF]'
+                                    }`}
+                                >
+                                    {item.label}
+                                </Link>
+                            ))}
+                        </nav>
+                        {!isPublicPage ? (
+                            <div className="mt-3 border-t border-[#ECF1FF] pt-3">
+                                <button
+                                    type="button"
+                                    onClick={handleLogout}
+                                    className="inline-flex w-full items-center justify-center rounded-xl border border-[#FFD6D7] px-3 py-2.5 text-[14px] font-semibold text-[#FF383C] hover:bg-[#FFF5F5]"
+                                >
+                                    Logout
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[#ECF1FF] pt-3">
+                                <Link
+                                    href="/login"
+                                    onClick={() => setShowMobileNav(false)}
+                                    className="inline-flex items-center justify-center rounded-xl border border-[#D1E3FB] px-3 py-2.5 text-[14px] font-medium text-[#052143]"
+                                >
+                                    Login
+                                </Link>
+                                <Link
+                                    href="/register"
+                                    onClick={() => setShowMobileNav(false)}
+                                    className="inline-flex items-center justify-center rounded-xl bg-[#687EFF] px-3 py-2.5 text-[14px] font-semibold text-white"
+                                >
+                                    Register
+                                </Link>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            ) : null}
+
             {!isPublicPage && notificationToasts.length > 0 && (
-                <div className="fixed top-24 right-6 z-[70] flex w-[360px] max-w-[calc(100vw-2rem)] flex-col gap-3 pointer-events-none">
+                <div className="fixed top-24 right-3 sm:right-6 z-[70] flex w-[360px] max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-2rem)] flex-col gap-3 pointer-events-none">
                     {notificationToasts.slice().reverse().map((toast) => {
                         const tone = getNotificationTone(toast);
                         const toastId = Number(toast?.id || 0);

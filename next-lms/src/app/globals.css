@@ -4,6 +4,19 @@
 :root {
   --font-outfit: "Outfit", "Inter", "Segoe UI", Arial, sans-serif;
   --font-noto-sans-thai: "Noto Sans Thai", "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif;
+  --app-shell-padding-x: 16px;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --app-shell-padding-x: 24px;
+  }
+}
+
+@media (min-width: 1280px) {
+  :root {
+    --app-shell-padding-x: 32px;
+  }
 }
 
 /* Root scrolling */
@@ -18,6 +31,36 @@ body {
   font-family: var(--font-noto-sans-thai), var(--font-outfit), "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+iframe {
+  max-width: 100%;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+/* Fix mobile browser viewport jump */
+main,
+section,
+article {
+  min-width: 0;
 }
 
 /* Keep legacy selectors working, but unify on Noto Sans Thai stack */
@@ -86,5 +129,143 @@ body {
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
+  }
+
+  .app-shell-x {
+    padding-left: var(--app-shell-padding-x);
+    padding-right: var(--app-shell-padding-x);
+  }
+
+  .responsive-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .responsive-table-wrap > table {
+    min-width: 700px;
+  }
+
+  .text-wrap-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------
+   Global responsive hardening (mobile/tablet first)
+   Keeps legacy fixed-width layouts usable on small screens.
+------------------------------------------------------------ */
+@media (max-width: 1279px) {
+  :root {
+    --app-shell-padding-x: 16px;
+  }
+
+  [class*="max-w-[1840px]"],
+  [class*="max-w-[1760px]"],
+  [class*="max-w-[1400px]"],
+  [class*="max-w-[1290px]"],
+  [class*="max-w-[1240px]"],
+  [class*="max-w-[1200px]"],
+  [class*="max-w-[1100px]"] {
+    max-width: 100% !important;
+  }
+}
+
+@media (max-width: 1024px) {
+  body {
+    font-size: 15px;
+  }
+
+  /* Prevent any page from causing horizontal overflow */
+  body > div,
+  body main,
+  body section,
+  body article {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  /* Wide fixed blocks collapse to fluid width */
+  [class*="w-[408px]"],
+  [class*="w-[367px]"],
+  [class*="w-[360px]"],
+  [class*="w-[340px]"],
+  [class*="w-[320px]"],
+  [class*="w-[305px]"],
+  [class*="w-[300px]"],
+  [class*="w-[291px]"],
+  [class*="w-[280px]"],
+  [class*="w-[260px]"] {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  [class*="min-w-[1180px]"],
+  [class*="min-w-[960px]"],
+  [class*="min-w-[860px]"],
+  [class*="min-w-[760px]"],
+  [class*="min-w-[700px]"],
+  [class*="min-w-[680px]"] {
+    min-width: 700px !important;
+  }
+
+  .overflow-x-auto {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .overflow-x-auto > table {
+    min-width: max(680px, 100%) !important;
+  }
+
+  /* Long labels/content should wrap instead of breaking layout */
+  h1, h2, h3, h4, h5, h6, p, span, a, button, th, td, label {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --app-shell-padding-x: 12px;
+  }
+
+  body {
+    font-size: 14px;
+  }
+
+  /* Compact common fixed heights on small screens */
+  [class*="h-[340px]"],
+  [class*="h-[320px]"],
+  [class*="h-[280px]"],
+  [class*="h-[236px]"],
+  [class*="h-[230px]"],
+  [class*="h-[220px]"] {
+    height: auto !important;
+    min-height: 160px;
+  }
+
+  .overflow-x-auto > table {
+    min-width: 560px !important;
+  }
+
+  /* Keep popovers/modals inside viewport */
+  [class*="absolute"][class*="right-0"][class*="w-[320px]"],
+  [class*="absolute"][class*="right-0"][class*="w-[367px]"],
+  [class*="fixed"][class*="w-[360px]"] {
+    width: min(92vw, 360px) !important;
+    max-width: min(92vw, 360px) !important;
+    right: 12px !important;
+    left: auto !important;
   }
 }

@@ -28,7 +28,7 @@ export default function LearningAiAssistant({ onClose }) {
     };
 
     return (
-        <aside className="w-[320px] min-w-[320px] h-full bg-white border-l border-gray-200 flex flex-col">
+        <aside className="w-full h-full bg-white border-l border-gray-200 flex flex-col">
             <div className="flex items-center gap-3 px-4 h-[52px] min-h-[52px] border-b border-gray-100">
                 <button className="p-1 rounded-md hover:bg-gray-100 transition-colors">
                     <Menu size={16} className="text-gray-400" />

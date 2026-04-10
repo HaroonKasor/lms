@@ -32,7 +32,7 @@ export default function LearningLessonSidebar({ lessons, activeLesson, onSelectL
     const progressPercent = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
 
     return (
-        <aside className="w-[300px] min-w-[300px] h-full bg-white border-r border-gray-200 flex flex-col">
+        <aside className="w-full h-full bg-white border-r border-gray-200 flex flex-col">
             <div className="px-5 py-4 border-b border-gray-100">
                 <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-2">
