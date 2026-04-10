@@ -887,9 +887,28 @@ export default function LearnPage() {
     }, []);
 
     const isTinCanLessonClearedForAdvance = useCallback((item, activity = null) => {
-        // Strict gating: previous lesson must be completed/passed before moving forward.
-        return isTinCanLessonPassed(item, activity);
-    }, [isTinCanLessonPassed]);
+        const assessment = isAssessmentActivity(activity);
+        // Assessment/test activities must still be passed before moving forward.
+        if (assessment) {
+            return isTinCanLessonPassed(item, activity);
+        }
+        // Content/video lessons are considered "cleared for advance" once learner has started.
+        if (isTinCanLessonPassed(item, activity)) return true;
+        if (item && typeof item === 'object') {
+            if (isTruthyFlag(item?.attempted) || isTruthyFlag(item?.quizzed)) return true;
+            const statusText = normalizeStatusText(
+                item?.status
+                ?? item?.result
+                ?? item?.completionStatus
+                ?? item?.successStatus
+                ?? ''
+            );
+            if (statusText.includes('progress') || statusText.includes('in progress') || statusText.includes('learning')) {
+                return true;
+            }
+        }
+        return false;
+    }, [isAssessmentActivity, isTinCanLessonPassed]);
 
     const hasAssessmentActivities = useMemo(() => {
         if (content?.type !== 'tincan' || !Array.isArray(content?.activities)) return false;
@@ -4536,7 +4555,7 @@ export default function LearnPage() {
         });
         if (chapterLockEnabled && safeIndex > maxUnlocked) {
             toast.warning(
-                'กรุณาเรียนบทก่อนหน้าให้ผ่านก่อน จึงจะไปบทถัดไปได้',
+                'กรุณาเรียนบทก่อนหน้าให้ครบก่อน จึงจะไปบทถัดไปได้',
                 { ...LEARNER_TOAST, toastId: 'learner-tincan-lock-warning' }
             );
             return;
@@ -5003,7 +5022,6 @@ export default function LearnPage() {
                         />
                     ) : (
                         <>
-                            {console.log('[DEBUG] iframe src:', iframeSrc || resolvePlayerSrc(content.entryPoint), 'entryPoint:', content.entryPoint, 'type:', content.type)}
                             <iframe
                                 key={iframeRenderKey}
                                 ref={iframeRef}
@@ -5107,7 +5125,6 @@ export default function LearnPage() {
                                 />
                             ) : content.type === 'tincan' || content.type === 'web' ? (
                                 <>
-                                    {console.log('[DEBUG] iframe(non-launch) src:', iframeSrc || resolvePlayerSrc(content.entryPoint), 'entryPoint:', content.entryPoint, 'type:', content.type)}
                                     <iframe
                                         key={iframeRenderKey}
                                         ref={iframeRef}
