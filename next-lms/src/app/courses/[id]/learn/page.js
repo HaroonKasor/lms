@@ -1382,6 +1382,65 @@ export default function LearnPage() {
 
                 currentState.dataIndex = dataIndex;
                 win.treeArray = treeArray;
+
+                const needsRuntimeHeal = (error) => {
+                    const message = String(error?.message || '').toLowerCase();
+                    if (!message.includes('cannot read properties of undefined')) return false;
+                    return (
+                        message.includes('limitattempted')
+                        || message.includes('title')
+                        || message.includes('totaltime')
+                        || message.includes('passed')
+                        || message.includes('attempted')
+                        || message.includes('quizzed')
+                    );
+                };
+
+                const healAroundCurrentPage = () => {
+                    const around = Number.isFinite(Number(win.currentPage))
+                        ? Math.max(0, Math.floor(Number(win.currentPage)))
+                        : 0;
+                    for (const idx of [around - 1, around, around + 1, around + 2]) {
+                        if (!Number.isFinite(idx) || idx < 0) continue;
+                        const treeRow = Array.isArray(treeArray) ? treeArray[idx] : null;
+                        const dataRow = Array.isArray(dataIndex) ? dataIndex[idx] : null;
+                        ensureRow(treeArray, idx, dataRow);
+                        ensureRow(dataIndex, idx, treeRow);
+                    }
+                };
+
+                const wrapRuntimeFunctionSafely = (fnName) => {
+                    const currentFn = win?.[fnName];
+                    if (typeof currentFn !== 'function') return;
+                    if (currentFn.__lmsSafeWrapper === true) return;
+
+                    const originalFn = currentFn;
+                    const wrappedFn = function wrappedTinCanRuntimeFunction(...args) {
+                        try {
+                            return originalFn.apply(this, args);
+                        } catch (error) {
+                            if (!needsRuntimeHeal(error)) throw error;
+                            try {
+                                healAroundCurrentPage();
+                                return originalFn.apply(this, args);
+                            } catch {
+                                return null;
+                            }
+                        }
+                    };
+                    wrappedFn.__lmsSafeWrapper = true;
+                    wrappedFn.__lmsSafeOriginal = originalFn;
+                    try {
+                        win[fnName] = wrappedFn;
+                    } catch {
+                        // ignore runtime assignment failures
+                    }
+                };
+
+                wrapRuntimeFunctionSafely('updatestatus');
+                wrapRuntimeFunctionSafely('updateStatus');
+                wrapRuntimeFunctionSafely('SetupIFrame');
+                wrapRuntimeFunctionSafely('setContentStatusPassed');
             }
 
             // Share canonical state from outer wrapper to inner runtime window when available.
@@ -2430,7 +2489,11 @@ export default function LearnPage() {
                             }
 
                             const detectedAfter = detectActivityIndexFromIframe({ preferInnerOnly: true });
-                            if (detectedAfter === targetIndex) {
+                            const runtimeAfter = Number(frameWindow.currentPage);
+                            const mappedAfter = Number.isFinite(runtimeAfter) && runtimeAfter >= 0
+                                ? mapRuntimePageToActivityIndex(runtimeAfter)
+                                : -1;
+                            if (detectedAfter === targetIndex || mappedAfter === targetIndex) {
                                 const after = Number(frameWindow.currentPage);
                                 logLessonMapDebug('resume-jump-applied', {
                                     targetIndex,
@@ -2438,8 +2501,9 @@ export default function LearnPage() {
                                     candidatePage,
                                     currentRuntimePage: after,
                                     detectedActivityIndex: detectedAfter,
+                                    mappedActivityIndex: mappedAfter,
                                 });
-                                commitResolvedIndex(detectedAfter);
+                                commitResolvedIndex(detectedAfter >= 0 ? detectedAfter : mappedAfter);
                                 clearInterval(timer);
                                 return;
                             }
@@ -2452,7 +2516,16 @@ export default function LearnPage() {
 
             if (attempts >= maxAttempts) {
                 const detectedFinal = detectActivityIndexFromIframe();
+                const runtimeFinal = Number(frameWindow.currentPage);
+                const mappedFinal = Number.isFinite(runtimeFinal) && runtimeFinal >= 0
+                    ? mapRuntimePageToActivityIndex(runtimeFinal)
+                    : -1;
                 if (manualActive && detectedFinal !== targetIndex) {
+                    if (mappedFinal === targetIndex) {
+                        commitResolvedIndex(mappedFinal);
+                        clearInterval(timer);
+                        return;
+                    }
                     manualSelectionRef.current = { target: null, until: 0 };
                     toast.warning(
                         'ไม่สามารถเปิดบทที่เลือกได้ในขณะนี้ กรุณาลองอีกครั้ง',
@@ -2460,6 +2533,8 @@ export default function LearnPage() {
                     );
                 } else if (detectedFinal >= 0) {
                     commitResolvedIndex(detectedFinal);
+                } else if (mappedFinal >= 0) {
+                    commitResolvedIndex(mappedFinal);
                 } else if (manualActive) {
                     manualSelectionRef.current = { target: null, until: 0 };
                 }
