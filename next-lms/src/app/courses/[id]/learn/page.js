@@ -1082,6 +1082,12 @@ export default function LearnPage() {
             );
             if (hasFailureStatusSignal(statusText)) return true;
             if (item?.success === false) return true;
+            const hasExplicitPassSignal =
+                isTruthyFlag(item?.passed)
+                || isTruthyFlag(item?.isPassed)
+                || hasPassStatusSignal(statusText)
+                || item?.success === true;
+            if (hasExplicitPassSignal) return false;
 
             const rawScore = asFiniteNumber(
                 item?.score
@@ -2524,7 +2530,8 @@ export default function LearnPage() {
         );
         let attempts = 0;
         const maxAttempts = 80;
-        const commitResolvedIndex = (resolvedIndex) => {
+        const commitResolvedIndex = (resolvedIndex, options = {}) => {
+            const preserveManual = options?.preserveManual === true;
             if (!Number.isFinite(Number(resolvedIndex))) return;
             const safeResolvedIndex = Math.max(0, Math.min(content.activities.length - 1, Math.floor(Number(resolvedIndex))));
             const resolvedActivity = content.activities[safeResolvedIndex];
@@ -2537,8 +2544,42 @@ export default function LearnPage() {
                 Number(highestSeenActivityIndexRef.current || 0),
                 safeResolvedIndex
             );
-            if (manualActive) {
+            if (manualActive && !preserveManual) {
                 manualSelectionRef.current = { target: null, until: 0 };
+            } else if (manualActive && preserveManual) {
+                manualSelectionRef.current = { target: safeResolvedIndex, until: Date.now() + 12000 };
+            }
+        };
+        const forceNavigateInnerFrameToTarget = () => {
+            try {
+                const targetActivity = content.activities?.[targetIndex];
+                if (!targetActivity) return false;
+                const launchCandidate = String(targetActivity?.launch || '').trim();
+                const targetUrl = resolveActivityUrl(
+                    content.entryPoint,
+                    launchCandidate || getPrimaryActivityResumePath(targetActivity)
+                );
+                if (!targetUrl) return false;
+
+                const frameDoc = frameWindow?.document;
+                const contentFrameEl = frameDoc?.getElementById('contentFrame');
+                if (!contentFrameEl) return false;
+
+                const currentSrc = contentFrameEl.getAttribute('src') || contentFrameEl.src || '';
+                const normalizedCurrent = normalizeActivityPathKey(currentSrc);
+                const normalizedTarget = normalizeActivityPathKey(targetUrl);
+                if (normalizedTarget && normalizedCurrent === normalizedTarget) {
+                    return true;
+                }
+
+                contentFrameEl.setAttribute('src', targetUrl);
+                contentFrameEl.src = targetUrl;
+                if (typeof frameWindow?.drawTOC === 'function') {
+                    frameWindow.drawTOC();
+                }
+                return true;
+            } catch {
+                return false;
             }
         };
 
@@ -2546,6 +2587,16 @@ export default function LearnPage() {
             attempts += 1;
             try {
                 hardenTinCanRuntimeWindow(frameWindow);
+                // Prefer direct inner-frame navigation first.
+                // This avoids off-by-one and stale runtime-page mapping on both
+                // explicit clicks and resume restoration.
+                if (attempts === 1) {
+                    if (forceNavigateInnerFrameToTarget()) {
+                        commitResolvedIndex(targetIndex, { preserveManual: manualActive });
+                        clearInterval(timer);
+                        return;
+                    }
+                }
                 const goToPage = frameWindow.goToPage;
                 // Wait until TinCan runtime exposes goToPage; then keep retrying until target page is active.
                 if (typeof goToPage === 'function') {
@@ -2555,7 +2606,14 @@ export default function LearnPage() {
                         targetIndex,
                     ].filter((value) => Number.isFinite(Number(value)) && Number(value) >= 0)
                         .map((value) => Math.floor(Number(value)))));
-                    if (candidateTargets.length === 0) return;
+                    if (candidateTargets.length === 0) {
+                        if (forceNavigateInnerFrameToTarget()) {
+                            commitResolvedIndex(targetIndex, { preserveManual: manualActive });
+                            clearInterval(timer);
+                            return;
+                        }
+                        return;
+                    }
 
                     const roundTripIndex = mapRuntimePageToActivityIndex(runtimeTargetIndex);
 
@@ -2631,6 +2689,11 @@ export default function LearnPage() {
                 const mappedFinal = Number.isFinite(runtimeFinal) && runtimeFinal >= 0
                     ? mapRuntimePageToActivityIndex(runtimeFinal)
                     : -1;
+                if (detectedFinal !== targetIndex && forceNavigateInnerFrameToTarget()) {
+                    commitResolvedIndex(targetIndex, { preserveManual: manualActive });
+                    clearInterval(timer);
+                    return;
+                }
                 if (manualActive && detectedFinal !== targetIndex) {
                     if (mappedFinal === targetIndex) {
                         commitResolvedIndex(mappedFinal);
@@ -2652,7 +2715,7 @@ export default function LearnPage() {
                 clearInterval(timer);
             }
         }, 250);
-    }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug, detectActivityIndexFromIframe, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, hardenTinCanRuntimeWindow]);
+    }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug, detectActivityIndexFromIframe, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, hardenTinCanRuntimeWindow, resolveActivityUrl, normalizeActivityPathKey]);
 
     const restoreTincanPositionFromProgress = useCallback((entry) => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
@@ -4508,59 +4571,6 @@ export default function LearnPage() {
 
         tick();
     }, [content?.type, applyTinCanWrapperChrome, hardenTinCanRuntimeWindow]);
-    const runIframeRuntimeSync = useCallback(() => {
-        const frameWindow = iframeRef.current?.contentWindow;
-        hardenTinCanRuntimeWindow(frameWindow);
-        applyTinCanWrapperChrome();
-        bindIframeCloseHandler();
-        bindIframeInteractionTracking();
-        applyTincanResumeToIframe();
-        applyLegacyWebResumeToIframe();
-        syncTinCanActivityStatusFromIframe();
-        syncTincanPositionFromIframe();
-    }, [
-        hardenTinCanRuntimeWindow,
-        applyTinCanWrapperChrome,
-        bindIframeCloseHandler,
-        bindIframeInteractionTracking,
-        applyTincanResumeToIframe,
-        applyLegacyWebResumeToIframe,
-        syncTinCanActivityStatusFromIframe,
-        syncTincanPositionFromIframe,
-    ]);
-    const scheduleDeferredIframeRuntimeSync = useCallback(() => {
-        clearIframeDeferredSync();
-        iframeDeferredSyncTimeoutRef.current = setTimeout(() => {
-            iframeDeferredSyncTimeoutRef.current = null;
-            runIframeRuntimeSync();
-            forceTinCanReflow();
-        }, 1200);
-    }, [clearIframeDeferredSync, runIframeRuntimeSync, forceTinCanReflow]);
-    const bindInnerContentFrameLoadHandler = useCallback(() => {
-        clearInnerFrameLoadBinding();
-        try {
-            const frameWindow = iframeRef.current?.contentWindow;
-            const frameDoc = frameWindow?.document;
-            const contentFrameEl = frameDoc?.getElementById('contentFrame');
-            if (!contentFrameEl || typeof contentFrameEl.addEventListener !== 'function') return;
-
-            const onInnerLoad = () => {
-                runIframeRuntimeSync();
-                scheduleDeferredIframeRuntimeSync();
-            };
-            contentFrameEl.addEventListener('load', onInnerLoad);
-            innerFrameLoadCleanupRef.current = () => {
-                try {
-                    contentFrameEl.removeEventListener('load', onInnerLoad);
-                } catch {
-                    // ignore cleanup errors
-                }
-            };
-        } catch {
-            // ignore cross-frame access errors
-        }
-    }, [clearInnerFrameLoadBinding, runIframeRuntimeSync, scheduleDeferredIframeRuntimeSync]);
-
     const queuePlayerReflow = useCallback(() => {
         const pending = Array.isArray(playerReflowTimeoutsRef.current)
             ? playerReflowTimeoutsRef.current
@@ -4729,6 +4739,58 @@ export default function LearnPage() {
             tinCanSyncInFlightRef.current = false;
         }
     }, [content, getPrimaryActivityResumePath, detectActivityIndexFromIframe, selectedActivityIndex, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals, logLessonMapDebug]);
+    const runIframeRuntimeSync = useCallback(() => {
+        const frameWindow = iframeRef.current?.contentWindow;
+        hardenTinCanRuntimeWindow(frameWindow);
+        applyTinCanWrapperChrome();
+        bindIframeCloseHandler();
+        bindIframeInteractionTracking();
+        applyTincanResumeToIframe();
+        applyLegacyWebResumeToIframe();
+        syncTinCanActivityStatusFromIframe();
+        syncTincanPositionFromIframe();
+    }, [
+        hardenTinCanRuntimeWindow,
+        applyTinCanWrapperChrome,
+        bindIframeCloseHandler,
+        bindIframeInteractionTracking,
+        applyTincanResumeToIframe,
+        applyLegacyWebResumeToIframe,
+        syncTinCanActivityStatusFromIframe,
+        syncTincanPositionFromIframe,
+    ]);
+    const scheduleDeferredIframeRuntimeSync = useCallback(() => {
+        clearIframeDeferredSync();
+        iframeDeferredSyncTimeoutRef.current = setTimeout(() => {
+            iframeDeferredSyncTimeoutRef.current = null;
+            runIframeRuntimeSync();
+            forceTinCanReflow();
+        }, 1200);
+    }, [clearIframeDeferredSync, runIframeRuntimeSync, forceTinCanReflow]);
+    const bindInnerContentFrameLoadHandler = useCallback(() => {
+        clearInnerFrameLoadBinding();
+        try {
+            const frameWindow = iframeRef.current?.contentWindow;
+            const frameDoc = frameWindow?.document;
+            const contentFrameEl = frameDoc?.getElementById('contentFrame');
+            if (!contentFrameEl || typeof contentFrameEl.addEventListener !== 'function') return;
+
+            const onInnerLoad = () => {
+                runIframeRuntimeSync();
+                scheduleDeferredIframeRuntimeSync();
+            };
+            contentFrameEl.addEventListener('load', onInnerLoad);
+            innerFrameLoadCleanupRef.current = () => {
+                try {
+                    contentFrameEl.removeEventListener('load', onInnerLoad);
+                } catch {
+                    // ignore cleanup errors
+                }
+            };
+        } catch {
+            // ignore cross-frame access errors
+        }
+    }, [clearInnerFrameLoadBinding, runIframeRuntimeSync, scheduleDeferredIframeRuntimeSync]);
 
     const getMaxUnlockedActivityIndex = useCallback(() => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
