@@ -52,36 +52,7 @@ const ENROLLMENT_STATUS_RANK = {
 };
 const MAX_LESSON_OUTLINE_ITEMS = 30;
 const MAX_CONTEXT_TEXT_LENGTH = 200;
-const INTENT_CONFIDENCE_THRESHOLD = 0.56;
 const STREAM_CHUNK_SIZE = 90;
-
-function prefersThai(text = "") {
-    return /[\u0E00-\u0E7F]/.test(String(text || ""));
-}
-
-function buildClarificationReply(message = "") {
-    const thai = prefersThai(message);
-    if (thai) {
-        return `ผมอยากตอบให้ตรงที่สุดครับ แต่คำถามนี้ยังกว้างอยู่เล็กน้อย
-
-ต้องการให้ช่วยด้านไหน:
-1) สรุปสถานะการเรียนของฉัน (my-learning)
-2) สรุปบท/คอร์สที่กำลังเปิดอยู่ (course-detail)
-3) ช่วยแบบ hint only สำหรับแบบทดสอบ (quiz-hint-only)
-4) ข้อมูลเกี่ยวกับ SkillUp และทีม (about-skillup)
-
-พิมพ์หมายเลขหรือพิมพ์ชื่อหัวข้อได้เลยครับ`;
-    }
-    return `I want to answer accurately, but your request is a bit ambiguous.
-
-Which one do you want?
-1) My learning status summary
-2) Current course/lesson summary
-3) Quiz hint-only help
-4) About SkillUp project/team
-
-Reply with a number or topic name.`;
-}
 
 function splitTextForStreaming(text = "", chunkSize = STREAM_CHUNK_SIZE) {
     const raw = String(text || "");
@@ -778,10 +749,6 @@ export async function POST(request) {
         const injectionResult = detectPromptInjection(lastMessageText);
         if (injectionResult.matched) {
             return respondWithContent(buildSafetyReply("prompt_injection"), "rule:safety_prompt_injection");
-        }
-
-        if (intentResult.ambiguous || intentConfidence < INTENT_CONFIDENCE_THRESHOLD) {
-            return respondWithContent(buildClarificationReply(lastMessageText), "rule:intent_clarify");
         }
 
         if (intent === "about_skillup") {
