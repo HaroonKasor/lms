@@ -4,9 +4,14 @@ import { useState, useRef, useEffect } from "react";
 import { getChatSessionId, getUser } from "@/lib/auth";
 
 const quickActions = [
-    { label: "Summarize this page", prompt: "Summarize this page" },
+    { label: "Summarize this page", prompt: "Summarize this page", context: { intent: "course_detail" } },
     { label: "Give me a hint", prompt: "Give me a hint" },
     { label: "Define Terms", prompt: "Define Terms" },
+    {
+        label: "About SkillUp",
+        prompt: "About SkillUp",
+        context: { intent: "about_skillup" },
+    },
     {
         label: "สรุปสถานะการเรียนของฉัน",
         prompt: "สรุปสถานะการเรียนของฉัน",
@@ -353,7 +358,10 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
                         role: item.role,
                         content: item.content,
                     })),
-                    context: options?.context && typeof options.context === "object" ? options.context : undefined,
+                    context: {
+                        ...(options?.context && typeof options.context === "object" ? options.context : {}),
+                        pagePath: typeof window !== "undefined" ? window.location.pathname : "",
+                    },
                 }),
             });
             const data = await res.json();

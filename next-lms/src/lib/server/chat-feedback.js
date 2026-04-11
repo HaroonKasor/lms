@@ -1,5 +1,12 @@
 import prisma from '@/lib/prisma';
 import { getRequestIp } from '@/lib/server/auth';
+import {
+    hashPiiValue,
+    maskEmail,
+    maskIp,
+    maskUsername,
+    redactPiiText,
+} from '@/lib/server/pii';
 
 const CHAT_FEEDBACK_STORAGE_PREFIX = '__chat-feedback__/';
 const CHAT_FEEDBACK_ASSET_TYPE = 'document';
@@ -11,6 +18,8 @@ const DEFAULT_LIST_LIMIT = 20;
 const MAX_LIST_LIMIT = 100;
 const DEFAULT_WEEKLY_WINDOW = 8;
 const MAX_WEEKLY_WINDOW = 24;
+const PROMPT_TUNING_CACHE_TTL_MS = 1000 * 60 * 15;
+const MAX_PROMPT_HINT_REASONS = 6;
 
 function sanitizeText(value, maxLength = MAX_TEXT_LENGTH) {
     return String(value || '').trim().slice(0, maxLength);
@@ -149,6 +158,8 @@ function mapFeedbackRow(row, courseIndex = []) {
     const request = meta?.request && typeof meta.request === 'object' ? meta.request : {};
     const createdAt = normalizeDate(meta?.createdAt || row?.uploadedAt) || new Date().toISOString();
     const assistantMessage = sanitizeText(meta?.assistantMessage || '', MAX_TEXT_LENGTH);
+    const actorUsername = sanitizeText(actor?.usernameMasked || actor?.username, 120) || '-';
+    const actorEmail = sanitizeText(actor?.emailMasked || actor?.email, 255) || '-';
 
     return {
         id: Number(row?.id || 0),
@@ -159,8 +170,8 @@ function mapFeedbackRow(row, courseIndex = []) {
         courseTitle: courseTitle || '-',
         assistantMessage: assistantMessage || '-',
         actorUserId: Number(actor?.userId || row?.uploadedById || 0) || null,
-        actorUsername: sanitizeText(actor?.username, 120) || '-',
-        actorEmail: sanitizeText(actor?.email, 255) || '-',
+        actorUsername,
+        actorEmail,
         actorRole: sanitizeText(actor?.role, 30) || 'learner',
         messageId: sanitizeText(meta?.messageId, MAX_MESSAGE_ID_LENGTH) || null,
         requestPath: sanitizeText(request?.path, 120) || '-',
@@ -237,7 +248,7 @@ function sanitizeConversation(raw) {
         .slice(-MAX_CONVERSATION_ITEMS)
         .map((item) => ({
             role: String(item?.role || '').trim().toLowerCase() === 'assistant' ? 'assistant' : 'user',
-            content: sanitizeText(item?.content, 1200),
+            content: redactPiiText(item?.content, 1200),
         }))
         .filter((item) => item.content.length > 0);
 }
@@ -292,21 +303,22 @@ export async function createChatFeedback({
         kind: 'chat_feedback',
         source: 'chat_panel',
         rating: safeRating,
-        reason: sanitizeText(reason, MAX_REASON_LENGTH) || null,
+        reason: redactPiiText(reason, MAX_REASON_LENGTH) || null,
         messageId: safeMessageId || null,
-        assistantMessage: safeAssistantMessage,
+        assistantMessage: redactPiiText(safeAssistantMessage, MAX_TEXT_LENGTH),
         conversation: sanitizeConversation(conversation),
         actor: {
             userId: actorUserId,
-            username: sanitizeText(session?.user?.username, 120),
-            email: sanitizeText(session?.user?.email, 255),
+            userRef: `usr_${hashPiiValue(actorUserId)}`,
+            usernameMasked: maskUsername(session?.user?.username),
+            emailMasked: maskEmail(session?.user?.email),
             role: normalizeRole(session?.role),
             organizationId,
         },
         request: {
             method: sanitizeText(request?.method, 8) || 'POST',
             path: '/api/chat-feedback',
-            ip: getRequestIp(request),
+            ipMasked: maskIp(getRequestIp(request)),
             userAgent: sanitizeText(request?.headers?.get('user-agent'), 255),
             pagePath: sanitizeText(pagePath, 220) || null,
         },
@@ -523,4 +535,85 @@ export async function buildWeeklyChatFeedbackInsights({
         topNegativeReasons,
         topCourseIssues,
     };
+}
+
+function getPromptTuningCacheStore() {
+    if (!globalThis.__chatPromptTuningCacheStore) {
+        globalThis.__chatPromptTuningCacheStore = new Map();
+    }
+    return globalThis.__chatPromptTuningCacheStore;
+}
+
+function readPromptTuningCache(cacheKey) {
+    if (!cacheKey) return '';
+    const cache = getPromptTuningCacheStore();
+    const cached = cache.get(cacheKey);
+    if (!cached) return '';
+    if (Date.now() - Number(cached.cachedAtMs || 0) > PROMPT_TUNING_CACHE_TTL_MS) {
+        cache.delete(cacheKey);
+        return '';
+    }
+    return String(cached.value || '');
+}
+
+function writePromptTuningCache(cacheKey, value) {
+    if (!cacheKey) return;
+    const cache = getPromptTuningCacheStore();
+    cache.set(cacheKey, {
+        value: String(value || ''),
+        cachedAtMs: Date.now(),
+    });
+}
+
+export async function buildPromptTuningHints({
+    organizationId,
+    weeks = DEFAULT_WEEKLY_WINDOW,
+    maxReasons = MAX_PROMPT_HINT_REASONS,
+} = {}) {
+    const orgId = Number(organizationId || 0);
+    if (!Number.isInteger(orgId) || orgId <= 0) return '';
+    const safeWeeks = Math.max(1, Math.min(MAX_WEEKLY_WINDOW, toPositiveInt(weeks, DEFAULT_WEEKLY_WINDOW)));
+    const safeMaxReasons = Math.max(1, Math.min(MAX_PROMPT_HINT_REASONS, toPositiveInt(maxReasons, 4)));
+    const cacheKey = `${orgId}:${safeWeeks}:${safeMaxReasons}`;
+    const cached = readPromptTuningCache(cacheKey);
+    if (cached) return cached;
+
+    const insights = await buildWeeklyChatFeedbackInsights({
+        organizationId: orgId,
+        weeks: safeWeeks,
+    });
+    const reasons = Array.isArray(insights?.topNegativeReasons) ? insights.topNegativeReasons : [];
+    const negativeRate = Number(insights?.totals?.notHelpfulRatePercent || 0);
+    if (reasons.length === 0 || negativeRate <= 0) {
+        writePromptTuningCache(cacheKey, '');
+        return '';
+    }
+
+    const reasonLines = reasons
+        .slice(0, safeMaxReasons)
+        .map((item, index) => {
+            const reasonText = redactPiiText(item?.reason, 180);
+            const count = toNonNegativeInt(item?.count, 0);
+            if (!reasonText) return null;
+            return `${index + 1}) ${reasonText} (พบ ${count} ครั้ง)`;
+        })
+        .filter(Boolean);
+
+    if (reasonLines.length === 0) {
+        writePromptTuningCache(cacheKey, '');
+        return '';
+    }
+
+    const hintText = `แนวทางปรับคำตอบจาก feedback เชิงลบล่าสุด (${safeWeeks} สัปดาห์):
+- อัตรา Not Helpful ปัจจุบัน: ${negativeRate}%
+- ประเด็นที่พบบ่อย:
+${reasonLines.join('\n')}
+
+ข้อกำหนดการตอบ:
+- ตอบให้ตรงคำถามก่อน แล้วค่อยเสริมรายละเอียดที่จำเป็น
+- ใช้ภาษาสั้น ชัดเจน และหลีกเลี่ยงความกำกวม
+- หากข้อมูลไม่พอ ให้บอกข้อจำกัดอย่างตรงไปตรงมา และเสนอขั้นตอนถัดไป`;
+
+    writePromptTuningCache(cacheKey, hintText);
+    return hintText;
 }

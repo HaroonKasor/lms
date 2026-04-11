@@ -1,5 +1,6 @@
 import { getRequestIp } from '@/lib/server/auth';
 import { writeAdminAudit } from '@/lib/server/admin-audit';
+import { maskEmail, maskIp, maskUsername } from '@/lib/server/pii';
 
 function normalizeString(value, fallback = '') {
     const text = String(value || '').trim();
@@ -55,8 +56,8 @@ export async function logMyLearningSummaryAccess({
         await writeAdminAudit({
             organizationId,
             actorUserId: Number.isInteger(actorUserId) && actorUserId > 0 ? actorUserId : null,
-            actorUsername: normalizeString(session?.user?.username),
-            actorEmail: normalizeString(session?.user?.email),
+            actorUsername: maskUsername(session?.user?.username) || normalizeString(session?.user?.username),
+            actorEmail: maskEmail(session?.user?.email) || normalizeString(session?.user?.email),
             action: 'READ_MY_LEARNING_SUMMARY',
             entity: 'LEARNING_SUMMARY',
             message: `User requested learning summary via ${safeSource}`,
@@ -64,7 +65,7 @@ export async function logMyLearningSummaryAccess({
             request: {
                 method: normalizeString(request?.method, 'GET'),
                 path,
-                ip: getRequestIp(request),
+                ip: maskIp(getRequestIp(request)) || normalizeString(getRequestIp(request)),
                 userAgent: normalizeString(request?.headers?.get('user-agent')).slice(0, 255),
             },
             details: {

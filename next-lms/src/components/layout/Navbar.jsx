@@ -5,10 +5,15 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import ChatPanel from '@/components/ui/ChatPanel';
 import { clearUser, getRememberMePreference, getUser, saveUser } from '@/lib/auth';
+import { buildChatTeaserRouteKey, resolveChatTeaserMessage } from '@/lib/chat-teaser';
 
 const DEFAULT_AVATAR_URL = '/images/default-avatar.svg';
 const NOTIFICATION_POLLING_MS = 30000;
 const NOTIFICATION_REQUEST_TIMEOUT_MS = 4500;
+const CHAT_TEASER_LAST_SHOWN_KEY = 'lms_ui_chat_teaser_last_shown_v1';
+const CHAT_TEASER_DISMISSED_PREFIX = 'lms_ui_chat_teaser_dismissed_v1';
+const CHAT_TEASER_COOLDOWN_MS = 45 * 60 * 1000;
+const CHAT_TEASER_AUTO_HIDE_MS = 7000;
 
 function formatRelativeTime(value, nowMs = Date.now()) {
     const date = new Date(value || 0);
@@ -101,6 +106,7 @@ export default function Navbar() {
     const [loadingNotifications, setLoadingNotifications] = useState(false);
     const [notificationToasts, setNotificationToasts] = useState([]);
     const [showChat, setShowChat] = useState(false);
+    const [showChatTeaser, setShowChatTeaser] = useState(false);
     const [showMobileNav, setShowMobileNav] = useState(false);
     const [chatPrefLoaded, setChatPrefLoaded] = useState(false);
     const productsRef = useRef(null);
@@ -349,6 +355,46 @@ export default function Navbar() {
     }, [showChat, chatPrefLoaded]);
 
     useEffect(() => {
+        if (!chatPrefLoaded || isPublicPage || !user || showChat || !chatTeaserMessage) {
+            setShowChatTeaser(false);
+            return undefined;
+        }
+
+        let revealTimer = null;
+        try {
+            const now = Date.now();
+            const lastShownAt = Number(localStorage.getItem(CHAT_TEASER_LAST_SHOWN_KEY) || 0);
+            const dismissKey = `${CHAT_TEASER_DISMISSED_PREFIX}:${chatTeaserUserScope}:${chatTeaserRouteKey}`;
+            const dismissed = localStorage.getItem(dismissKey) === '1';
+            if (dismissed || now - lastShownAt < CHAT_TEASER_COOLDOWN_MS) {
+                setShowChatTeaser(false);
+                return undefined;
+            }
+
+            revealTimer = setTimeout(() => {
+                setShowChatTeaser(true);
+                try {
+                    localStorage.setItem(CHAT_TEASER_LAST_SHOWN_KEY, String(Date.now()));
+                } catch {
+                    // ignore storage write errors
+                }
+            }, 900);
+        } catch {
+            setShowChatTeaser(false);
+        }
+
+        return () => {
+            if (revealTimer) clearTimeout(revealTimer);
+        };
+    }, [chatPrefLoaded, isPublicPage, user, showChat, chatTeaserMessage, chatTeaserRouteKey, chatTeaserUserScope]);
+
+    useEffect(() => {
+        if (!showChatTeaser) return undefined;
+        const timer = setTimeout(() => setShowChatTeaser(false), CHAT_TEASER_AUTO_HIDE_MS);
+        return () => clearTimeout(timer);
+    }, [showChatTeaser]);
+
+    useEffect(() => {
         setShowMobileNav(false);
     }, [pathname]);
 
@@ -400,6 +446,16 @@ export default function Navbar() {
         return () => clearTimeout(timer);
     }, [pathname]);
 
+    const dismissChatTeaser = (persistDismiss = true) => {
+        setShowChatTeaser(false);
+        if (!persistDismiss) return;
+        try {
+            localStorage.setItem(`${CHAT_TEASER_DISMISSED_PREFIX}:${chatTeaserUserScope}:${chatTeaserRouteKey}`, '1');
+        } catch {
+            // ignore storage write errors
+        }
+    };
+
     const handleLogout = async () => {
         try {
             await fetch('/api/auth/logout', {
@@ -423,6 +479,7 @@ export default function Navbar() {
         setNotifications([]);
         setUnreadNotificationCount(0);
         setShowChat(false);
+        setShowChatTeaser(false);
         if (typeof window !== 'undefined') {
             window.location.replace(`/login?force=1&loggedOut=1&t=${Date.now()}`);
             return;
@@ -433,6 +490,15 @@ export default function Navbar() {
     const displayName = user?.fullName || user?.username || 'User';
     const shortName = displayName.length > 15 ? displayName.slice(0, 12) + '...' : displayName;
     const avatarUrl = String(user?.avatar || '').trim() || DEFAULT_AVATAR_URL;
+    const chatTeaserRouteKey = React.useMemo(() => buildChatTeaserRouteKey(pathname), [pathname]);
+    const chatTeaserMessage = React.useMemo(
+        () => resolveChatTeaserMessage(pathname, Boolean(user)),
+        [pathname, user]
+    );
+    const chatTeaserUserScope = React.useMemo(() => {
+        const id = String(user?.id || user?.username || user?.email || 'guest').trim() || 'guest';
+        return `user:${id}`;
+    }, [user]);
 
     // Close dropdowns when clicking outside
     useEffect(() => {
@@ -808,8 +874,37 @@ export default function Navbar() {
 
                         {/* AI Chat Icon */}
                         <div className="relative ml-1 sm:ml-4" ref={chatRef}>
+                            {showChatTeaser ? (
+                                <div className="hidden sm:block absolute right-0 top-[calc(100%+10px)] w-[250px] rounded-xl border border-[#D9E3FF] bg-white px-3 py-2.5 shadow-[0_14px_34px_rgba(8,20,55,0.14)] z-40">
+                                    <button
+                                        type="button"
+                                        onClick={() => dismissChatTeaser(true)}
+                                        className="absolute right-2 top-1.5 text-[16px] leading-none text-[#92A1BC] hover:text-[#5D6B86]"
+                                        aria-label="Dismiss suggestion"
+                                    >
+                                        ×
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            dismissChatTeaser(true);
+                                            setShowChat(true);
+                                        }}
+                                        className="block w-full pr-5 text-left text-[12px] leading-5 text-[#243B66]"
+                                    >
+                                        {chatTeaserMessage}
+                                    </button>
+                                    <span
+                                        aria-hidden="true"
+                                        className="absolute -top-1.5 right-6 h-3 w-3 rotate-45 border-l border-t border-[#D9E3FF] bg-white"
+                                    />
+                                </div>
+                            ) : null}
                             <button
-                                onClick={() => setShowChat((v) => !v)}
+                                onClick={() => {
+                                    dismissChatTeaser(false);
+                                    setShowChat((v) => !v);
+                                }}
                                 title="SkillBot AI Assistant"
                                 className="cursor-pointer shrink-0 flex items-center justify-center hover:opacity-80 transition-opacity focus:outline-none"
                             >

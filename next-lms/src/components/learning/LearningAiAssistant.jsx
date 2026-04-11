@@ -5,7 +5,7 @@ import { X, Menu, Send, ChevronRight, Sparkles, BookOpen, Lightbulb, FileText } 
 import { useMemo, useRef, useState, useEffect } from 'react';
 
 const STUDY_ACTIONS = [
-    { icon: FileText, label: 'Summarize this page', prompt: 'Summarize this lesson into key takeaways.' },
+    { icon: FileText, label: 'Summarize this page', prompt: 'Summarize this lesson into key takeaways.', intent: 'course_detail' },
     { icon: Lightbulb, label: 'Give me a hint', prompt: 'Give me a short hint to understand this lesson better.' },
     { icon: BookOpen, label: 'Define Terms', prompt: 'List important terms from this lesson and define each briefly.' },
 ];
@@ -18,9 +18,9 @@ const VIDEO_STUDY_ACTION = {
 };
 
 const ASSESSMENT_ACTIONS = [
-    { icon: Lightbulb, label: 'Give me a hint', prompt: 'Give me a hint only, no direct final answer.' },
-    { icon: BookOpen, label: 'Explain concept', prompt: 'Explain the core concept I need for this question without giving the final answer.' },
-    { icon: FileText, label: 'How to think', prompt: 'Show a step-by-step thinking method for solving similar questions.' },
+    { icon: Lightbulb, label: 'Give me a hint', prompt: 'Give me a hint only, no direct final answer.', intent: 'quiz_hint_only' },
+    { icon: BookOpen, label: 'Explain concept', prompt: 'Explain the core concept I need for this question without giving the final answer.', intent: 'quiz_hint_only' },
+    { icon: FileText, label: 'How to think', prompt: 'Show a step-by-step thinking method for solving similar questions.', intent: 'quiz_hint_only' },
 ];
 
 const ASSESSMENT_TITLE_PATTERN = /(quiz|exam|test|assessment|แบบทดสอบ|ข้อสอบ|post[- ]?test|pre[- ]?test|midterm|final)/i;
@@ -146,6 +146,7 @@ export default function LearningAiAssistant({
                         lessonSrc: String(lessonSrc || '').trim(),
                         intent: String(options?.intent || '').trim(),
                         useVideoTranscript: Boolean(options?.useVideoTranscript),
+                        pagePath: typeof window !== 'undefined' ? window.location.pathname : '',
                     },
                 }),
             });

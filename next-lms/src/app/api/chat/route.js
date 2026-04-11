@@ -1,8 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import * as YoutubeTranscriptPkg from "youtube-transcript";
 import { requireSession } from "@/lib/server/auth";
+import { createStructuredChatLog } from "@/lib/server/chat-logs";
+import { buildPromptTuningHints } from "@/lib/server/chat-feedback";
 import { buildMyLearningSummary } from "@/lib/server/my-learning-summary";
 import { logMyLearningSummaryAccess } from "@/lib/server/my-learning-summary-audit";
+import { buildAboutSkillupResponse, isAboutSkillupIntent } from "@/lib/server/skillup-profile";
 
 const SYSTEM_PROMPT = `คุณคือ "SkillBot" ผู้ช่วย AI ของแพลตฟอร์มการเรียนรู้ SkillUp LMS
 หน้าที่ของคุณคือ:
@@ -13,7 +16,8 @@ const SYSTEM_PROMPT = `คุณคือ "SkillBot" ผู้ช่วย AI �
 - ช่วยแก้ปัญหาที่เกี่ยวข้องกับการใช้งานระบบ LMS
 
 ตอบภาษาเดียวกับที่ผู้ใช้ถาม (ไทยตอบไทย, อังกฤษตอบอังกฤษ)
-ตอบกระชับ ชัดเจน และเป็นมิตร`;
+ตอบกระชับ ชัดเจน และเป็นมิตร
+- หากคำถามเกี่ยวข้องกับข้อมูลผู้ใช้ ให้ตอบโดยอิงข้อมูลของผู้ใช้ที่ร้องขอเท่านั้น และห้ามเปิดเผยข้อมูลของผู้ใช้อื่น`;
 
 const MODEL_CANDIDATES = [
     // Keep broadly available and currently supported models first.
@@ -31,6 +35,7 @@ const TRANSCRIPT_REQUEST_PATTERN = /(summarize|summary|transcript|video|clip|exp
 const DIRECT_ANSWER_REQUEST_PATTERN = /(คำตอบที่ถูก|เฉลย|ตอบข้อไหน|ตัวเลือกที่ถูก|ข้อที่ถูก|answer\s*(is|=)|correct answer|which option|choose (a|b|c|d)|เลือกข้อ|เลือกตัวเลือก|ระหว่าง\s*[กขคงabcd]|(?:[กขคง]\.|[a-d][\.\)])[\s\S]{0,160}(?:[กขคง]\.|[a-d][\.\)]))/i;
 const DIRECT_ANSWER_RESPONSE_PATTERN = /(คำตอบที่ถูก|เฉลยคือ|ตอบที่|correct answer|answer is|ตัวเลือกที่ถูก|ดังนั้นคำตอบ|ข้อตอบ)/i;
 const LEARNING_PROGRESS_INTENT_PATTERN = /(ความคืบหน้า|สถานะการเรียน|เรียนไปกี่|กี่เปอร์เซ็น|กี่ %|เรียนจบ|จบยัง|คอร์สที่เรียน|วิชาที่เรียน|progress|completion|completed|finished|how much.*learn|my course status|enroll(?:ed|ment)? status)/i;
+const COURSE_DETAIL_INTENT_PATTERN = /(คอร์สนี้|บทนี้|หน้านี้|current course|current lesson|course detail|lesson detail|ฉันกำลังเรียนอะไร|what course am i on|what lesson am i on)/i;
 const YOUTUBE_HOST_PATTERN = /(?:youtube\.com|youtu\.be)/i;
 const TRANSCRIPT_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const MAX_TRANSCRIPT_CHARS = 12000;
@@ -354,12 +359,62 @@ function buildNoAnswerPolicyReply() {
 พิมพ์ว่า "ขอ hint ทีละขั้น" ได้เลยครับ`;
 }
 
-function buildSystemInstruction(context = {}) {
+function hasCourseDetailContext(context = {}) {
+    return Boolean(
+        String(context?.courseTitle || "").trim()
+        || String(context?.lessonTitle || "").trim()
+        || String(context?.sectionTitle || "").trim()
+    );
+}
+
+function resolveChatIntent(context = {}, lastMessageText = "", assessmentMode = false) {
+    const explicitIntent = String(context?.intent || "").trim().toLowerCase();
+    if (explicitIntent === "my_learning_progress" || explicitIntent === "my_learning" || explicitIntent === "my_learning_summary") return "my_learning";
+    if (explicitIntent === "about_skillup") return "about_skillup";
+    if (explicitIntent === "course_detail") return "course_detail";
+    if (explicitIntent === "quiz_hint_only") return "quiz_hint_only";
+    if (assessmentMode) return "quiz_hint_only";
+    if (shouldUseLearningProgressContext(context, lastMessageText)) return "my_learning";
+    if (isAboutSkillupIntent(lastMessageText, context)) return "about_skillup";
+    if (hasCourseDetailContext(context) && COURSE_DETAIL_INTENT_PATTERN.test(lastMessageText)) return "course_detail";
+    return "general";
+}
+
+function buildPromptWithIntentRouting(basePrompt, context = {}, intent = "general") {
+    if (intent === "course_detail") {
+        const courseTitle = sanitizeContextText(context?.courseTitle, 180);
+        const lessonTitle = sanitizeContextText(context?.lessonTitle, 180);
+        const sectionTitle = sanitizeContextText(context?.sectionTitle, 180);
+        return `${basePrompt}
+
+Intent ที่ตรวจพบ: course_detail
+ข้อมูลที่เชื่อถือได้:
+- Course: ${courseTitle || "-"}
+- Section/Page: ${sectionTitle || "-"}
+- Lesson: ${lessonTitle || "-"}
+
+คำสั่งเพิ่มเติม:
+- ตอบให้ชัดเจนว่าผู้ใช้กำลังอยู่คอร์ส/บทใดจากข้อมูลด้านบน
+- หากผู้ใช้ขอสรุปบทปัจจุบัน ให้สรุปตามบริบทนี้ก่อนเสมอ`;
+    }
+    if (intent === "quiz_hint_only") {
+        return `${basePrompt}
+
+Intent ที่ตรวจพบ: quiz_hint_only
+คำสั่งเพิ่มเติม:
+- โหมดนี้ต้องให้ hint เท่านั้น
+- ห้ามเฉลยคำตอบหรือบอกตัวเลือกที่ถูกต้องโดยตรง`;
+    }
+    return basePrompt;
+}
+
+function buildSystemInstruction(context = {}, options = {}) {
     const lessonTitle = sanitizeContextText(context?.lessonTitle, 180);
     const courseTitle = sanitizeContextText(context?.courseTitle, 180);
-    const isAssessment = isAssessmentContext(context);
+    const isAssessment = Boolean(options?.assessmentMode ?? isAssessmentContext(context));
     const lessonContextLine = lessonTitle ? `\n\nบริบทบทเรียนปัจจุบัน: ${lessonTitle}` : "";
     const courseContextLine = courseTitle ? `\nคอร์สปัจจุบัน: ${courseTitle}` : "";
+    const weeklyFeedbackHints = String(options?.weeklyFeedbackHints || "").trim().slice(0, 2400);
     const assessmentRules = isAssessment
         ? `
 
@@ -368,7 +423,8 @@ function buildSystemInstruction(context = {}) {
 - ให้เฉลยเชิงแนวคิด, วิธีคิดทีละขั้น, และ hint แทน
 - ถ้าผู้ใช้ขอเฉลยตรง ๆ ให้ปฏิเสธอย่างสุภาพ แล้วช่วยชี้แนวทางแทน`
         : "";
-    return `${SYSTEM_PROMPT}${courseContextLine}${lessonContextLine}${assessmentRules}`;
+    const tuningHints = weeklyFeedbackHints ? `\n\n${weeklyFeedbackHints}` : "";
+    return `${SYSTEM_PROMPT}${courseContextLine}${lessonContextLine}${assessmentRules}${tuningHints}`;
 }
 
 function buildOpenRouterMessages(messages = [], finalMessageForModel = "", systemInstruction = "") {
@@ -520,19 +576,88 @@ export async function POST(request) {
             return Response.json({ error: "Message content is required" }, { status: 400 });
         }
         const assessmentMode = isAssessmentContext(context);
+        const intent = resolveChatIntent(context, lastMessageText, assessmentMode);
+        const quizHintOnlyMode = assessmentMode || intent === "quiz_hint_only";
+
+        let cachedSession = null;
+        let hasLoadedSession = false;
+        const getOptionalSession = async () => {
+            if (hasLoadedSession) return cachedSession;
+            hasLoadedSession = true;
+            try {
+                const { session } = await requireSession(request);
+                cachedSession = session || null;
+            } catch {
+                cachedSession = null;
+            }
+            return cachedSession;
+        };
+
+        const writeChatLog = async ({
+            assistantReply = "",
+            provider = "rule",
+            status = "ok",
+            errorMessage = "",
+        } = {}) => {
+            try {
+                const session = await getOptionalSession();
+                if (!session) return;
+                await createStructuredChatLog({
+                    request,
+                    session,
+                    messages,
+                    context: {
+                        ...context,
+                        intent,
+                        pagePath: String(context?.pagePath || "").trim() || null,
+                    },
+                    intent,
+                    provider,
+                    status,
+                    assistantReply,
+                    errorMessage,
+                });
+            } catch (err) {
+                console.warn("[chat] structured log failed", err?.message || err);
+            }
+        };
+
+        const respondWithContent = async (content, provider = "rule") => {
+            await writeChatLog({
+                assistantReply: content,
+                provider,
+                status: "ok",
+            });
+            return Response.json({ content });
+        };
+
+        const respondWithError = async (errorMessage, statusCode = 500, provider = "system") => {
+            await writeChatLog({
+                assistantReply: "",
+                provider,
+                status: "error",
+                errorMessage,
+            });
+            return Response.json({ error: errorMessage }, { status: statusCode });
+        };
+
+        if (intent === "about_skillup") {
+            return respondWithContent(buildAboutSkillupResponse(lastMessageText), "rule:about_skillup");
+        }
 
         // Hard guardrail: never provide direct answers in quizzes/exams.
-        if (assessmentMode && DIRECT_ANSWER_REQUEST_PATTERN.test(lastMessageText)) {
-            return Response.json({ content: buildNoAnswerPolicyReply() });
+        if (quizHintOnlyMode && DIRECT_ANSWER_REQUEST_PATTERN.test(lastMessageText)) {
+            return respondWithContent(buildNoAnswerPolicyReply(), "rule:quiz_guardrail");
         }
 
         let learningSummary = null;
-        if (shouldUseLearningProgressContext(context, lastMessageText)) {
+        if (intent === "my_learning") {
             const { session, response } = await requireSession(request);
             if (response) {
-                return Response.json({
-                    content: "หากต้องการดูความคืบหน้าการเรียน กรุณาเข้าสู่ระบบก่อนครับ",
-                });
+                return respondWithContent(
+                    "หากต้องการดูความคืบหน้าการเรียน กรุณาเข้าสู่ระบบก่อนครับ",
+                    "rule:my_learning_auth"
+                );
             }
             const courseQuery = extractCourseQuery(lastMessageText, context);
             learningSummary = await buildMyLearningSummary({
@@ -550,9 +675,10 @@ export async function POST(request) {
                         totalCourses: 0,
                         status: "course_not_found",
                     });
-                    return Response.json({
-                        content: `ไม่พบคอร์สชื่อ "${courseQuery}" ในรายการเรียนของบัญชีนี้ครับ`,
-                    });
+                    return respondWithContent(
+                        `ไม่พบคอร์สชื่อ "${courseQuery}" ในรายการเรียนของบัญชีนี้ครับ`,
+                        "rule:my_learning"
+                    );
                 }
                 await logMyLearningSummaryAccess({
                     request,
@@ -562,9 +688,10 @@ export async function POST(request) {
                     totalCourses: 0,
                     status: "no_course",
                 });
-                return Response.json({
-                    content: "ตอนนี้ยังไม่พบคอร์สที่ลงทะเบียนไว้ในบัญชีนี้ครับ",
-                });
+                return respondWithContent(
+                    "ตอนนี้ยังไม่พบคอร์สที่ลงทะเบียนไว้ในบัญชีนี้ครับ",
+                    "rule:my_learning"
+                );
             }
             await logMyLearningSummaryAccess({
                 request,
@@ -574,9 +701,10 @@ export async function POST(request) {
                 totalCourses: Number(learningSummary?.totals?.totalCourses || 0),
                 status: "ok",
             });
-            return Response.json({
-                content: buildLearningProgressTableResponse(learningSummary),
-            });
+            return respondWithContent(
+                buildLearningProgressTableResponse(learningSummary),
+                "rule:my_learning"
+            );
         }
 
         let transcriptText = null;
@@ -590,9 +718,10 @@ export async function POST(request) {
             }
         }
         if (transcriptRequested && !transcriptText) {
-            return Response.json({
-                content: "ตอนนี้ดึง subtitle จากวิดีโอนี้ไม่ได้ จึงสรุปจากคลิปตรง ๆ ให้ไม่ได้ในขณะนี้ ลองใช้คลิปที่เปิดคำบรรยาย (CC) หรือส่งประเด็นที่ไม่เข้าใจมา แล้วฉันจะช่วยอธิบายให้ทันทีครับ",
-            });
+            return respondWithContent(
+                "ตอนนี้ดึง subtitle จากวิดีโอนี้ไม่ได้ จึงสรุปจากคลิปตรง ๆ ให้ไม่ได้ในขณะนี้ ลองใช้คลิปที่เปิดคำบรรยาย (CC) หรือส่งประเด็นที่ไม่เข้าใจมา แล้วฉันจะช่วยอธิบายให้ทันทีครับ",
+                "rule:transcript_unavailable"
+            );
         }
 
         const transcriptEnrichedPrompt = buildPromptWithTranscript(
@@ -601,7 +730,8 @@ export async function POST(request) {
             String(context?.lessonTitle || "").trim()
         );
         const promptWithLessonContext = buildPromptWithLessonContext(transcriptEnrichedPrompt, context);
-        const finalMessageForModel = buildPromptWithLearningSummary(promptWithLessonContext, learningSummary);
+        const promptWithIntent = buildPromptWithIntentRouting(promptWithLessonContext, context, intent);
+        const finalMessageForModel = buildPromptWithLearningSummary(promptWithIntent, learningSummary);
 
         // Try each model candidate until one succeeds.
         // Some API keys/projects may not have access to specific model versions,
@@ -609,7 +739,17 @@ export async function POST(request) {
         let lastError = null;
         let sawQuotaError = false;
         let sawFallbackProviderError = false;
-        const systemInstruction = buildSystemInstruction(context);
+        const sessionForPromptTuning = await getOptionalSession();
+        const weeklyFeedbackHints = sessionForPromptTuning
+            ? await buildPromptTuningHints({
+                organizationId: Number(sessionForPromptTuning?.organizationId || 0),
+                weeks: 8,
+            })
+            : "";
+        const systemInstruction = buildSystemInstruction(context, {
+            assessmentMode: quizHintOnlyMode,
+            weeklyFeedbackHints,
+        });
         if (genAI) {
             for (const modelName of buildModelCandidates()) {
                 try {
@@ -620,10 +760,10 @@ export async function POST(request) {
                     const chat = model.startChat(history.length > 0 ? { history } : {});
                     const result = await chat.sendMessage(finalMessageForModel);
                     const text = String(result.response.text() || "").trim();
-                    if (assessmentMode && DIRECT_ANSWER_RESPONSE_PATTERN.test(text)) {
-                        return Response.json({ content: buildNoAnswerPolicyReply() });
+                    if (quizHintOnlyMode && DIRECT_ANSWER_RESPONSE_PATTERN.test(text)) {
+                        return respondWithContent(buildNoAnswerPolicyReply(), "rule:quiz_guardrail");
                     }
-                    return Response.json({ content: text });
+                    return respondWithContent(text, `gemini:${modelName}`);
                 } catch (err) {
                     lastError = err;
                     const status = extractErrorStatus(err);
@@ -658,10 +798,10 @@ export async function POST(request) {
                     systemInstruction,
                 });
                 console.warn("Chat fallback provider used: OpenRouter");
-                if (assessmentMode && DIRECT_ANSWER_RESPONSE_PATTERN.test(fallbackText)) {
-                    return Response.json({ content: buildNoAnswerPolicyReply() });
+                if (quizHintOnlyMode && DIRECT_ANSWER_RESPONSE_PATTERN.test(fallbackText)) {
+                    return respondWithContent(buildNoAnswerPolicyReply(), "rule:quiz_guardrail");
                 }
-                return Response.json({ content: fallbackText });
+                return respondWithContent(fallbackText, `openrouter:${openRouterConfig.model}`);
             } catch (fallbackErr) {
                 lastError = fallbackErr;
                 const fallbackStatus = extractErrorStatus(fallbackErr);
@@ -684,10 +824,10 @@ export async function POST(request) {
                     systemInstruction,
                 });
                 console.warn("Chat fallback provider used: Groq");
-                if (assessmentMode && DIRECT_ANSWER_RESPONSE_PATTERN.test(groqText)) {
-                    return Response.json({ content: buildNoAnswerPolicyReply() });
+                if (quizHintOnlyMode && DIRECT_ANSWER_RESPONSE_PATTERN.test(groqText)) {
+                    return respondWithContent(buildNoAnswerPolicyReply(), "rule:quiz_guardrail");
                 }
-                return Response.json({ content: groqText });
+                return respondWithContent(groqText, `groq:${groqConfig.model}`);
             } catch (groqErr) {
                 lastError = groqErr;
                 const groqStatus = extractErrorStatus(groqErr);
@@ -702,24 +842,27 @@ export async function POST(request) {
 
         if (sawFallbackProviderError) {
             console.error("Fallback AI provider is unavailable/misconfigured:", lastError);
-            return Response.json(
-                { error: "ผู้ให้บริการ AI สำรองยังไม่พร้อมใช้งาน กรุณาตรวจสอบการตั้งค่า OpenRouter/Groq และสิทธิ์โมเดล" },
-                { status: 503 }
+            return respondWithError(
+                "ผู้ให้บริการ AI สำรองยังไม่พร้อมใช้งาน กรุณาตรวจสอบการตั้งค่า OpenRouter/Groq และสิทธิ์โมเดล",
+                503,
+                "system:fallback_error"
             );
         }
 
         if (sawQuotaError) {
             console.error("All configured AI providers quota exceeded:", lastError);
-            return Response.json(
-                { error: "AI หมดโควต้าชั่วคราว กรุณาลองใหม่อีกครั้งในอีกสักครู่" },
-                { status: 429 }
+            return respondWithError(
+                "AI หมดโควต้าชั่วคราว กรุณาลองใหม่อีกครั้งในอีกสักครู่",
+                429,
+                "system:quota"
             );
         }
 
         console.error("All configured AI providers unavailable:", lastError);
-        return Response.json(
-            { error: "คีย์ AI ปัจจุบันยังไม่พร้อมใช้งาน กรุณาตรวจสอบการตั้งค่า Gemini/OpenRouter/Groq และสิทธิ์การใช้งาน" },
-            { status: 503 }
+        return respondWithError(
+            "คีย์ AI ปัจจุบันยังไม่พร้อมใช้งาน กรุณาตรวจสอบการตั้งค่า Gemini/OpenRouter/Groq และสิทธิ์การใช้งาน",
+            503,
+            "system:provider_unavailable"
         );
     } catch (error) {
         console.error("AI Provider Error:", error);
