@@ -89,6 +89,7 @@ export default function Navbar() {
     const [isHydrated, setIsHydrated] = useState(false);
     const [relativeNowMs, setRelativeNowMs] = useState(0);
     const isAdmin = user?.role === 'admin';
+    const canAccessBackend = user?.role === 'admin' || user?.role === 'instructor';
     const isPublicPage = ['/', '/about', '/contact'].includes(pathname);
 
     const isActive = (path) => pathname === path;
@@ -513,7 +514,7 @@ export default function Navbar() {
 
                                 </Link>
                             ))}
-                            {isAdmin && (
+                            {canAccessBackend && (
                                 <Link
                                     href="/admin-dashboard"
                                     className={`text-lg transition-colors relative ${isActive('/admin-dashboard')
@@ -860,7 +861,7 @@ export default function Navbar() {
                                 ]
                                 : [
                                     ...navItems,
-                                    ...(isAdmin ? [{ href: '/admin-dashboard', label: 'Backend' }] : []),
+                                    ...(canAccessBackend ? [{ href: '/admin-dashboard', label: 'Backend' }] : []),
                                 ]
                             ).map((item) => (
                                 <Link

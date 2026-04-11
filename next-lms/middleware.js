@@ -29,6 +29,20 @@ const USER_PROTECTED_PREFIXES = [
 ];
 const ADMIN_PREFIX = '/admin-dashboard';
 const API_ADMIN_PREFIX = '/api/admin';
+const INSTRUCTOR_ADMIN_ALLOW_PREFIXES = [
+    '/admin-dashboard',
+    '/admin-dashboard/learn/category',
+    '/admin-dashboard/learn/course',
+    '/admin-dashboard/learn/learner-status',
+    '/admin-dashboard/content',
+    '/admin-dashboard/report/learner-status',
+    '/admin-dashboard/report/attempt-report',
+    '/admin-dashboard/report/examination-score',
+    '/admin-dashboard/report/certificate-report',
+];
+const INSTRUCTOR_ADMIN_ALLOW_API_PATHS = new Set([
+    '/api/admin/stats',
+]);
 
 const API_RATE_LIMIT_AUTH = {
     windowMs: 10 * 60 * 1000,
@@ -80,7 +94,14 @@ function loginRedirect(request) {
 }
 
 function dashboardByRole(role) {
-    return role === 'admin' ? '/admin-dashboard' : '/dashboard';
+    return role === 'admin' || role === 'instructor' ? '/admin-dashboard' : '/dashboard';
+}
+
+function isInstructorAllowedAdminPath(pathname) {
+    return INSTRUCTOR_ADMIN_ALLOW_PREFIXES.some((prefix) => {
+        if (prefix === '/admin-dashboard') return pathname === prefix;
+        return pathname === prefix || pathname.startsWith(`${prefix}/`);
+    });
 }
 
 function noStoreResponse() {
@@ -188,7 +209,11 @@ export async function middleware(request) {
             return jsonError(401, 'Unauthorized');
         }
         if (pathname.startsWith(API_ADMIN_PREFIX) && !isAdmin) {
-            return jsonError(403, 'Forbidden');
+            const isInstructor = session?.role === 'instructor';
+            const instructorAllowedApi = isInstructor && INSTRUCTOR_ADMIN_ALLOW_API_PATHS.has(pathname);
+            if (!instructorAllowedApi) {
+                return jsonError(403, 'Forbidden');
+            }
         }
 
         return NextResponse.next();
@@ -214,7 +239,8 @@ export async function middleware(request) {
         if (!isAuthenticated) {
             return loginRedirect(request);
         }
-        if (!isAdmin) {
+        const isInstructor = session?.role === 'instructor';
+        if (!isAdmin && !(isInstructor && isInstructorAllowedAdminPath(pathname))) {
             const url = request.nextUrl.clone();
             url.pathname = '/dashboard';
             url.search = '';

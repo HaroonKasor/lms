@@ -61,18 +61,18 @@ export default function Header() {
                             <div className="absolute right-[8px] top-1/2 h-[24px] w-[24px] -translate-y-1/2 rounded-full bg-white/20"></div>
                         </button>
                     </div>
-                    <Link href="/login" className="group flex items-center gap-2">
-                        <div className="relative flex h-[40px] w-[40px] items-center justify-center overflow-hidden rounded-full border border-[#052143] transition-colors group-hover:border-[#F87A53]">
+                    <div className="flex items-center gap-2">
+                        <Link href="/login" aria-label="Sign in" className="group relative flex h-[40px] w-[40px] items-center justify-center overflow-hidden rounded-full border border-[#052143] transition-colors hover:border-[#F87A53]">
                             <svg className="relative z-10 transition-colors group-hover:fill-[#F87A53]" width="15" height="12" viewBox="0 0 24 24" fill="#052143">
                                 <path d="M15 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm-9-2V7H4v3H1v2h3v3h2v-3h3v-2H6zm9 4c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
                             </svg>
                             <div className="absolute bottom-[-4px] right-[-4px] h-[24px] w-[24px] rounded-full bg-[#F87A53]"></div>
-                        </div>
+                        </Link>
                         <div className="flex flex-col">
-                            <span className="text-[18px] font-medium leading-[100%] text-[#052143] transition-colors group-hover:text-[#F87A53]">Sign in</span>
-                            <span className="text-[14px] font-normal leading-[100%] text-[#6B778B]">Register</span>
+                            <Link href="/login" className="text-[18px] font-medium leading-[100%] text-[#052143] transition-colors hover:text-[#F87A53]">Sign in</Link>
+                            <Link href="/register" className="text-[14px] font-normal leading-[100%] text-[#6B778B] transition-colors hover:text-[#F87A53]">Register</Link>
                         </div>
-                    </Link>
+                    </div>
                 </div>
 
                 <div className="flex items-center gap-2 lg:hidden">
@@ -147,7 +147,6 @@ export default function Header() {
         </header>
     );
 }
-
 
 
 

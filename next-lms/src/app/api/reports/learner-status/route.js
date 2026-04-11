@@ -13,9 +13,18 @@ function normalizeLearnerStatus(enrollment) {
     const progress = toSafeNumber(enrollment?.progressPercent, 0);
     const hasStartedAt = Boolean(enrollment?.startedAt);
     const hasCompletedAt = Boolean(enrollment?.completedAt);
+    const progressRows = Array.isArray(enrollment?.learning_progress) ? enrollment.learning_progress : [];
+    const progressSaysCompleted = progressRows.some((row) => {
+        const rowStatus = String(row?.status || '').toLowerCase();
+        const rowProgress = toSafeNumber(row?.progressPercent, 0);
+        return rowStatus === 'completed'
+            || row?.completion === true
+            || (row?.success === true && rowProgress >= 100)
+            || rowProgress >= 100;
+    });
 
     if (dbStatus === 'dropped' || dbStatus === 'cancelled') return 'SUSPENDED';
-    if (dbStatus === 'completed' || hasCompletedAt) return 'COMPLETED';
+    if (dbStatus === 'completed' || hasCompletedAt || progressSaysCompleted) return 'COMPLETED';
     if (dbStatus === 'in_progress' || hasStartedAt || progress > 0) return 'LEARNING';
     return 'NOT_STARTED';
 }
@@ -34,7 +43,7 @@ function matchesSearch(text, query) {
 
 export async function GET(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
 
         const organizationId = await ensureDefaultOrganization();
@@ -76,7 +85,13 @@ export async function GET(request) {
                         },
                     },
                     learning_progress: {
-                        select: { sectionId: true },
+                        select: {
+                            sectionId: true,
+                            status: true,
+                            progressPercent: true,
+                            success: true,
+                            completion: true,
+                        },
                     },
                 },
                 orderBy: { enrolledAt: 'desc' },

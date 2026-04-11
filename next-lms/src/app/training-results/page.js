@@ -27,10 +27,20 @@ function resolveEnrollmentStatus(status, progress = 0) {
 }
 
 function extractScorePercent(enrollment = {}) {
-    const scoreRaw = Number(enrollment?.scoreRaw);
-    if (Number.isFinite(scoreRaw)) return clampPercent(scoreRaw);
-    const scoreScaled = Number(enrollment?.scoreScaled);
-    if (Number.isFinite(scoreScaled)) {
+    const scorePercent = enrollment?.scorePercent;
+    if (scorePercent !== null && scorePercent !== undefined && scorePercent !== '') {
+        const normalized = Number(scorePercent);
+        if (Number.isFinite(normalized)) return clampPercent(normalized);
+    }
+    const rawValue = enrollment?.scoreRaw;
+    if (rawValue !== null && rawValue !== undefined && rawValue !== '') {
+        const scoreRaw = Number(rawValue);
+        if (Number.isFinite(scoreRaw)) return clampPercent(scoreRaw);
+    }
+    const scaledValue = enrollment?.scoreScaled;
+    if (scaledValue !== null && scaledValue !== undefined && scaledValue !== '') {
+        const scoreScaled = Number(scaledValue);
+        if (!Number.isFinite(scoreScaled)) return null;
         const normalized = scoreScaled <= 1 ? scoreScaled * 100 : scoreScaled;
         return clampPercent(normalized);
     }
@@ -136,13 +146,10 @@ export default function TrainingResultsPage() {
 
                 const certificates = Array.isArray(certData) ? certData : [];
                 const certByEnrollmentId = new Map();
-                const certByCourseId = new Map();
 
                 for (const cert of certificates) {
                     const enrollmentId = Number(cert?.enrollmentId || 0);
-                    const courseId = Number(cert?.courseId || 0);
                     if (enrollmentId > 0) certByEnrollmentId.set(enrollmentId, cert);
-                    if (courseId > 0 && !certByCourseId.has(courseId)) certByCourseId.set(courseId, cert);
                 }
 
                 const builtRows = (Array.isArray(enrollData) ? enrollData : []).map((enrollment) => {
@@ -150,7 +157,7 @@ export default function TrainingResultsPage() {
                     const courseId = Number(enrollment?.courseId || enrollment?.course?.id || 0);
                     const progress = clampPercent(enrollment?.progress ?? enrollment?.progressPercent ?? 0);
                     const statusCode = resolveEnrollmentStatus(enrollment?.status, progress);
-                    const cert = certByEnrollmentId.get(enrollmentId) || certByCourseId.get(courseId) || null;
+                    const cert = certByEnrollmentId.get(enrollmentId) || null;
                     const score = extractScorePercent(enrollment);
                     const lastActivity = enrollment?.lastActivityAt || enrollment?.updatedAt || enrollment?.enrolledAt || null;
                     const hasCertificate = Boolean(enrollment?.course?.certificate);

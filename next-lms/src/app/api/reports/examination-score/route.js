@@ -3,6 +3,8 @@ import prisma from '@/lib/prisma';
 import { requireSession } from '@/lib/server/auth';
 import { ensureDefaultOrganization } from '@/lib/server/enterprise-context';
 
+const DEFAULT_PASSING_PERCENT = 80;
+
 function toSafeNumber(value, fallback = 0) {
     const n = Number(value);
     return Number.isFinite(n) ? n : fallback;
@@ -40,6 +42,50 @@ function toRangeLabel(score) {
     return '81-100';
 }
 
+function toOptionalNumber(value) {
+    if (value == null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function scorePercentFromLearningProgress(row = null) {
+    if (!row || typeof row !== 'object') return null;
+    const raw = toOptionalNumber(row?.scoreRaw);
+    const scaled = toOptionalNumber(row?.scoreScaled);
+    if (scaled !== null && (raw === null || raw > 100)) return clampPercent(scaled <= 1 ? scaled * 100 : scaled);
+
+    if (raw !== null) {
+        // Some legacy progress rows stored tracked seconds in scoreRaw before scoreScaled existed.
+        if (raw > 100 && scaled === null) return null;
+        return clampPercent(raw <= 1 ? raw * 100 : raw);
+    }
+
+    if (scaled !== null) return clampPercent(scaled <= 1 ? scaled * 100 : scaled);
+
+    return null;
+}
+
+function resolveAssessmentResult({ percent = null, success = null, completion = null, status = '' } = {}) {
+    const normalizedPercent = toOptionalNumber(percent);
+    if (normalizedPercent !== null) {
+        return normalizedPercent >= DEFAULT_PASSING_PERCENT ? 'Passed' : 'Failed';
+    }
+    if (success === true) return 'Passed';
+    if (success === false) return 'Failed';
+    if (completion === true || String(status || '').toLowerCase() === 'completed') return 'Passed';
+    return '-';
+}
+
+function resolveLearningProgressResult(row = null) {
+    if (!row || typeof row !== 'object') return '-';
+    return resolveAssessmentResult({
+        percent: scorePercentFromLearningProgress(row),
+        success: typeof row?.success === 'boolean' ? row.success : null,
+        completion: typeof row?.completion === 'boolean' ? row.completion : null,
+        status: row?.status,
+    });
+}
+
 function resolveTimeSpentMinutes(progressRows = []) {
     if (!Array.isArray(progressRows) || progressRows.length === 0) return null;
     let seconds = 0;
@@ -58,7 +104,7 @@ function resolveTimeSpentMinutes(progressRows = []) {
 
 export async function GET(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
 
         const organizationId = await ensureDefaultOrganization();
@@ -127,61 +173,57 @@ export async function GET(request) {
         let rows = [];
         let users = [];
 
-        if (selectedCourseId > 0 && selectedQuizId > 0) {
-            const attempts = await prisma.quizAttempt.findMany({
-                where: {
-                    course_id: selectedCourseId,
-                    quizId: selectedQuizId,
-                },
-                include: {
-                    enrollments: {
-                        include: {
-                            organization_users: {
-                                include: {
-                                    users: {
-                                        include: { profile: true },
+        if (selectedCourseId > 0) {
+            if (selectedQuizId > 0) {
+                const attempts = await prisma.quizAttempt.findMany({
+                    where: {
+                        course_id: selectedCourseId,
+                        quizId: selectedQuizId,
+                    },
+                    include: {
+                        enrollments: {
+                            include: {
+                                organization_users: {
+                                    include: {
+                                        users: {
+                                            include: { profile: true },
+                                        },
                                     },
                                 },
+                                learning_progress: selectedQuiz?.sectionId
+                                    ? {
+                                        where: { sectionId: selectedQuiz.sectionId },
+                                        select: { currentTime: true, duration: true },
+                                    }
+                                    : {
+                                        select: { currentTime: true, duration: true },
+                                    },
                             },
-                            learning_progress: selectedQuiz?.sectionId
-                                ? {
-                                    where: { sectionId: selectedQuiz.sectionId },
-                                    select: { currentTime: true, duration: true },
-                                }
-                                : {
-                                    select: { currentTime: true, duration: true },
-                                },
                         },
                     },
-                },
-                orderBy: [{ enrollmentId: 'asc' }, { attemptNo: 'desc' }, { submittedAt: 'desc' }],
-            });
+                    orderBy: [{ enrollmentId: 'asc' }, { attemptNo: 'desc' }, { submittedAt: 'desc' }],
+                });
 
-            const latestByEnrollment = new Map();
-            for (const attempt of attempts) {
-                const key = Number(attempt.enrollmentId);
-                if (!latestByEnrollment.has(key)) {
-                    latestByEnrollment.set(key, attempt);
+                const usersById = new Map();
+                for (const attempt of attempts) {
+                    const key = Number(attempt?.enrollments?.userId || 0);
+                    if (!key || usersById.has(key)) continue;
+                    const user = attempt?.enrollments?.organization_users?.users;
+                    const profile = user?.profile;
+                    const name = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim()
+                        || user?.username
+                        || user?.email
+                        || `User ${attempt?.enrollments?.userId}`;
+                    usersById.set(key, {
+                        id: Number(attempt?.enrollments?.userId || 0),
+                        username: String(user?.username || user?.email || '-'),
+                        name,
+                    });
                 }
-            }
 
-            const latestAttempts = Array.from(latestByEnrollment.values());
-            users = latestAttempts.map((attempt) => {
-                const user = attempt?.enrollments?.organization_users?.users;
-                const profile = user?.profile;
-                const name = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim()
-                    || user?.username
-                    || user?.email
-                    || `User ${attempt?.enrollments?.userId}`;
-                return {
-                    id: Number(attempt?.enrollments?.userId || 0),
-                    username: String(user?.username || user?.email || '-'),
-                    name,
-                };
-            });
+                users = Array.from(usersById.values());
 
-            rows = latestAttempts
-                .map((attempt) => {
+                rows = attempts.map((attempt) => {
                     const enrollment = attempt?.enrollments;
                     const user = enrollment?.organization_users?.users;
                     const profile = user?.profile;
@@ -190,7 +232,8 @@ export async function GET(request) {
                     const firstName = String(profile?.firstName || '');
                     const lastName = String(profile?.lastName || '');
                     const fullName = `${firstName} ${lastName}`.trim();
-                    const scorePercent = clampPercent(attempt?.score);
+                    const attemptScore = toOptionalNumber(attempt?.score);
+                    const scorePercent = attemptScore === null ? 0 : clampPercent(attemptScore);
                     const totalQuestions = Number(selectedQuiz?.questionCount || 0);
                     const rawScore = totalQuestions > 0
                         ? Math.round((scorePercent / 100) * totalQuestions)
@@ -206,12 +249,97 @@ export async function GET(request) {
                         lastName: lastName || '-',
                         scorePercent: Number(scorePercent.toFixed(2)),
                         scoreText: totalQuestions > 0 ? `${rawScore}/${totalQuestions}` : `${Math.round(scorePercent)}/100`,
-                        result: Boolean(attempt?.passed) ? 'Passed' : 'Failed',
+                        result: resolveAssessmentResult({
+                            percent: attemptScore === null ? null : scorePercent,
+                            success: typeof attempt?.passed === 'boolean' ? attempt.passed : null,
+                        }),
                         attempt: Number(attempt?.attemptNo || 1),
                         timeSpent: timeSpentMinutes === null ? '-' : timeSpentMinutes.toFixed(2),
                         searchText: `${username} ${fullName}`.toLowerCase(),
                     };
-                })
+                });
+            } else {
+                const progressRows = await prisma.learningProgress.findMany({
+                    where: {
+                        courseId: selectedCourseId,
+                        enrollments: { organization_id: organizationId },
+                        OR: [
+                            { scoreRaw: { not: null } },
+                            { scoreScaled: { not: null } },
+                        ],
+                    },
+                    include: {
+                        enrollments: {
+                            include: {
+                                organization_users: {
+                                    include: {
+                                        users: {
+                                            include: { profile: true },
+                                        },
+                                    },
+                                },
+                                learning_progress: {
+                                    select: { currentTime: true, duration: true },
+                                },
+                            },
+                        },
+                    },
+                    orderBy: [{ enrollmentId: 'asc' }, { id: 'desc' }],
+                });
+
+                const latestByEnrollment = new Map();
+                for (const progressRow of progressRows) {
+                    const key = Number(progressRow.enrollmentId);
+                    if (!latestByEnrollment.has(key) && scorePercentFromLearningProgress(progressRow) !== null) {
+                        latestByEnrollment.set(key, progressRow);
+                    }
+                }
+
+                const latestProgressRows = Array.from(latestByEnrollment.values());
+                users = latestProgressRows.map((progressRow) => {
+                    const user = progressRow?.enrollments?.organization_users?.users;
+                    const profile = user?.profile;
+                    const name = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim()
+                        || user?.username
+                        || user?.email
+                        || `User ${progressRow?.enrollments?.userId}`;
+                    return {
+                        id: Number(progressRow?.enrollments?.userId || 0),
+                        username: String(user?.username || user?.email || '-'),
+                        name,
+                    };
+                });
+
+                rows = latestProgressRows.map((progressRow) => {
+                    const enrollment = progressRow?.enrollments;
+                    const user = enrollment?.organization_users?.users;
+                    const profile = user?.profile;
+                    const username = String(user?.username || user?.email || '-');
+                    const firstName = String(profile?.firstName || '');
+                    const lastName = String(profile?.lastName || '');
+                    const fullName = `${firstName} ${lastName}`.trim();
+                    const scorePercent = scorePercentFromLearningProgress(progressRow);
+                    const safeScorePercent = Number.isFinite(Number(scorePercent)) ? Number(scorePercent) : 0;
+                    const timeSpentMinutes = resolveTimeSpentMinutes(enrollment?.learning_progress || []);
+
+                    return {
+                        no: 0,
+                        enrollmentId: Number(enrollment?.id || 0),
+                        userId: Number(enrollment?.userId || 0),
+                        username,
+                        firstName: firstName || '-',
+                        lastName: lastName || '-',
+                        scorePercent: Number(safeScorePercent.toFixed(2)),
+                        scoreText: `${Math.round(safeScorePercent)}/100`,
+                        result: resolveLearningProgressResult(progressRow),
+                        attempt: 1,
+                        timeSpent: timeSpentMinutes === null ? '-' : timeSpentMinutes.toFixed(2),
+                        searchText: `${username} ${fullName}`.toLowerCase(),
+                    };
+                });
+            }
+
+            rows = rows
                 .filter((row) => {
                     if (userIdParam > 0 && Number(row.userId) !== userIdParam) return false;
                     if (!matchesScoreRange(row.scorePercent, scoreRange)) return false;
@@ -288,4 +416,3 @@ export async function GET(request) {
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }
 }
-

@@ -10,7 +10,7 @@ const ASSESSMENT_NAME_REGEX = /quiz|test|exam|assessment|post[\s-_]?test|pre[\s-
 
 export async function POST(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
 
         const contentType = request.headers.get('content-type') || '';
@@ -92,7 +92,7 @@ export async function GET(request) {
     try {
         // GET is only for admin content management screens.
         // Learner view must access content through enrolled course/section only.
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
 
         const contents = await listContents();
@@ -111,7 +111,7 @@ export async function GET(request) {
 
 export async function DELETE(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
 
         const { searchParams } = new URL(request.url);
@@ -134,7 +134,7 @@ export async function DELETE(request) {
 
 export async function PUT(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
 
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);

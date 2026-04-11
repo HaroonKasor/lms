@@ -79,6 +79,33 @@ function toProgressNumber(progressPercent) {
     return Math.max(0, Math.min(100, Math.round(n)));
 }
 
+function toOptionalScoreNumber(value) {
+    if (value == null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function toScorePercentFromProgress(row = null) {
+    if (!row || typeof row !== 'object') return null;
+    const raw = toOptionalScoreNumber(row?.scoreRaw);
+    const scaled = toOptionalScoreNumber(row?.scoreScaled);
+    if (scaled !== null && (raw === null || raw > 100)) return Math.max(0, Math.min(100, scaled <= 1 ? scaled * 100 : scaled));
+
+    if (raw !== null) {
+        if (raw > 100 && scaled === null) return null;
+        return Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw));
+    }
+
+    if (scaled !== null) return Math.max(0, Math.min(100, scaled <= 1 ? scaled * 100 : scaled));
+
+    return null;
+}
+
+function pickScoreProgressRow(progressRows = []) {
+    if (!Array.isArray(progressRows) || progressRows.length === 0) return null;
+    return progressRows.find((row) => toScorePercentFromProgress(row) !== null) || null;
+}
+
 function normalizeThumbnail(thumbnail) {
     const value = String(thumbnail || '').trim();
     if (!value) return '/course.png';
@@ -299,6 +326,8 @@ function normalizeEnrollmentCourse(
         ? learningProgressRows.filter((row) => Number(row?.sectionId || 0) === Number(selectedSectionId))
         : learningProgressRows;
     const latestProgressRow = (sectionProgressRows[0] || learningProgressRows[0] || null);
+    const scoreProgressRow = pickScoreProgressRow(sectionProgressRows) || pickScoreProgressRow(learningProgressRows);
+    const scorePercent = toScorePercentFromProgress(scoreProgressRow);
     const progressStatus = String(latestProgressRow?.status || '').toLowerCase();
     const progressPercent = Number(latestProgressRow?.progressPercent || 0);
     const progressSaysFailed =
@@ -371,6 +400,9 @@ function normalizeEnrollmentCourse(
                     Number(latestProgressRow?.progressPercent || 0)
                 )
         ),
+        scoreRaw: scorePercent !== null ? Number(scorePercent.toFixed(2)) : null,
+        scoreScaled: scorePercent !== null ? Number((scorePercent / 100).toFixed(4)) : null,
+        scorePercent: scorePercent !== null ? Number(scorePercent.toFixed(2)) : null,
         sectionId: selectedSectionId || section?.id || null,
         learner: {
             userId: Number(enrollment.userId),
@@ -1069,6 +1101,8 @@ export async function GET(request) {
                             progressPercent: true,
                             success: true,
                             completion: true,
+                            scoreRaw: true,
+                            scoreScaled: true,
                         },
                         orderBy: { id: 'desc' },
                         take: 10,
@@ -1183,10 +1217,9 @@ export async function PATCH(request) {
             ? Math.max(0, Math.min(100, incomingProgress))
             : undefined;
         const allowsCompletionDowngrade =
-            incomingStatus === 'LEARNING'
-            || incomingStatus === 'APPROVED'
-            || incomingStatus === 'FAILED'
-            || incomingStatus === 'PENDING';
+            incomingStatus === 'FAILED'
+            || incomingStatus === 'PENDING'
+            || incomingStatus === 'CANCELLED';
         const shouldPreserveCompleted =
             existingStatus === 'COMPLETED' &&
             !!incomingStatus &&

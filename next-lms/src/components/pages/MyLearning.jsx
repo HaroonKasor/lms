@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { createPortal } from 'react-dom';
 import Navbar from '@/components/layout/Navbar';
@@ -71,6 +71,29 @@ export default function MyLearning() {
     const [reviewSubmitting, setReviewSubmitting] = useState(false);
     const [reviewError, setReviewError] = useState('');
     const [dismissedReviewIds, setDismissedReviewIds] = useState([]);
+    const [submittedReview, setSubmittedReview] = useState(null);
+    const reviewScrollLockRef = useRef(null);
+
+    const lockReviewScroll = useCallback(() => {
+        if (typeof document === 'undefined') return;
+        if (!reviewScrollLockRef.current) {
+            reviewScrollLockRef.current = {
+                bodyOverflow: document.body.style.overflow,
+                htmlOverflow: document.documentElement.style.overflow,
+            };
+        }
+        document.body.style.overflow = 'hidden';
+        document.documentElement.style.overflow = 'hidden';
+    }, []);
+
+    const unlockReviewScroll = useCallback((force = false) => {
+        if (typeof document === 'undefined') return;
+        const previous = reviewScrollLockRef.current;
+        if (!previous && !force) return;
+        document.body.style.overflow = previous?.bodyOverflow || '';
+        document.documentElement.style.overflow = previous?.htmlOverflow || '';
+        reviewScrollLockRef.current = null;
+    }, []);
 
     const fetchWithTimeout = useCallback(async (url, options = {}, timeoutMs = 10000) => {
         const controller = new AbortController();
@@ -133,6 +156,9 @@ export default function MyLearning() {
         pendingReviews.find((row) => !dismissedReviewIds.includes(Number(row?.enrollmentId || 0))) || null
     ), [pendingReviews, dismissedReviewIds]);
     const activePendingReviewId = Number(activePendingReview?.enrollmentId || 0);
+    const reviewModalReview = reviewModalStage === 'thanks'
+        ? submittedReview
+        : activePendingReview;
 
     const closeReviewModal = useCallback((options = {}) => {
         const dismissCurrent = options?.dismissCurrent !== false;
@@ -149,10 +175,9 @@ export default function MyLearning() {
         setHoverRating(0);
         setReviewText('');
         setReviewError('');
-        if (typeof document !== 'undefined') {
-            document.body.style.overflow = '';
-        }
-    }, [activePendingReview]);
+        setSubmittedReview(null);
+        unlockReviewScroll(true);
+    }, [activePendingReview, unlockReviewScroll]);
 
     const submitReview = useCallback(async () => {
         if (!activePendingReview || selectedRating < 1 || selectedRating > 5) return;
@@ -172,6 +197,7 @@ export default function MyLearning() {
             if (!res.ok) throw new Error(data?.error || 'Submit rating failed');
 
             const doneId = Number(activePendingReview.enrollmentId);
+            setSubmittedReview(activePendingReview);
             setPendingReviews((prev) => prev.filter((row) => Number(row?.enrollmentId || 0) !== doneId));
             setDismissedReviewIds((prev) => prev.filter((id) => Number(id) !== doneId));
             setReviewModalStage('thanks');
@@ -244,23 +270,28 @@ export default function MyLearning() {
         setHoverRating(0);
         setReviewText(String(activePendingReview?.reviewText || ''));
         setReviewError('');
+        setSubmittedReview(null);
     }, [activePendingReviewId, reviewModalOpen, activePendingReview?.reviewText]);
 
     useEffect(() => {
         if (!reviewModalOpen) return;
         if (activePendingReview) return;
+        if (reviewModalStage === 'thanks' && submittedReview) return;
         setReviewModalOpen(false);
         setReviewModalStage('form');
         setSelectedRating(0);
         setHoverRating(0);
         setReviewText('');
         setReviewError('');
-    }, [reviewModalOpen, activePendingReview]);
+        setSubmittedReview(null);
+    }, [reviewModalOpen, activePendingReview, reviewModalStage, submittedReview]);
 
     useEffect(() => {
-        if (!reviewModalOpen || !activePendingReview) return undefined;
-        const previousOverflow = document.body.style.overflow;
-        document.body.style.overflow = 'hidden';
+        if (!reviewModalOpen || !reviewModalReview) {
+            unlockReviewScroll();
+            return undefined;
+        }
+        lockReviewScroll();
         const onKeyDown = (event) => {
             if (event.key === 'Escape') {
                 closeReviewModal();
@@ -269,17 +300,15 @@ export default function MyLearning() {
         window.addEventListener('keydown', onKeyDown);
         return () => {
             window.removeEventListener('keydown', onKeyDown);
-            document.body.style.overflow = previousOverflow;
         };
-    }, [reviewModalOpen, activePendingReview, closeReviewModal]);
+    }, [reviewModalOpen, reviewModalReview, closeReviewModal, lockReviewScroll, unlockReviewScroll]);
 
     // Safety net: ensure page can scroll when review modal is closed.
     useEffect(() => {
-        if (typeof document === 'undefined') return;
         if (!reviewModalOpen) {
-            document.body.style.overflow = '';
+            unlockReviewScroll();
         }
-    }, [reviewModalOpen]);
+    }, [reviewModalOpen, unlockReviewScroll]);
 
     // Map enrollment status to tab names
     const getTabStatus = (enrollment) => {
@@ -516,7 +545,7 @@ export default function MyLearning() {
                 </FadeIn>
             </main>
 
-            {canRenderPortal && reviewModalOpen && activePendingReview && createPortal(
+            {canRenderPortal && reviewModalOpen && reviewModalReview && createPortal(
                 <div
                     className="fixed inset-0 z-[1000] bg-[rgba(60,60,67,0.6)] backdrop-blur-[1px] flex items-center justify-center p-4"
                     onClick={closeReviewModal}
@@ -529,8 +558,8 @@ export default function MyLearning() {
                             <>
                                 <div className="w-[140px] h-[88px] rounded-[16px] overflow-hidden mx-auto mb-6 bg-[#E6F5F1]">
                                     <img
-                                        src={activePendingReview.courseThumbnail || '/course.png'}
-                                        alt={activePendingReview.courseName}
+                                        src={reviewModalReview.courseThumbnail || '/course.png'}
+                                        alt={reviewModalReview.courseName}
                                         className="w-full h-full object-cover"
                                         onError={(e) => {
                                             e.currentTarget.onerror = null;
@@ -539,7 +568,7 @@ export default function MyLearning() {
                                     />
                                 </div>
                                 <h3 className="text-[#052143] text-[20px] font-medium leading-[130%] mb-2">
-                                    {activePendingReview.courseName}
+                                    {reviewModalReview.courseName}
                                 </h3>
                                 <p className="text-[#052143] text-[16px] font-normal leading-[140%] mb-5">
                                     How was your learning experience? Your feedback helps us improve.

@@ -62,7 +62,7 @@ function resolveAppBaseUrl(request) {
 
 export async function POST(request) {
     try {
-        const { session, response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
 
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);

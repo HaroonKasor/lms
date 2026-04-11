@@ -16,6 +16,7 @@ const ENROLLMENT_STATUS_RANK = {
     CANCELLED: 0,
 };
 const OVER_TIME_LIMIT_MINUTES = 60;
+const DEFAULT_PASSING_PERCENT = 80;
 
 function toSafeTime(value) {
     const ms = new Date(value || 0).getTime();
@@ -69,6 +70,7 @@ function parseIsoDurationToMinutes(value) {
 }
 
 function toOptionalNumber(value) {
+    if (value == null || value === '') return null;
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
 }
@@ -101,10 +103,11 @@ function deriveScoreSnapshot(result = {}) {
         scoreText = formatScoreNumber(raw);
     }
 
-    let resultText = '-';
-    if (success === true) resultText = 'Pass';
-    else if (success === false) resultText = 'Fail';
-    else if (completion === true) resultText = 'Completed';
+    const resultText = resolveScoreResultText({
+        percent,
+        success,
+        completion,
+    });
 
     return {
         hasScore,
@@ -118,6 +121,52 @@ function deriveScoreSnapshot(result = {}) {
         scoreText,
         resultText,
     };
+}
+
+function scorePercentFromProgressRow(row = null) {
+    if (!row || typeof row !== 'object') return null;
+    const raw = toOptionalNumber(row?.scoreRaw);
+    const scaled = toOptionalNumber(row?.scoreScaled);
+    if (scaled !== null && (raw === null || raw > 100)) return Math.max(0, Math.min(100, scaled <= 1 ? scaled * 100 : scaled));
+
+    if (raw !== null) {
+        if (raw > 100 && scaled === null) return null;
+        return Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw));
+    }
+
+    if (scaled !== null) return Math.max(0, Math.min(100, scaled <= 1 ? scaled * 100 : scaled));
+
+    return null;
+}
+
+function resolveScoreResultText({ percent = null, success = null, completion = null, status = '' } = {}) {
+    const normalizedPercent = toOptionalNumber(percent);
+    if (normalizedPercent !== null) {
+        return normalizedPercent >= DEFAULT_PASSING_PERCENT ? 'Pass' : 'Fail';
+    }
+    if (success === true) return 'Pass';
+    if (success === false) return 'Fail';
+    if (completion === true || String(status || '').toLowerCase() === 'completed') return 'Completed';
+    return '-';
+}
+
+function resultTextFromProgressRow(row = null) {
+    if (!row || typeof row !== 'object') return '-';
+    return resolveScoreResultText({
+        percent: scorePercentFromProgressRow(row),
+        success: typeof row?.success === 'boolean' ? row.success : null,
+        completion: typeof row?.completion === 'boolean' ? row.completion : null,
+        status: row?.status,
+    });
+}
+
+function readLegacyTrackedSeconds(row = null) {
+    // Older local builds temporarily used scoreRaw as tracked seconds. Newer builds use it for assessment score,
+    // so only treat it as time when it cannot reasonably be a percent-like score.
+    const raw = toOptionalNumber(row?.scoreRaw);
+    const scaled = toOptionalNumber(row?.scoreScaled);
+    if (raw !== null && raw > 100 && scaled === null) return raw;
+    return 0;
 }
 
 function getExtensionValueByKeySuffix(extensions = {}, suffix = '') {
@@ -442,7 +491,7 @@ function hydrateDurationFromProgress(rows = [], latestProgress = null) {
     const statementMinutes = rows.reduce((sum, row) => sum + Number(row?.durationMinutes || 0), 0);
     if (statementMinutes > 0) return rows;
 
-    const trackedSeconds = toSafeNumber(latestProgress?.scoreRaw, 0);
+    const trackedSeconds = readLegacyTrackedSeconds(latestProgress);
     const byTrackedProgress = trackedSeconds > 0 ? (trackedSeconds / 60) : 0;
     const progressCurrent = toSafeNumber(latestProgress?.currentTime, 0);
     const progressDuration = toSafeNumber(latestProgress?.duration, 0);
@@ -465,6 +514,37 @@ function hydrateDurationFromProgress(rows = [], latestProgress = null) {
             ? { ...row, durationMinutes: fallbackMinutes }
             : row
     ));
+}
+
+function buildScoreRowsFromLearningProgress(progressRows = [], fallbackTitle = 'Assessment Result', fallbackTimestamp = null) {
+    if (!Array.isArray(progressRows) || progressRows.length === 0) return [];
+
+    const rowsWithScore = progressRows.filter((row) => (
+        scorePercentFromProgressRow(row) !== null ||
+        typeof row?.success === 'boolean' ||
+        typeof row?.completion === 'boolean'
+    ));
+
+    return rowsWithScore.map((row, idx) => {
+        const percent = scorePercentFromProgressRow(row);
+        const title = String(fallbackTitle || 'Assessment Result').trim() || 'Assessment Result';
+        return {
+            activity: title,
+            activityKey: `progress-score-${row?.sectionId || idx}`,
+            activityIndex: 9998 + idx,
+            dateTime: toDateTimeText(fallbackTimestamp),
+            timestampMs: toSafeTime(fallbackTimestamp),
+            durationMinutes: 0,
+            scoreRaw: percent,
+            scoreMax: 100,
+            scoreScaled: percent !== null ? percent / 100 : null,
+            scorePercent: percent,
+            success: typeof row?.success === 'boolean' ? row.success : null,
+            completion: typeof row?.completion === 'boolean' ? row.completion : null,
+            scoreText: percent !== null ? `${percent.toFixed(1)}%` : '-',
+            resultText: resultTextFromProgressRow(row),
+        };
+    });
 }
 
 function toGroupedSections(rows = [], lessonCount = 0, fallbackTitle = 'Activity') {
@@ -589,6 +669,9 @@ export async function GET(request) {
                         currentTime: true,
                         duration: true,
                         scoreRaw: true,
+                        scoreScaled: true,
+                        success: true,
+                        completion: true,
                     },
                     orderBy: [{ id: 'desc' }],
                 },
@@ -694,7 +777,10 @@ export async function GET(request) {
         rows = hydrateDurationFromProgress(rows, latestProgress);
 
         const quizRows = quizAttempts.map((attempt) => {
-            const rawScore = toSafeNumber(attempt.score, 0);
+            const rawScore = toOptionalNumber(attempt.score);
+            const scoreText = rawScore !== null
+                ? `${Number(rawScore).toFixed(0)} / 100 (${Number(rawScore).toFixed(0)}%)`
+                : '-';
             return {
                 activity: String(attempt.quizzes?.title || 'Quiz').trim() || 'Quiz',
                 activityKey: `quiz-${attempt.quizId}`,
@@ -702,15 +788,24 @@ export async function GET(request) {
                 dateTime: toDateTimeText(attempt.submittedAt),
                 timestampMs: toSafeTime(attempt.submittedAt),
                 durationMinutes: 0,
-                scoreText: `${Number(rawScore).toFixed(0)} / 100 (${Number(rawScore).toFixed(0)}%)`,
-                resultText: attempt.passed ? 'Pass' : 'Fail',
+                scoreText,
+                resultText: resolveScoreResultText({
+                    percent: rawScore,
+                    success: typeof attempt.passed === 'boolean' ? attempt.passed : null,
+                }),
             };
         });
 
-        rows = [...rows, ...quizRows];
+        const learningScoreRows = buildScoreRowsFromLearningProgress(
+            learningProgressRows,
+            'แบบทดสอบหลังบท',
+            selectedEnrollment?.lastActivityAt || selectedEnrollment?.completedAt || selectedEnrollment?.startedAt || selectedEnrollment?.enrolledAt
+        );
+
+        rows = [...rows, ...quizRows, ...learningScoreRows];
 
         const statementMinutes = rows.reduce((sum, row) => sum + toSafeNumber(row?.durationMinutes, 0), 0);
-        const trackedSeconds = toSafeNumber(latestProgress?.scoreRaw, 0);
+        const trackedSeconds = readLegacyTrackedSeconds(latestProgress);
         const byTrackedProgress = trackedSeconds > 0 ? (trackedSeconds / 60) : 0;
         const progressCurrent = toSafeNumber(latestProgress?.currentTime, 0);
         const progressDuration = toSafeNumber(latestProgress?.duration, 0);

@@ -54,7 +54,7 @@ export async function GET(request) {
         }
 
         const roleCodes = await listUserRoleCodes(user.id, organizationId);
-        const [enrolledCourses, completedCourses, certificates] = await Promise.all([
+        const [enrolledCourses, completedCourses, certificates, firstRole, firstEnrollment] = await Promise.all([
             prisma.enrollment.count({ where: { userId: user.id } }),
             prisma.enrollment.count({ where: { userId: user.id, status: 'completed' } }),
             prisma.certificate.count({
@@ -62,6 +62,16 @@ export async function GET(request) {
                     status: 'issued',
                     enrollment: { userId: user.id },
                 },
+            }),
+            prisma.userRole.findFirst({
+                where: { userId: user.id },
+                orderBy: { createdAt: 'asc' },
+                select: { createdAt: true },
+            }),
+            prisma.enrollment.findFirst({
+                where: { userId: user.id },
+                orderBy: { enrolledAt: 'asc' },
+                select: { enrolledAt: true },
             }),
         ]);
 
@@ -73,7 +83,7 @@ export async function GET(request) {
             avatar: user?.profile?.avatarUrl || '',
             role: mapRoleCodesToSessionRole(roleCodes),
             isActive: String(user.status || '').toLowerCase() === 'active',
-            createdAt: null,
+            createdAt: firstRole?.createdAt || firstEnrollment?.enrolledAt || user.lastLoginAt || null,
             enrolledCourses,
             completedCourses,
             certificates,

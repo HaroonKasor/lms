@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { saveUser, setRememberMePreference } from '@/lib/auth';
+import { clearUser, setRememberMePreference } from '@/lib/auth';
 import { sanitizeRegisterInput, validateRegisterInput } from '@/lib/validation/register';
 
 export default function Register() {
@@ -43,10 +43,9 @@ export default function Register() {
             });
             const data = await res.json();
             if (res.ok && data.success) {
-                // Auto-login after register
-                saveUser(data.user, { remember: true });
-                setRememberMePreference(true);
-                router.push('/dashboard');
+                clearUser();
+                setRememberMePreference(false);
+                router.push(`/login?registered=1&username=${encodeURIComponent(payload.username)}`);
             } else {
                 setError(data.error || 'Registration failed');
             }

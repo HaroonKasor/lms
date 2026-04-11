@@ -296,7 +296,7 @@ export async function GET(request) {
         const organizationId = await ensureDefaultOrganization();
 
         if (!isPublicOnly) {
-            const { response } = await requireSession(request, { requireAdmin: true });
+            const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
             if (response) return response;
         }
 
@@ -360,7 +360,7 @@ export async function GET(request) {
  */
 export async function POST(request) {
     try {
-        const { session, response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 
@@ -502,7 +502,7 @@ export async function POST(request) {
  */
 export async function PUT(request) {
     try {
-        const { session, response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 
@@ -677,7 +677,7 @@ export async function PUT(request) {
  */
 export async function DELETE(request) {
     try {
-        const { session, response } = await requireSession(request, { requireAdmin: true });
+        const { session, response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 

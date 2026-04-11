@@ -10,6 +10,7 @@ export default function Login() {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
     const [loading, setLoading] = useState(false);
 
     React.useEffect(() => {
@@ -22,11 +23,19 @@ export default function Login() {
         if (params.get('timeout') === '1') {
             setError('Session หมดเวลาเพราะไม่มีการใช้งาน กรุณาเข้าสู่ระบบใหม่');
         }
+        if (params.get('registered') === '1') {
+            setSuccess('สมัครสมาชิกสำเร็จแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านของคุณ');
+            const registeredUsername = String(params.get('username') || '').trim();
+            if (registeredUsername) {
+                setUsername(registeredUsername);
+            }
+        }
     }, []);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
+        setSuccess('');
         if (!username || !password) {
             setError('กรุณากรอก Username และ Password');
             return;
@@ -46,7 +55,10 @@ export default function Login() {
                 const nextPath = typeof window !== 'undefined'
                     ? new URLSearchParams(window.location.search).get('next')
                     : null;
-                const defaultPath = data.user.role === 'admin' ? '/admin-dashboard' : '/dashboard';
+                const userRole = String(data?.user?.role || '').toLowerCase();
+                const defaultPath = userRole === 'admin' || userRole === 'instructor'
+                    ? '/admin-dashboard'
+                    : '/dashboard';
                 // Force full-page navigation so Safari reliably commits auth cookie
                 // before hitting protected routes like /enroll/qr.
                 if (typeof window !== 'undefined') {
@@ -100,6 +112,11 @@ export default function Login() {
                         {error && (
                             <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-2xl text-sm">
                                 {error}
+                            </div>
+                        )}
+                        {success && (
+                            <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-2xl text-sm">
+                                {success}
                             </div>
                         )}
 

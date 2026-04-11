@@ -49,6 +49,7 @@ export async function getCookieStoreSession(cookieStore) {
 
 export async function requireSession(request, options = {}) {
     const requireAdmin = Boolean(options.requireAdmin);
+    const allowInstructor = Boolean(options.allowInstructor);
     const session = await getRequestSession(request);
     if (!session) {
         return {
@@ -56,7 +57,8 @@ export async function requireSession(request, options = {}) {
             response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
         };
     }
-    if (requireAdmin && !session.isAdmin) {
+    const isInstructor = String(session?.role || '').toLowerCase() === 'instructor';
+    if (requireAdmin && !session.isAdmin && !(allowInstructor && isInstructor)) {
         return {
             session: null,
             response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }),

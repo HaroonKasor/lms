@@ -7,6 +7,7 @@ import LoadScreen from '@/components/ui/LoadScreen';
 import LearningLessonSidebar from '@/components/learning/LearningLessonSidebar';
 import LearningVideoPlayer from '@/components/learning/LearningVideoPlayer';
 import LearningAiAssistant from '@/components/learning/LearningAiAssistant';
+import { BarChart3, Clock3, ListChecks, Package, RadioTower, Video } from 'lucide-react';
 import {
     sendStatement,
     buildVideoEventStatement,
@@ -825,6 +826,44 @@ export default function LearnPage() {
         if (raw > 0 && raw <= 1) return Math.round(raw * 100);
         return Math.max(1, Math.min(100, Math.round(raw)));
     }, []);
+    const extractScorePayloadFromStatus = useCallback((item) => {
+        if (!item || typeof item !== 'object') return {};
+        const statusText = normalizeStatusText(
+            item?.status
+            ?? item?.result
+            ?? item?.completionStatus
+            ?? item?.successStatus
+            ?? ''
+        );
+        const hasFailSignal = hasFailureStatusSignal(statusText);
+        const scoreRaw = asFiniteNumber(
+            item?.scoreRaw
+            ?? item?.rawScore
+            ?? item?.raw
+            ?? item?.score
+            ?? item?.result?.score?.raw
+        );
+        const scoreScaled = asFiniteNumber(
+            item?.scoreScaled
+            ?? item?.scaledScore
+            ?? item?.scaled
+            ?? item?.normalizedScore
+            ?? item?.result?.score?.scaled
+        );
+        const completion = typeof item?.completion === 'boolean'
+            ? item.completion
+            : (isTruthyFlag(item?.completed) ? true : null);
+        const success = typeof item?.success === 'boolean'
+            ? item.success
+            : (isTruthyFlag(item?.passed) ? true : null);
+
+        const payload = {};
+        if (scoreRaw !== null) payload.scoreRaw = scoreRaw;
+        if (scoreScaled !== null) payload.scoreScaled = scoreScaled;
+        if (success === true || (hasFailSignal && success === false)) payload.success = success;
+        if (completion === true || (hasFailSignal && completion === false)) payload.completion = completion;
+        return payload;
+    }, []);
 
     const isTinCanLessonPassed = useCallback((item, activity = null) => {
         if (!item || typeof item !== 'object') return false;
@@ -849,17 +888,15 @@ export default function LearnPage() {
             }
         }
 
-        const explicitSuccess = typeof item.success === 'boolean'
-            ? item.success
-            : (typeof item?.result?.success === 'boolean' ? item.result.success : null);
-        if (explicitSuccess === false) return false;
-        if (!isAssessment && explicitSuccess === true) return true;
-
         const explicitPass =
             isTruthyFlag(item.passed) ||
             isTruthyFlag(item.isPassed) ||
             isTruthyFlag(item?.result?.passed);
         if (explicitPass) return true;
+        const explicitSuccess = typeof item.success === 'boolean'
+            ? item.success
+            : (typeof item?.result?.success === 'boolean' ? item.result.success : null);
+        if (!isAssessment && explicitSuccess === true) return true;
 
         const score = asFiniteNumber(
             item.score
@@ -897,9 +934,23 @@ export default function LearnPage() {
             if (normalizedFromScore !== null && normalizedFromScore >= passingScore) return true;
             if (normalizedFromScaled !== null && normalizedFromScaled >= passingScore) return true;
             if (normalizedFromRawMax !== null && normalizedFromRawMax >= passingScore) return true;
+            const hasAnyScoreEvidence =
+                normalizedFromScore !== null ||
+                normalizedFromScaled !== null ||
+                normalizedFromRawMax !== null;
+            if (hasAnyScoreEvidence) return false;
+
+            const hasCompletionSignalWithoutScore =
+                isTruthyFlag(item?.completed) ||
+                item?.completion === true ||
+                hasCompletionStatusSignal(statusText);
+            if (hasCompletionSignalWithoutScore) return true;
+
+            if (explicitSuccess === false && hasFailureStatusSignal(statusText)) return false;
             return false;
         }
 
+        if (explicitSuccess === false) return false;
         if (isTruthyFlag(item.completed)) return true;
         if (normalizedFromScore !== null && normalizedFromScore >= 100) return true;
         if (percent !== null && percent >= 100) return true;
@@ -1005,10 +1056,16 @@ export default function LearnPage() {
             if (hasFailureStatusSignal(statusText)) {
                 return true;
             }
-            if (item?.success === false) return true;
+            if (isTinCanLessonPassed(item, activity)) return false;
+            if (item?.success === false) {
+                const hasAnyScoreSignal =
+                    asFiniteNumber(item?.scoreRaw ?? item?.rawScore ?? item?.raw ?? item?.result?.score?.raw) !== null ||
+                    asFiniteNumber(item?.scoreScaled ?? item?.scaledScore ?? item?.scaled ?? item?.result?.score?.scaled) !== null;
+                if (hasAnyScoreSignal) return true;
+            }
             return false;
         });
-    }, [content, hasAssessmentActivities, isAssessmentActivity, tinCanActivityStatus]);
+    }, [content, hasAssessmentActivities, isAssessmentActivity, tinCanActivityStatus, isTinCanLessonPassed]);
 
     useEffect(() => {
         if (hasAssessmentFailureSignals) {
@@ -1081,7 +1138,6 @@ export default function LearnPage() {
                 ?? ''
             );
             if (hasFailureStatusSignal(statusText)) return true;
-            if (item?.success === false) return true;
             const hasExplicitPassSignal =
                 isTruthyFlag(item?.passed)
                 || isTruthyFlag(item?.isPassed)
@@ -1132,7 +1188,11 @@ export default function LearnPage() {
                 normalizedRaw !== null
                 || normalizedScaled !== null
                 || normalizedRawMax !== null;
-            return hasAnyScore && hasFailingScore;
+            if (hasAnyScore) return hasFailingScore;
+            if (item?.success === false) {
+                return false;
+            }
+            return false;
         });
         const areAssessmentActivitiesPassedFromStatuses = !activities.some((activity, idx) => {
             if (!isAssessmentActivity(activity)) return false;
@@ -1148,12 +1208,31 @@ export default function LearnPage() {
 
         const hasRuntimeCompletionSignal = hasMultipleActivities ? completionSignalForMulti : completionSignalForSingle;
         const hasValidCompletionSignal = completionByCondition || hasRuntimeCompletionSignal;
+        const assessmentIndexes = activities.reduce((acc, activity, idx) => {
+            if (isAssessmentActivity(activity)) acc.push(idx);
+            return acc;
+        }, []);
+        const hasAssessmentInActivities = assessmentIndexes.length > 0;
+        const lastAssessmentIndex = hasAssessmentInActivities ? assessmentIndexes[assessmentIndexes.length - 1] : -1;
+        const isTerminalAssessmentIndex =
+            hasAssessmentInActivities &&
+            safeActivityIndex >= 0 &&
+            safeActivityIndex === lastAssessmentIndex;
+        const hasTerminalAssessmentPassSignal =
+            isTerminalAssessmentIndex &&
+            isTinCanLessonPassed(statuses[safeActivityIndex], activities[safeActivityIndex]) &&
+            areAssessmentActivitiesPassedFromStatuses;
+        const hasStrongAssessmentCompletionSignal =
+            hasAssessmentInActivities &&
+            areAssessmentActivitiesPassedFromStatuses &&
+            (completedByActivities || completedByVerb || completedByPackage) &&
+            isFinalActivity;
 
         // Guard against instant false-positive completion on initial launch.
         const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
-        if (studiedSeconds < 10) return false;
+        if (studiedSeconds < 10 && !hasStrongAssessmentCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
 
-        if (!hasValidCompletionSignal) return false;
+        if (!hasValidCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
         const requiresSuccessValidation =
             effectiveTinCanCondition !== 'all_completed'
             || requireAssessmentPass;
@@ -1323,15 +1402,25 @@ export default function LearnPage() {
         if (String(content?.type || '').toLowerCase() !== 'tincan') return false;
         try {
             const windows = [];
-            const pushWindow = (candidate) => {
+            const pushWindow = (candidate, depth = 0) => {
                 if (!candidate) return;
                 if (windows.includes(candidate)) return;
                 windows.push(candidate);
+                if (depth >= 4) return;
+
+                try {
+                    const childFrames = Array.from(candidate.document?.querySelectorAll?.('iframe') || []);
+                    for (const childFrame of childFrames) {
+                        pushWindow(childFrame?.contentWindow, depth + 1);
+                    }
+                } catch {
+                    // ignore cross-frame access errors
+                }
             };
 
             pushWindow(frameWindow);
             try {
-                pushWindow(frameWindow.document?.getElementById('contentFrame')?.contentWindow);
+                pushWindow(frameWindow.document?.getElementById('contentFrame')?.contentWindow, 1);
             } catch {
                 // ignore cross-frame access errors
             }
@@ -1468,6 +1557,12 @@ export default function LearnPage() {
                     if (typeof row.completed !== 'boolean') row.completed = Boolean(fallback?.completed);
                     if (typeof row.passed !== 'boolean') row.passed = Boolean(fallback?.passed);
                     if (typeof row.quizzed !== 'boolean') row.quizzed = Boolean(fallback?.quizzed);
+                    if (!Array.isArray(row.score)) {
+                        const priorScore = asFiniteNumber(row.score ?? fallback?.score);
+                        row.score = priorScore !== null
+                            ? [{ raw: priorScore, total: 100, percent: priorScore }]
+                            : [];
+                    }
                 };
 
                 const maxKnownRows = Math.max(dataIndex.length, treeArray.length);
@@ -1521,20 +1616,32 @@ export default function LearnPage() {
                     }
                 };
 
-                const wrapRuntimeFunctionSafely = (fnName) => {
+                const wrapRuntimeFunctionSafely = (fnName, afterCall = null) => {
                     const currentFn = win?.[fnName];
                     if (typeof currentFn !== 'function') return;
                     if (currentFn.__lmsSafeWrapper === true) return;
 
                     const originalFn = currentFn;
                     const wrappedFn = function wrappedTinCanRuntimeFunction(...args) {
+                        const invokeOriginal = () => {
+                            const result = originalFn.apply(this, args);
+                            if (typeof afterCall === 'function') {
+                                try {
+                                    afterCall(args, result);
+                                } catch {
+                                    // ignore post-call instrumentation failures
+                                }
+                            }
+                            return result;
+                        };
+
                         try {
-                            return originalFn.apply(this, args);
+                            return invokeOriginal();
                         } catch (error) {
                             if (!needsRuntimeHeal(error)) throw error;
                             try {
                                 healAroundCurrentPage();
-                                return originalFn.apply(this, args);
+                                return invokeOriginal();
                             } catch {
                                 return null;
                             }
@@ -1549,11 +1656,168 @@ export default function LearnPage() {
                     }
                 };
 
+                const parsePercentFromText = (value) => {
+                    const text = String(value || '').trim();
+                    if (!text) return null;
+                    const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
+                    if (percentMatch?.[1]) {
+                        const parsed = Number(percentMatch[1]);
+                        if (Number.isFinite(parsed)) return Math.max(0, Math.min(100, parsed));
+                    }
+                    return null;
+                };
+
+                const coercePercentFromScoreArgs = (rawScore, totalScore, percentScore) => {
+                    const directPercent = Number(percentScore);
+                    if (Number.isFinite(directPercent)) {
+                        const normalizedDirectPercent =
+                            directPercent >= 0 && directPercent <= 1
+                                ? directPercent * 100
+                                : directPercent;
+                        return Math.max(0, Math.min(100, normalizedDirectPercent));
+                    }
+
+                    const raw = Number(rawScore);
+                    const total = Number(totalScore);
+                    if (Number.isFinite(raw) && Number.isFinite(total) && total > 0) {
+                        return Math.max(0, Math.min(100, (raw / total) * 100));
+                    }
+                    if (Number.isFinite(raw)) return Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw));
+                    return null;
+                };
+
+                const readRuntimeCurrentPage = () => {
+                    const readCandidates = [];
+                    try { readCandidates.push(win.currentPage); } catch { /* ignore */ }
+                    try { readCandidates.push(win.parent?.currentPage); } catch { /* ignore */ }
+                    try { readCandidates.push(win.parent?.parent?.currentPage); } catch { /* ignore */ }
+                    try { readCandidates.push(currentState.lastSeenIndex); } catch { /* ignore */ }
+                    try { readCandidates.push(win.parent?.currentState?.lastSeenIndex); } catch { /* ignore */ }
+                    try { readCandidates.push(win.parent?.parent?.currentState?.lastSeenIndex); } catch { /* ignore */ }
+
+                    for (const candidate of readCandidates) {
+                        const numeric = Number(candidate);
+                        if (Number.isFinite(numeric) && numeric >= 0) {
+                            return Math.floor(numeric);
+                        }
+                    }
+                    return 0;
+                };
+
+                const applyAssessmentPassFromAlert = (percentValue = null, passedOverride = null) => {
+                    const safeCurrentPage = readRuntimeCurrentPage();
+                    const candidates = [safeCurrentPage, safeCurrentPage - 1, safeCurrentPage + 1];
+                    const scorePercent = Number.isFinite(Number(percentValue))
+                        ? Math.max(0, Math.min(100, Number(percentValue)))
+                        : null;
+                    const explicitPassed = typeof passedOverride === 'boolean' ? passedOverride : null;
+                    const passByPercent = explicitPassed !== null
+                        ? explicitPassed
+                        : scorePercent === null ? true : scorePercent >= 80;
+
+                    for (const idx of candidates) {
+                        if (!Number.isFinite(idx) || idx < 0) continue;
+                        const treeRow = Array.isArray(treeArray) ? treeArray[idx] : null;
+                        const dataRow = Array.isArray(dataIndex) ? dataIndex[idx] : null;
+                        ensureRow(treeArray, idx, dataRow);
+                        ensureRow(dataIndex, idx, treeRow);
+                        const row = dataIndex[idx];
+                        if (!row || typeof row !== 'object') continue;
+
+                        row.attempted = true;
+                        row.quizzed = true;
+                        row.completed = true;
+                        row.completion = true;
+                        row.passed = passByPercent;
+                        row.success = passByPercent;
+                        row.status = passByPercent ? 'passed' : 'failed';
+                        if (scorePercent !== null) {
+                            if (Array.isArray(row.score)) {
+                                row.score[0] = { raw: scorePercent, total: 100, percent: scorePercent };
+                            }
+                            row.scorePercent = scorePercent;
+                            row.rawScore = scorePercent;
+                            row.scoreRaw = scorePercent;
+                            row.scaledScore = scorePercent / 100;
+                            row.scoreScaled = scorePercent / 100;
+                            row.scoreMax = 100;
+                            row.maxScore = 100;
+                        }
+                    }
+
+                    if (passByPercent) {
+                        currentState.completed = true;
+                        currentState.completion = true;
+                    }
+                    const safeLastSeen = Number(currentState.lastSeenIndex);
+                    if (!Number.isFinite(safeLastSeen) || safeCurrentPage > safeLastSeen) {
+                        currentState.lastSeenIndex = safeCurrentPage;
+                    }
+                    try {
+                        const assessmentMessage = {
+                            type: 'lms-assessment-result',
+                            runtimePage: safeCurrentPage,
+                            percent: scorePercent,
+                            passed: passByPercent,
+                            completed: true,
+                        };
+                        win.parent?.postMessage(assessmentMessage, window.location.origin);
+                        if (win.top && win.top !== win.parent) {
+                            win.top.postMessage(assessmentMessage, window.location.origin);
+                        }
+                    } catch {
+                        // ignore postMessage failures
+                    }
+                };
+
+                if (typeof win?.alert === 'function' && win.alert.__lmsAssessmentAlertWrapper !== true) {
+                    const originalAlert = win.alert;
+                    const wrappedAlert = function wrappedTinCanAlert(message, ...args) {
+                        try {
+                            const text = String(message || '');
+                            const mayBeAssessmentResult =
+                                /คะแนน|score|result|quiz|test|exam|assessment|ผ่าน|pass/i.test(text);
+                            if (mayBeAssessmentResult) {
+                                const percentValue = parsePercentFromText(text);
+                                applyAssessmentPassFromAlert(percentValue);
+                            }
+                        } catch {
+                            // ignore alert parsing failures
+                        }
+                        return originalAlert.apply(this, [message, ...args]);
+                    };
+                    wrappedAlert.__lmsAssessmentAlertWrapper = true;
+                    wrappedAlert.__lmsAlertOriginal = originalAlert;
+                    try {
+                        win.alert = wrappedAlert;
+                    } catch {
+                        // ignore runtime assignment failures
+                    }
+                }
+
                 wrapRuntimeFunctionSafely('updatestatus');
                 wrapRuntimeFunctionSafely('updateStatus');
                 wrapRuntimeFunctionSafely('SetupIFrame');
                 wrapRuntimeFunctionSafely('setContentStatusPassed');
-                wrapRuntimeFunctionSafely('setCurrentPageScore');
+                wrapRuntimeFunctionSafely('setCurrentPageScore', (args) => {
+                    const percentValue = coercePercentFromScoreArgs(args?.[0], args?.[1], args?.[2]);
+                    applyAssessmentPassFromAlert(percentValue);
+                });
+                wrapRuntimeFunctionSafely('sendCurrentPagePassedStatement', (args) => {
+                    const percentValue = coercePercentFromScoreArgs(args?.[1], args?.[2], args?.[3]);
+                    applyAssessmentPassFromAlert(percentValue, args?.[0] === true);
+                });
+                wrapRuntimeFunctionSafely('sendExperiencedStatement', () => {
+                    const pageIndex = readRuntimeCurrentPage();
+                    const row = Array.isArray(dataIndex) ? dataIndex[pageIndex] : null;
+                    const scoreRow = Array.isArray(row?.score) ? row.score[0] : null;
+                    const percentValue = coercePercentFromScoreArgs(
+                        scoreRow?.raw ?? row?.scoreRaw ?? row?.rawScore ?? row?.score,
+                        scoreRow?.total ?? row?.scoreMax ?? row?.maxScore ?? row?.totalScore,
+                        scoreRow?.percent ?? row?.scorePercent ?? row?.scaledScore ?? row?.scoreScaled
+                    );
+                    applyAssessmentPassFromAlert(percentValue, true);
+                });
                 wrapRuntimeFunctionSafely('setCurrentPageStatus');
                 wrapRuntimeFunctionSafely('setCurrentPageAttempted');
                 wrapRuntimeFunctionSafely('displayMsg');
@@ -2423,6 +2687,7 @@ export default function LearnPage() {
                     : null;
                 const row = directStatusRow || mappedRow || {};
                 const activity = content.activities[i];
+                const isAssessment = isAssessmentActivity(activity);
                 const statusText = normalizeStatusText(
                     row?.status
                     ?? row?.result
@@ -2471,25 +2736,44 @@ export default function LearnPage() {
                     (normalizedFromRawMax !== null && normalizedFromRawMax >= assessmentPassingScore) ||
                     (normalizedFromScaled !== null && normalizedFromScaled >= assessmentPassingScore) ||
                     (normalizedFromRaw !== null && normalizedFromRaw >= assessmentPassingScore);
+                const hasAnyScoreEvidence =
+                    normalizedFromRawMax !== null ||
+                    normalizedFromScaled !== null ||
+                    normalizedFromRaw !== null;
+                const hasAssessmentCompletionSignal =
+                    isAssessment &&
+                    !hasFailStatus &&
+                    (isTruthyFlag(row?.completed) || row?.completion === true || hasCompletionStatusSignal(statusText));
                 const markedPass =
                     !hasFailStatus &&
                     (
                         isTruthyFlag(row?.passed)
                         || hasPassStatus
                         || hasPassingScore
-                        || (!isAssessmentActivity(activity) && row?.success === true)
+                        || (hasAssessmentCompletionSignal && !hasAnyScoreEvidence)
+                        || (!isAssessment && row?.success === true)
                     );
                 const markedComplete =
                     !hasFailStatus &&
                     (isTruthyFlag(row?.completed) || row?.completion === true || hasCompletionStatusSignal(statusText));
+                const derivedSuccess = markedPass
+                    ? true
+                    : (
+                        hasFailStatus || (isAssessment && hasAnyScoreEvidence && !hasPassingScore)
+                            ? false
+                            : null
+                    );
+                const derivedCompletion = (isAssessment ? markedPass : markedComplete)
+                    ? true
+                    : (hasFailStatus && hasAttemptSignal ? false : null);
                 return {
                     attempted: isTruthyFlag(row?.attempted),
-                    completed: isAssessmentActivity(activity) ? markedPass : markedComplete,
+                    completed: isAssessment ? markedPass : markedComplete,
                     passed: markedPass,
                     quizzed: isTruthyFlag(row?.quizzed),
                     status: String(statusText || ''),
-                    success: typeof row?.success === 'boolean' ? row.success : null,
-                    completion: isTruthyFlag(row?.completed) ? true : (typeof row?.completion === 'boolean' ? row.completion : null),
+                    success: derivedSuccess,
+                    completion: derivedCompletion,
                     scoreRaw: rawScore,
                     scoreScaled: scaledScore,
                     scoreMax: maxScore,
@@ -3022,9 +3306,18 @@ export default function LearnPage() {
             !progressWriteBlockRef.current?.disabled &&
             requestedStatus !== 'COMPLETED' &&
             !hasAssessmentFailureSignals;
-        const normalizedPayload = shouldKeepCompleted
+        const normalizedPayloadBase = shouldKeepCompleted
             ? { ...payload, status: 'COMPLETED', progress: 100 }
             : payload;
+        const normalizedStatus = String(normalizedPayloadBase?.status || '').toUpperCase();
+        const normalizedPayload = { ...normalizedPayloadBase };
+        if (normalizedStatus === 'COMPLETED') {
+            // Never let stale false flags downgrade a valid completion write on server.
+            normalizedPayload.completion = true;
+            if (normalizedPayload.success === false) {
+                delete normalizedPayload.success;
+            }
+        }
         const normalizedSectionId = Number(normalizedPayload?.sectionId);
         const sectionIdForWrite =
             Number.isInteger(normalizedSectionId) && normalizedSectionId > 0
@@ -3178,6 +3471,7 @@ export default function LearnPage() {
         setProgress(nextProgress);
         setCurrentTime(safeIdx + 1);
         setDuration(total);
+        const fallbackScorePayload = extractScorePayloadFromStatus(activityStatuses[safeIdx]);
 
         syncProgressWithTrackedTime({
             contentId: progressContentId,
@@ -3187,6 +3481,7 @@ export default function LearnPage() {
             progress: nextProgress,
             currentTime: safeIdx + 1,
             duration: total,
+            ...fallbackScorePayload,
         });
 
         if (nextStatus === 'COMPLETED') {
@@ -3194,7 +3489,7 @@ export default function LearnPage() {
         } else {
             syncEnrollmentStatus('LEARNING', nextProgress);
         }
-    }, [isLaunchMode, content, resumeLoaded, progressContentId, progressUserId, activeSectionId, selectedActivityIndex, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, hasAssessmentFailureSignals, detectActivityIndexFromIframe]);
+    }, [isLaunchMode, content, resumeLoaded, progressContentId, progressUserId, activeSectionId, selectedActivityIndex, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, hasAssessmentFailureSignals, detectActivityIndexFromIframe, extractScorePayloadFromStatus]);
 
     // Load content only from user's own enrollment (prevent bypass by direct URL).
     useEffect(() => {
@@ -3768,6 +4063,108 @@ export default function LearnPage() {
             }
 
             const type = payload?.type || payload?.event || '';
+            const normalizedType = String(type || '').toLowerCase();
+            if (normalizedType === 'lms-assessment-result') {
+                const activities = Array.isArray(content?.activities) ? content.activities : [];
+                if (activities.length === 0 || !progressContentId || !progressUserId) return;
+
+                const runtimePage = Number(payload?.runtimePage);
+                const mappedRuntimeIndex = Number.isFinite(runtimePage)
+                    ? mapRuntimePageToActivityIndex(Math.floor(runtimePage))
+                    : -1;
+                const detectedIndex = detectActivityIndexFromIframe();
+                const selectedIndex = Number.isFinite(Number(selectedActivityIndex))
+                    ? Math.floor(Number(selectedActivityIndex))
+                    : -1;
+                const lastAssessmentIndex = activities.reduce((last, activity, idx) => (
+                    isAssessmentActivity(activity) ? idx : last
+                ), -1);
+                const rawIndex =
+                    mappedRuntimeIndex >= 0 ? mappedRuntimeIndex
+                        : detectedIndex >= 0 ? detectedIndex
+                            : selectedIndex >= 0 ? selectedIndex
+                                : lastAssessmentIndex >= 0 ? lastAssessmentIndex
+                                    : activities.length - 1;
+                const safeIndex = Math.max(0, Math.min(activities.length - 1, Math.floor(rawIndex)));
+                const activity = activities[safeIndex];
+                const percent = asFiniteNumber(payload?.percent);
+                const passScore = getAssessmentPassingScore(activity);
+                const passed = payload?.passed === true || (percent !== null && percent >= passScore);
+                if (!passed) return;
+                const isTerminalAssessmentResult =
+                    lastAssessmentIndex >= 0
+                        ? safeIndex === lastAssessmentIndex
+                        : safeIndex >= activities.length - 1;
+
+                const previousStatuses = Array.isArray(tinCanActivityStatusRef.current)
+                    ? tinCanActivityStatusRef.current
+                    : [];
+                const nextActivityStatuses = Array.from({ length: activities.length }, (_, idx) => ({
+                    attempted: Boolean(previousStatuses?.[idx]?.attempted),
+                    completed: Boolean(previousStatuses?.[idx]?.completed),
+                    passed: Boolean(previousStatuses?.[idx]?.passed),
+                    quizzed: Boolean(previousStatuses?.[idx]?.quizzed),
+                    status: String(previousStatuses?.[idx]?.status || ''),
+                    success: typeof previousStatuses?.[idx]?.success === 'boolean' ? previousStatuses[idx].success : null,
+                    completion: typeof previousStatuses?.[idx]?.completion === 'boolean' ? previousStatuses[idx].completion : null,
+                    scoreRaw: asFiniteNumber(previousStatuses?.[idx]?.scoreRaw),
+                    scoreScaled: asFiniteNumber(previousStatuses?.[idx]?.scoreScaled),
+                    scoreMax: asFiniteNumber(previousStatuses?.[idx]?.scoreMax),
+                }));
+
+                nextActivityStatuses[safeIndex] = {
+                    ...nextActivityStatuses[safeIndex],
+                    attempted: true,
+                    completed: true,
+                    passed: true,
+                    quizzed: true,
+                    status: 'passed',
+                    success: true,
+                    completion: true,
+                    scoreRaw: percent ?? asFiniteNumber(nextActivityStatuses[safeIndex]?.scoreRaw),
+                    scoreScaled: percent !== null ? percent / 100 : asFiniteNumber(nextActivityStatuses[safeIndex]?.scoreScaled),
+                    scoreMax: percent !== null ? 100 : asFiniteNumber(nextActivityStatuses[safeIndex]?.scoreMax),
+                };
+
+                const sig = JSON.stringify(nextActivityStatuses);
+                tinCanActivityStatusRef.current = nextActivityStatuses;
+                if (sig !== lastTinCanStatusSigRef.current) {
+                    lastTinCanStatusSigRef.current = sig;
+                    setTinCanActivityStatus(nextActivityStatuses);
+                }
+
+                resumeGuardUntilRef.current = 0;
+                completionLockRef.current = true;
+                highestSeenActivityIndexRef.current = Math.max(Number(highestSeenActivityIndexRef.current || 0), safeIndex);
+                setSelectedActivityIndex(safeIndex);
+                setCurrentTime(safeIndex + 1);
+                setDuration(activities.length);
+                setStatus('COMPLETED');
+                setProgress(100);
+                persistTincanResumeIndex(safeIndex);
+                const activityPath = getPrimaryActivityResumePath(activity);
+                persistTincanResumePath(activityPath || activity?.activityId || activity?.id || '');
+
+                if (!isTerminalAssessmentResult) {
+                    return;
+                }
+
+                await syncProgressWithTrackedTime({
+                    contentId: progressContentId,
+                    userId: progressUserId,
+                    sectionId: activeSectionId,
+                    status: 'COMPLETED',
+                    progress: 100,
+                    currentTime: safeIndex + 1,
+                    duration: activities.length,
+                    scoreRaw: percent ?? undefined,
+                    scoreScaled: percent !== null ? percent / 100 : undefined,
+                    success: true,
+                    completion: true,
+                });
+                await syncEnrollmentStatus('COMPLETED', 100);
+                return;
+            }
             if (type && !['xapi', 'xapi-statement', 'statement'].includes(String(type).toLowerCase())) {
                 return;
             }
@@ -3968,6 +4365,20 @@ export default function LearnPage() {
                         || isCompletedVerb(incoming?.verb)
                         || (matchedIsAssessment && markedPass)
                     );
+                    const currentStatusText = normalizeStatusText(
+                        current?.status
+                        ?? current?.result
+                        ?? current?.completionStatus
+                        ?? current?.successStatus
+                        ?? ''
+                    );
+                    const currentHasFailSignal = hasFailureStatusSignal(currentStatusText);
+                    const normalizedCurrentSuccess = typeof current?.success === 'boolean'
+                        ? (current.success === false && !currentHasFailSignal ? null : current.success)
+                        : null;
+                    const normalizedCurrentCompletion = typeof current?.completion === 'boolean'
+                        ? (current.completion === false && !currentHasFailSignal ? null : current.completion)
+                        : null;
 
                     nextActivityStatuses[matchedActivityIndex] = {
                         attempted: true,
@@ -3983,10 +4394,10 @@ export default function LearnPage() {
                         status: String(current?.status || ''),
                         success: typeof incomingResultSnapshot?.success === 'boolean'
                             ? incomingResultSnapshot.success
-                            : (typeof current?.success === 'boolean' ? current.success : null),
+                            : (markedPass ? true : normalizedCurrentSuccess),
                         completion: typeof incomingResultSnapshot?.completion === 'boolean'
                             ? incomingResultSnapshot.completion
-                            : (typeof current?.completion === 'boolean' ? current.completion : null),
+                            : (markedComplete ? true : normalizedCurrentCompletion),
                         scoreRaw: asFiniteNumber(incomingResultSnapshot?.raw) ?? asFiniteNumber(current?.scoreRaw),
                         scoreScaled: asFiniteNumber(incomingResultSnapshot?.scaled) ?? asFiniteNumber(current?.scoreScaled),
                         scoreMax: asFiniteNumber(incomingResultSnapshot?.max) ?? asFiniteNumber(current?.scoreMax),
@@ -4047,6 +4458,18 @@ export default function LearnPage() {
                     const nextProgress = nextStatus === 'COMPLETED'
                         ? 100
                         : computeTinCanProgress(matchedActivityIndex + 1, totalActivities, false);
+                    const statementScorePayload = {};
+                    if (incomingRaw !== null) statementScorePayload.scoreRaw = incomingRaw;
+                    if (incomingScaled !== null) statementScorePayload.scoreScaled = incomingScaled;
+                    if (typeof incomingResultSnapshot?.success === 'boolean') {
+                        statementScorePayload.success = incomingResultSnapshot.success;
+                    }
+                    if (typeof incomingResultSnapshot?.completion === 'boolean') {
+                        statementScorePayload.completion = incomingResultSnapshot.completion;
+                    }
+                    const statusScorePayload = extractScorePayloadFromStatus(
+                        nextActivityStatuses[matchedActivityIndex]
+                    );
                     await syncProgressWithTrackedTime({
                         contentId: progressContentId,
                         userId: progressUserId,
@@ -4055,6 +4478,8 @@ export default function LearnPage() {
                         progress: nextProgress,
                         currentTime: matchedActivityIndex + 1,
                         duration: totalActivities,
+                        ...statusScorePayload,
+                        ...statementScorePayload,
                     });
                     setStatus(nextStatus);
                     setProgress(nextProgress);
@@ -4126,7 +4551,7 @@ export default function LearnPage() {
 
         window.addEventListener('message', onMessage);
         return () => window.removeEventListener('message', onMessage);
-    }, [content, actor, resolvedContentId, progressContentId, progressUserId, activeSectionId, progress, status, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, selectedActivityIndex, currentTime, computeTinCanProgress, isCompletedVerb, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, resumeLoaded, syncProgressWithTrackedTime, requireAssessmentPass, getAssessmentPassingScore, detectActivityIndexFromIframe, hasAssessmentFailureSignals, isAssessmentActivity, findUniqueActivityIndexByPathKey, getPrimaryActivityResumePath, normalizeActivityPathKey]);
+    }, [content, actor, resolvedContentId, progressContentId, progressUserId, activeSectionId, progress, status, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, selectedActivityIndex, currentTime, computeTinCanProgress, isCompletedVerb, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, resumeLoaded, syncProgressWithTrackedTime, requireAssessmentPass, getAssessmentPassingScore, detectActivityIndexFromIframe, hasAssessmentFailureSignals, isAssessmentActivity, findUniqueActivityIndexByPathKey, getPrimaryActivityResumePath, normalizeActivityPathKey, extractScorePayloadFromStatus, mapRuntimePageToActivityIndex]);
 
     // Format time
     const formatTime = (seconds) => {
@@ -4222,6 +4647,7 @@ export default function LearnPage() {
                     const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
                     const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
                     const nextProgress = computeTinCanProgress(idx + 1, total, nextStatus === 'COMPLETED');
+                    const closeScorePayload = extractScorePayloadFromStatus(syncedStatuses[idx]);
                     await syncProgressWithTrackedTime({
                         contentId: progressContentId,
                         userId: progressUserId,
@@ -4230,6 +4656,7 @@ export default function LearnPage() {
                         progress: nextProgress,
                         currentTime: idx + 1,
                         duration: total,
+                        ...closeScorePayload,
                     });
                     if (nextStatus === 'COMPLETED') {
                         await syncEnrollmentStatus('COMPLETED', 100);
@@ -4341,7 +4768,7 @@ export default function LearnPage() {
                 window.location.href = fallbackUrl;
             }
         }, 120);
-    }, [content, getPrimaryActivityResumePath, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, notifyLearningRefresh, persistTincanResumeIndex, persistTincanResumePath, persistWebResumeIndex, persistWebStatusSnapshot, computeTinCanProgress, status, tinCanActivityStatus, isTinCanLessonPassed, canFinalizeTinCanCompletion, canFinalizeLegacyWebCompletion, detectActivityIndexFromIframe, detectLegacyWebPageIndex, getLegacyWebPageTotal, readTincanResumeIndex, readWebResumeIndex, selectedActivityIndex, getCurrentWebStatusSnapshot, applyWebStatusToRuntime, syncProgressWithTrackedTime, mapRuntimePageToActivityIndex, requireAssessmentPass, hasAssessmentFailureSignals, syncTinCanActivityStatusFromIframe]);
+    }, [content, getPrimaryActivityResumePath, progressContentId, progressUserId, activeSectionId, syncEnrollmentStatus, notifyLearningRefresh, persistTincanResumeIndex, persistTincanResumePath, persistWebResumeIndex, persistWebStatusSnapshot, computeTinCanProgress, status, tinCanActivityStatus, isTinCanLessonPassed, canFinalizeTinCanCompletion, canFinalizeLegacyWebCompletion, detectActivityIndexFromIframe, detectLegacyWebPageIndex, getLegacyWebPageTotal, readTincanResumeIndex, readWebResumeIndex, selectedActivityIndex, getCurrentWebStatusSnapshot, applyWebStatusToRuntime, syncProgressWithTrackedTime, mapRuntimePageToActivityIndex, requireAssessmentPass, hasAssessmentFailureSignals, syncTinCanActivityStatusFromIframe, extractScorePayloadFromStatus]);
 
     const bindIframeCloseHandler = useCallback(() => {
         const frameWindow = iframeRef.current?.contentWindow;
@@ -4716,6 +5143,7 @@ export default function LearnPage() {
         } else {
             setProgress(nextProgress);
         }
+        const positionScorePayload = extractScorePayloadFromStatus(syncedStatuses[effectiveIndex]);
 
         await syncProgressWithTrackedTime({
             contentId: progressContentId,
@@ -4725,6 +5153,7 @@ export default function LearnPage() {
             progress: nextProgress,
             currentTime: effectivePosition,
             duration: total,
+            ...positionScorePayload,
         });
 
         setStatus(nextStatus);
@@ -4738,7 +5167,7 @@ export default function LearnPage() {
         } finally {
             tinCanSyncInFlightRef.current = false;
         }
-    }, [content, getPrimaryActivityResumePath, detectActivityIndexFromIframe, selectedActivityIndex, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals, logLessonMapDebug]);
+    }, [content, getPrimaryActivityResumePath, detectActivityIndexFromIframe, selectedActivityIndex, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals, logLessonMapDebug, extractScorePayloadFromStatus]);
     const runIframeRuntimeSync = useCallback(() => {
         const frameWindow = iframeRef.current?.contentWindow;
         hardenTinCanRuntimeWindow(frameWindow);
@@ -5480,11 +5909,21 @@ export default function LearnPage() {
                             <div>
                                 <h1 className="text-white text-[24px] font-semibold">{content.title}</h1>
                                 <div className="flex items-center gap-4 mt-2 text-[14px] text-white/50">
-                                    <span className={`px-3 py-1 rounded-full text-[12px] font-medium ${content.type === 'tincan' ? 'bg-purple-500/20 text-purple-300' :
+                                    <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-medium ${content.type === 'tincan' ? 'bg-purple-500/20 text-purple-300' :
                                             content.type === 'video' ? 'bg-blue-500/20 text-blue-300' :
                                                 'bg-gray-500/20 text-gray-300'
                                         }`}>
-                                        {content.type === 'tincan' ? '📦 TinCan Package' : '🎬 Video'}
+                                        {content.type === 'tincan' ? (
+                                            <>
+                                                <Package className="w-3.5 h-3.5" aria-hidden="true" />
+                                                <span>TinCan Package</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Video className="w-3.5 h-3.5" aria-hidden="true" />
+                                                <span>Video</span>
+                                            </>
+                                        )}
                                     </span>
                                     <span>Uploaded: {new Date(content.uploadedAt).toLocaleDateString('th-TH')}</span>
                                 </div>
@@ -5494,7 +5933,10 @@ export default function LearnPage() {
                         {/* Activities List (for TinCan) */}
                         {content.activities?.length > 0 && (
                             <div className="mt-8 bg-white/5 rounded-xl p-6 border border-white/10">
-                                <h3 className="text-white text-[16px] font-semibold mb-4">📋 Activities</h3>
+                                <h3 className="flex items-center gap-2 text-white text-[16px] font-semibold mb-4">
+                                    <ListChecks className="w-4 h-4 text-white/70" aria-hidden="true" />
+                                    <span>Activities</span>
+                                </h3>
                                 <div className="flex flex-col gap-2">
                                     {content.activities.map((act, i) => (
                                         <button
@@ -5525,7 +5967,10 @@ export default function LearnPage() {
                     <div className="w-full xl:w-[340px] 2xl:w-[360px] shrink-0 flex flex-col gap-6">
                         {/* Progress Card */}
                         <div className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10">
-                            <h3 className="text-white text-[16px] font-semibold mb-4">📊 Learning Progress</h3>
+                            <h3 className="flex items-center gap-2 text-white text-[16px] font-semibold mb-4">
+                                <BarChart3 className="w-4 h-4 text-white/70" aria-hidden="true" />
+                                <span>Learning Progress</span>
+                            </h3>
 
                             {/* Circular Progress */}
                             <div className="flex items-center justify-center mb-6">
@@ -5556,7 +6001,12 @@ export default function LearnPage() {
                                         }`}>
                                         {status === 'COMPLETED' ? ' เสร็จสิ้น' :
                                             status === 'LEARNING' ? ' กำลังเรียน' :
-                                                '⏳ ยังไม่เริ่ม'}
+                                                (
+                                                    <span className="inline-flex items-center gap-1.5">
+                                                        <Clock3 className="w-3.5 h-3.5" aria-hidden="true" />
+                                                        <span>ยังไม่เริ่ม</span>
+                                                    </span>
+                                                )}
                                     </span>
                                 </div>
                                 {content.type === 'video' && (
@@ -5576,8 +6026,9 @@ export default function LearnPage() {
 
                         {/* xAPI Statement Log */}
                         <div className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10">
-                            <h3 className="text-white text-[16px] font-semibold mb-4">
-                                📡 xAPI Statements
+                            <h3 className="flex items-center gap-2 text-white text-[16px] font-semibold mb-4">
+                                <RadioTower className="w-4 h-4 text-white/70" aria-hidden="true" />
+                                <span>xAPI Statements</span>
                                 <span className="text-white/30 text-[12px] font-normal ml-2">Live</span>
                             </h3>
                             <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">

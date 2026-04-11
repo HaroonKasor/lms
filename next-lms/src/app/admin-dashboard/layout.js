@@ -9,7 +9,8 @@ export default async function AdminDashboardLayout({ children }) {
     if (!session) {
         redirect('/login?next=/admin-dashboard');
     }
-    if (!session.isAdmin) {
+    const role = String(session?.role || '').toLowerCase();
+    if (!(session.isAdmin || role === 'instructor')) {
         redirect('/dashboard');
     }
 

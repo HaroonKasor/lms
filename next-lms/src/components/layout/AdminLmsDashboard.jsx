@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import Navbar from '@/components/layout/Navbar';
+import { getUser } from '@/lib/auth';
 import {
     AreaChart,
     Area,
@@ -39,6 +40,13 @@ const defaultTaskList = [
     { id: 1, title: '0 enrollment approvals pending', href: '/admin-dashboard/learn/enrollment' },
     { id: 2, title: '0 certificate approvals pending', href: '/admin-dashboard/report/certificate-report' },
     { id: 3, title: '0 active users', href: '/admin-dashboard/manage-user/users' },
+    { id: 4, title: '0 learners currently studying', href: '/admin-dashboard/learn/learner-status' },
+];
+
+const instructorDefaultTaskList = [
+    { id: 1, title: '0 enrollment approvals pending', href: '/admin-dashboard/learn/learner-status' },
+    { id: 2, title: '0 certificate approvals pending', href: '/admin-dashboard/report/certificate-report' },
+    { id: 3, title: '0 active users', href: '/admin-dashboard/report/learner-status' },
     { id: 4, title: '0 learners currently studying', href: '/admin-dashboard/learn/learner-status' },
 ];
 
@@ -164,6 +172,11 @@ export default function AdminLmsDashboard({ children }) {
         recentStatements: [],
     });
     const [auditNav, setAuditNav] = useState({ allowed: false, showInMenu: false });
+    const [sessionRole, setSessionRole] = useState(() => {
+        if (typeof window === 'undefined') return '';
+        return String(getUser()?.role || '').toLowerCase();
+    });
+    const isInstructor = sessionRole === 'instructor';
 
     // Track multiple expanded menus
     const [expandedMenus, setExpandedMenus] = useState([]);
@@ -173,9 +186,25 @@ export default function AdminLmsDashboard({ children }) {
             ...item,
             subItems: Array.isArray(item.subItems) ? [...item.subItems] : item.subItems,
         }));
-        if (!(auditNav.allowed && auditNav.showInMenu)) return cloned;
 
-        return cloned.map((item) => {
+        const withRoleFilter = isInstructor
+            ? cloned
+                .filter((item) => ['Dashboard', 'Learn', 'Content', 'Report'].includes(String(item?.name || '')))
+                .map((item) => {
+                    if (item.name !== 'Learn') return item;
+                    const subItems = Array.isArray(item.subItems) ? item.subItems : [];
+                    return {
+                        ...item,
+                        subItems: subItems.filter((sub) => (
+                            ['Category', 'Course', 'Learner Status'].includes(String(sub?.name || ''))
+                        )),
+                    };
+                })
+            : cloned;
+
+        if (!(auditNav.allowed && auditNav.showInMenu)) return withRoleFilter;
+
+        return withRoleFilter.map((item) => {
             if (item.name !== 'Report') return item;
             const subItems = Array.isArray(item.subItems) ? [...item.subItems] : [];
             const exists = subItems.some((sub) => String(sub?.path || '') === '/admin-dashboard/report/audit-log');
@@ -188,7 +217,22 @@ export default function AdminLmsDashboard({ children }) {
             }
             return { ...item, subItems };
         });
-    }, [auditNav.allowed, auditNav.showInMenu]);
+    }, [auditNav.allowed, auditNav.showInMenu, isInstructor]);
+
+    React.useEffect(() => {
+        const syncSessionRole = () => {
+            setSessionRole(String(getUser()?.role || '').toLowerCase());
+        };
+
+        syncSessionRole();
+        window.addEventListener('storage', syncSessionRole);
+        window.addEventListener('lms_user_updated', syncSessionRole);
+
+        return () => {
+            window.removeEventListener('storage', syncSessionRole);
+            window.removeEventListener('lms_user_updated', syncSessionRole);
+        };
+    }, []);
 
     const isSubItemActive = React.useCallback((subItem) => {
         const rawPath = String(subItem?.path || '').trim();
@@ -226,6 +270,12 @@ export default function AdminLmsDashboard({ children }) {
     React.useEffect(() => {
         let active = true;
         const loadAuditNav = async () => {
+            if (isInstructor) {
+                if (active) {
+                    setAuditNav({ allowed: false, showInMenu: false });
+                }
+                return;
+            }
             try {
                 const res = await fetch('/api/admin/audit/access', {
                     cache: 'no-store',
@@ -244,7 +294,7 @@ export default function AdminLmsDashboard({ children }) {
         return () => {
             active = false;
         };
-    }, []);
+    }, [isInstructor]);
 
     React.useEffect(() => {
         if (!showDefaultDashboard) return undefined;
@@ -300,16 +350,18 @@ export default function AdminLmsDashboard({ children }) {
             pendingEnrollmentApprovals <= 0 &&
             pendingCertificateApprovals <= 0
         ) {
-            return defaultTaskList;
+            return isInstructor ? instructorDefaultTaskList : defaultTaskList;
         }
 
+        const enrollmentApprovalHref = isInstructor ? '/admin-dashboard/learn/learner-status' : '/admin-dashboard/learn/enrollment';
+        const activeUserHref = isInstructor ? '/admin-dashboard/report/learner-status' : '/admin-dashboard/manage-user/users';
         return [
-            { id: 1, title: `${pendingEnrollmentApprovals.toLocaleString()} enrollment approvals pending`, href: '/admin-dashboard/learn/enrollment' },
+            { id: 1, title: `${pendingEnrollmentApprovals.toLocaleString()} enrollment approvals pending`, href: enrollmentApprovalHref },
             { id: 2, title: `${pendingCertificateApprovals.toLocaleString()} certificate approvals pending`, href: '/admin-dashboard/report/certificate-report' },
-            { id: 3, title: `${activeUsers.toLocaleString()} active users`, href: '/admin-dashboard/manage-user/users' },
+            { id: 3, title: `${activeUsers.toLocaleString()} active users`, href: activeUserHref },
             { id: 4, title: `${learning.toLocaleString()} learners currently studying`, href: '/admin-dashboard/learn/learner-status' },
         ];
-    }, [stats]);
+    }, [stats, isInstructor]);
 
     const activityList = React.useMemo(() => {
         const statements = Array.isArray(stats?.recentStatements) ? stats.recentStatements : [];

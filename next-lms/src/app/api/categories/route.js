@@ -53,7 +53,7 @@ export async function GET(request) {
 
 export async function POST(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 
@@ -104,7 +104,7 @@ export async function POST(request) {
 
 export async function DELETE(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 
@@ -149,7 +149,7 @@ export async function DELETE(request) {
 
 export async function PUT(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 

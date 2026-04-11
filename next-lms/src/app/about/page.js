@@ -77,7 +77,7 @@ export default function AboutPage() {
                     </div>
                     <div className="flex-1 flex justify-center w-full">
                         <img 
-                            src="/images/messageImage_1775491769297.jpg" 
+                            src="/images/messageImage_1775491769297.png" 
                             alt="About SkillUp" 
                             className="w-full max-w-[500px] object-contain flex fallback-image-container rounded-[20px]" 
                             onError={(e) => {
@@ -116,9 +116,9 @@ export default function AboutPage() {
                     <div className="flex-1 flex justify-center items-end h-[450px] relative w-full">
                         <div className="w-full max-w-[600px] h-full flex justify-center relative items-end pb-4">
                             {[
-                                { file: "messageImage_1775491727482.jpg", btnIdx: 1 }, // Left - Male (Corresponds to Button 2)
-                                { file: "messageImage_1775491739744.jpg", btnIdx: 0 }, // Middle - Female (Corresponds to Button 1)
-                                { file: "messageImage_1775491747525.jpg", btnIdx: 2 }  // Right - Male (Corresponds to Button 3)
+                                { file: "messageImage_1775491727482.png", btnIdx: 1 }, // Left - Male (Corresponds to Button 2)
+                                { file: "messageImage_1775491739744.png", btnIdx: 0 }, // Middle - Female (Corresponds to Button 1)
+                                { file: "messageImage_1775491747525.png", btnIdx: 2 }  // Right - Male (Corresponds to Button 3)
                             ].map((item, idx) => (
                                 <div
                                     key={idx}
@@ -158,4 +158,3 @@ export default function AboutPage() {
         </div>
     );
 }
-

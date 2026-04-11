@@ -329,10 +329,11 @@ async function upsertLearningProgress({
     const explicitCompletion = typeof completion === 'boolean' ? completion : null;
     const resolvedSuccess = explicitSuccess ?? (typeof existing?.success === 'boolean' ? existing.success : null);
 
+    const shouldHonorNegativeSignals = incomingStatus !== 'completed';
     const hasExplicitFailureSignal =
         incomingStatus === 'failed'
-        || explicitSuccess === false
-        || explicitCompletion === false;
+        || (shouldHonorNegativeSignals && explicitSuccess === false)
+        || (shouldHonorNegativeSignals && explicitCompletion === false);
     const hasExplicitCompletionSignal =
         incomingStatus === 'completed'
         || explicitCompletion === true;

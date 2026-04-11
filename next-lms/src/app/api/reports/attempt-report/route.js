@@ -11,7 +11,7 @@ function toSafeNumber(value, fallback = 0) {
 
 export async function GET(request) {
     try {
-        const { response } = await requireSession(request, { requireAdmin: true });
+        const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
 
         const organizationId = await ensureDefaultOrganization();
