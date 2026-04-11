@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { usePathname } from "next/navigation";
 import { getChatSessionId, getUser } from "@/lib/auth";
 
-const quickActions = [
+const DEFAULT_QUICK_ACTIONS = [
     { label: "Summarize this page", prompt: "Summarize this page", context: { intent: "course_detail" } },
     { label: "Give me a hint", prompt: "Give me a hint" },
     { label: "Define Terms", prompt: "Define Terms" },
@@ -18,6 +19,30 @@ const quickActions = [
         context: { intent: "my_learning_progress" },
     },
 ];
+
+const LEARNING_PAGE_QUICK_ACTIONS = [
+    {
+        label: "สรุปบทนี้",
+        prompt: "สรุปบทที่กำลังเรียนนี้แบบสั้นๆ เป็นหัวข้อสำคัญ 3-5 ข้อ พร้อมตัวอย่างใช้งานจริง 1 ตัวอย่าง",
+        context: { intent: "course_detail" },
+    },
+    {
+        label: "ขอ Hint",
+        prompt: "ขอ Hint สั้นๆ สำหรับบทนี้ โดยไม่เฉลยคำตอบตรงๆ",
+        context: { intent: "quiz_hint_only" },
+    },
+    {
+        label: "ฉันค้างตรงไหน",
+        prompt: "จากบทที่กำลังเรียน ช่วยวิเคราะห์ว่าฉันน่าจะค้างตรงไหน และควรทำอะไรต่อทีละขั้นแบบสั้นๆ",
+        context: { intent: "course_detail" },
+    },
+];
+
+function resolveQuickActionsByPath(pathname) {
+    const path = String(pathname || "").toLowerCase();
+    const isLearningPage = /^\/courses\/[^/]+\/learn(?:\/|$)/i.test(path);
+    return isLearningPage ? LEARNING_PAGE_QUICK_ACTIONS : DEFAULT_QUICK_ACTIONS;
+}
 const CHAT_HISTORY_KEY_PREFIX = "lms_ui_chat_history_v1";
 const MAX_HISTORY_MESSAGES = 40;
 const MAX_FEEDBACK_REASON_CHARS = 300;
@@ -63,6 +88,11 @@ function sanitizeMessages(raw) {
             content: String(item.content || "").trim(),
             createdAt: String(item.createdAt || "").trim() || new Date().toISOString(),
             feedback: sanitizeFeedback(item.feedback),
+            intent: String(item.intent || "").trim().slice(0, 60) || null,
+            provider: String(item.provider || "").trim().slice(0, 80) || null,
+            intentConfidence: Number.isFinite(Number(item.intentConfidence))
+                ? Math.max(0, Math.min(1, Number(item.intentConfidence)))
+                : null,
         }))
         .filter((item) => item.content.length > 0)
         .slice(-MAX_HISTORY_MESSAGES);
@@ -240,11 +270,11 @@ function MessageBubble({
     );
 }
 
-function QuickActionChips({ onSelect, disabled }) {
+function QuickActionChips({ onSelect, disabled, actions = [] }) {
     return (
         <div className="px-3 py-2 border-t border-gray-100 bg-white">
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
-                {quickActions.map((action, index) => (
+                {actions.map((action, index) => (
                     <button
                         key={index}
                         type="button"
@@ -261,6 +291,8 @@ function QuickActionChips({ onSelect, disabled }) {
 }
 
 export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQuickActions = true }) {
+    const pathname = usePathname();
+    const quickActions = useMemo(() => resolveQuickActionsByPath(pathname), [pathname]);
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -270,6 +302,7 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
     const [feedbackErrors, setFeedbackErrors] = useState({});
     const [canSubmitFeedback, setCanSubmitFeedback] = useState(false);
     const chatHistoryLoadedRef = useRef(false);
+    const activeRequestRef = useRef(null);
     const messagesEndRef = useRef(null);
     const inputRef = useRef(null);
 
@@ -334,9 +367,20 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
         }
     }, [isOpen]);
 
+    useEffect(() => () => {
+        if (activeRequestRef.current) {
+            activeRequestRef.current.abort();
+        }
+    }, []);
+
     const sendMessage = async (rawText, options = {}) => {
         const text = String(rawText || "").trim();
         if (!text || isLoading) return;
+
+        if (activeRequestRef.current) {
+            activeRequestRef.current.abort();
+            activeRequestRef.current = null;
+        }
 
         const userMsg = {
             id: createMessageId(),
@@ -344,47 +388,134 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
             content: text,
             createdAt: new Date().toISOString(),
         };
-        const newMessages = [...messages, userMsg];
+        const assistantId = createMessageId();
+        const assistantMsg = {
+            id: assistantId,
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            feedback: null,
+            intent: null,
+            provider: null,
+            intentConfidence: null,
+        };
+        const newMessages = [...messages, userMsg, assistantMsg];
         setMessages(newMessages);
         setInput("");
         setIsLoading(true);
+        let streamedText = "";
+
+        const applyAssistantUpdate = (updateFn) => {
+            setMessages((prev) =>
+                prev.map((item) => {
+                    if (item.id !== assistantId) return item;
+                    return updateFn(item);
+                })
+            );
+        };
 
         try {
+            const controller = new AbortController();
+            activeRequestRef.current = controller;
             const res = await fetch("/api/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                signal: controller.signal,
                 body: JSON.stringify({
                     messages: newMessages.map((item) => ({
                         role: item.role,
                         content: item.content,
                     })),
+                    stream: true,
                     context: {
                         ...(options?.context && typeof options.context === "object" ? options.context : {}),
                         pagePath: typeof window !== "undefined" ? window.location.pathname : "",
                     },
                 }),
             });
-            const data = await res.json();
-            const assistantMsg = {
-                id: createMessageId(),
-                role: "assistant",
-                content: res.ok ? data.content : (data.error || "เกิดข้อผิดพลาด กรุณาลองใหม่ครับ"),
-                createdAt: new Date().toISOString(),
-                feedback: null,
-            };
-            setMessages((prev) => [...prev, assistantMsg]);
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(String(data?.error || "เกิดข้อผิดพลาด กรุณาลองใหม่ครับ"));
+            }
+
+            const contentType = String(res.headers.get("content-type") || "").toLowerCase();
+            const isStream = contentType.includes("application/x-ndjson");
+            if (isStream && res.body) {
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split("\n");
+                    buffer = lines.pop() || "";
+                    for (const rawLine of lines) {
+                        const line = String(rawLine || "").trim();
+                        if (!line) continue;
+                        let event = null;
+                        try {
+                            event = JSON.parse(line);
+                        } catch {
+                            continue;
+                        }
+                        if (event?.type === "delta") {
+                            const delta = String(event?.text || "");
+                            if (!delta) continue;
+                            streamedText += delta;
+                            applyAssistantUpdate((item) => ({ ...item, content: streamedText }));
+                        } else if (event?.type === "final") {
+                            const meta = event?.meta && typeof event.meta === "object" ? event.meta : {};
+                            applyAssistantUpdate((item) => ({
+                                ...item,
+                                intent: String(meta?.intent || "").trim() || null,
+                                provider: String(meta?.provider || "").trim() || null,
+                                intentConfidence: Number.isFinite(Number(meta?.intentConfidence))
+                                    ? Math.max(0, Math.min(1, Number(meta.intentConfidence)))
+                                    : null,
+                            }));
+                        } else if (event?.type === "error") {
+                            throw new Error(String(event?.error || "stream_error"));
+                        }
+                    }
+                }
+            } else {
+                const data = await res.json().catch(() => ({}));
+                const content = String(data?.content || "").trim();
+                streamedText = content;
+                applyAssistantUpdate((item) => ({
+                    ...item,
+                    content: content || "ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่อีกครั้งครับ",
+                    intent: String(data?.meta?.intent || "").trim() || null,
+                    provider: String(data?.meta?.provider || "").trim() || null,
+                    intentConfidence: Number.isFinite(Number(data?.meta?.intentConfidence))
+                        ? Math.max(0, Math.min(1, Number(data.meta.intentConfidence)))
+                        : null,
+                }));
+            }
+
+            if (!streamedText.trim()) {
+                applyAssistantUpdate((item) => ({
+                    ...item,
+                    content: "ไม่พบข้อความตอบกลับ ลองถามใหม่อีกครั้งได้เลยครับ",
+                }));
+            }
         } catch {
-            setMessages((prev) => [
-                ...prev,
-                {
-                    id: createMessageId(),
-                    role: "assistant",
-                    content: "ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่อีกครั้งครับ",
-                    createdAt: new Date().toISOString(),
-                    feedback: null,
-                },
-            ]);
+            if (activeRequestRef.current?.signal?.aborted) {
+                if (!streamedText.trim()) {
+                    applyAssistantUpdate((item) => ({
+                        ...item,
+                        content: "หยุดการตอบแล้วครับ",
+                    }));
+                }
+            } else {
+                applyAssistantUpdate((item) => ({
+                    ...item,
+                    content: streamedText.trim() || "ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่อีกครั้งครับ",
+                }));
+            }
         } finally {
+            activeRequestRef.current = null;
             setIsLoading(false);
         }
     };
@@ -417,6 +548,9 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
                     assistantMessage: String(message.content || ""),
                     conversation: buildRecentConversationForFeedback(messages, messageId),
                     pagePath: typeof window !== "undefined" ? window.location.pathname : "",
+                    intent: String(message?.intent || "").trim(),
+                    provider: String(message?.provider || "").trim(),
+                    intentConfidence: Number(message?.intentConfidence || 0),
                 }),
             });
             const data = await res.json();
@@ -456,6 +590,12 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
 
     const handleSend = () => {
         sendMessage(input);
+    };
+
+    const handleStop = () => {
+        if (activeRequestRef.current) {
+            activeRequestRef.current.abort();
+        }
     };
 
     const handleQuickAction = (action) => {
@@ -575,13 +715,13 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
                                 onSubmitFeedback={submitFeedback}
                             />
                         ))}
-                        {isLoading && <TypingIndicator />}
+                        {isLoading && messages[messages.length - 1]?.content === "" ? <TypingIndicator /> : null}
                     </div>
                 )}
                 <div ref={messagesEndRef} />
             </div>
 
-            {showQuickActions ? <QuickActionChips onSelect={handleQuickAction} disabled={isLoading} /> : null}
+            {showQuickActions ? <QuickActionChips onSelect={handleQuickAction} disabled={isLoading} actions={quickActions} /> : null}
 
             <div className={inputWrapClassName}>
                 <div className="flex items-center gap-2 bg-gray-50 rounded-xl px-4 py-2 border border-gray-200 focus-within:border-violet-300 focus-within:ring-2 focus-within:ring-violet-100 transition-all">
@@ -595,19 +735,32 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
                         disabled={isLoading}
                         className="flex-1 bg-transparent text-sm text-gray-700 placeholder-gray-400 outline-none disabled:opacity-60"
                     />
-                    <button
-                        onClick={handleSend}
-                        disabled={isLoading || !input.trim()}
-                        className={`p-1.5 rounded-lg transition-all ${input.trim() && !isLoading
-                            ? "text-violet-600 hover:bg-violet-100"
-                            : "text-gray-300"
-                            }`}
-                    >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="22" y1="2" x2="11" y2="13"></line>
-                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                        </svg>
-                    </button>
+                    {isLoading ? (
+                        <button
+                            type="button"
+                            onClick={handleStop}
+                            className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition-all"
+                            title="Stop"
+                        >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <rect x="6.5" y="6.5" width="11" height="11" rx="2" />
+                            </svg>
+                        </button>
+                    ) : (
+                        <button
+                            onClick={handleSend}
+                            disabled={!input.trim()}
+                            className={`p-1.5 rounded-lg transition-all ${input.trim()
+                                ? "text-violet-600 hover:bg-violet-100"
+                                : "text-gray-300"
+                                }`}
+                        >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                            </svg>
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

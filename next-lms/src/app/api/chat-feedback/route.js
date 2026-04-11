@@ -10,6 +10,9 @@ function sanitizePayload(body = {}) {
         assistantMessage: String(body?.assistantMessage || '').trim(),
         conversation: Array.isArray(body?.conversation) ? body.conversation : [],
         pagePath: String(body?.pagePath || '').trim(),
+        intent: String(body?.intent || '').trim().toLowerCase(),
+        provider: String(body?.provider || '').trim().toLowerCase(),
+        intentConfidence: Number(body?.intentConfidence || 0),
     };
 }
 
@@ -36,6 +39,9 @@ export async function POST(request) {
             assistantMessage: payload.assistantMessage,
             conversation: payload.conversation,
             pagePath: payload.pagePath,
+            intent: payload.intent,
+            provider: payload.provider,
+            intentConfidence: payload.intentConfidence,
         });
         return NextResponse.json({
             ok: true,

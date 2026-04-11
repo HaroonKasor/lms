@@ -1,11 +1,14 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import * as YoutubeTranscriptPkg from "youtube-transcript";
-import { requireSession } from "@/lib/server/auth";
+import { getRequestIp, requireSession } from "@/lib/server/auth";
 import { createStructuredChatLog } from "@/lib/server/chat-logs";
 import { buildPromptTuningHints } from "@/lib/server/chat-feedback";
 import { buildMyLearningSummary } from "@/lib/server/my-learning-summary";
 import { logMyLearningSummaryAccess } from "@/lib/server/my-learning-summary-audit";
 import { buildAboutSkillupResponse, isAboutSkillupIntent } from "@/lib/server/skillup-profile";
+import { ensureDefaultOrganization } from "@/lib/server/enterprise-context";
+import { buildKnowledgePromptBlock, retrieveKnowledgeContext } from "@/lib/server/chat-kb";
+import { buildSafetyReply, detectPromptInjection, evaluateRateLimit, evaluateSpam } from "@/lib/server/chat-safety";
 
 const SYSTEM_PROMPT = `คุณคือ "SkillBot" ผู้ช่วย AI ของแพลตฟอร์มการเรียนรู้ SkillUp LMS
 หน้าที่ของคุณคือ:
@@ -49,6 +52,81 @@ const ENROLLMENT_STATUS_RANK = {
 };
 const MAX_LESSON_OUTLINE_ITEMS = 30;
 const MAX_CONTEXT_TEXT_LENGTH = 200;
+const INTENT_CONFIDENCE_THRESHOLD = 0.56;
+const STREAM_CHUNK_SIZE = 90;
+
+function prefersThai(text = "") {
+    return /[\u0E00-\u0E7F]/.test(String(text || ""));
+}
+
+function buildClarificationReply(message = "") {
+    const thai = prefersThai(message);
+    if (thai) {
+        return `ผมอยากตอบให้ตรงที่สุดครับ แต่คำถามนี้ยังกว้างอยู่เล็กน้อย
+
+ต้องการให้ช่วยด้านไหน:
+1) สรุปสถานะการเรียนของฉัน (my-learning)
+2) สรุปบท/คอร์สที่กำลังเปิดอยู่ (course-detail)
+3) ช่วยแบบ hint only สำหรับแบบทดสอบ (quiz-hint-only)
+4) ข้อมูลเกี่ยวกับ SkillUp และทีม (about-skillup)
+
+พิมพ์หมายเลขหรือพิมพ์ชื่อหัวข้อได้เลยครับ`;
+    }
+    return `I want to answer accurately, but your request is a bit ambiguous.
+
+Which one do you want?
+1) My learning status summary
+2) Current course/lesson summary
+3) Quiz hint-only help
+4) About SkillUp project/team
+
+Reply with a number or topic name.`;
+}
+
+function splitTextForStreaming(text = "", chunkSize = STREAM_CHUNK_SIZE) {
+    const raw = String(text || "");
+    if (!raw) return [];
+    const safeSize = Math.max(40, Math.min(220, Number(chunkSize || STREAM_CHUNK_SIZE)));
+    const chunks = [];
+    let cursor = 0;
+    while (cursor < raw.length) {
+        const next = raw.slice(cursor, cursor + safeSize);
+        chunks.push(next);
+        cursor += safeSize;
+    }
+    return chunks;
+}
+
+function buildStreamResponse({ content = "", meta = {} } = {}) {
+    const encoder = new TextEncoder();
+    const chunks = splitTextForStreaming(content);
+    const stream = new ReadableStream({
+        async start(controller) {
+            try {
+                for (const chunk of chunks) {
+                    const line = JSON.stringify({ type: "delta", text: chunk });
+                    controller.enqueue(encoder.encode(`${line}\n`));
+                    // Let browser render progressively.
+                    await new Promise((resolve) => setTimeout(resolve, 8));
+                }
+                const finalLine = JSON.stringify({ type: "final", meta });
+                controller.enqueue(encoder.encode(`${finalLine}\n`));
+            } catch (error) {
+                const line = JSON.stringify({ type: "error", error: String(error?.message || "stream_error") });
+                controller.enqueue(encoder.encode(`${line}\n`));
+            } finally {
+                controller.close();
+            }
+        },
+    });
+    return new Response(stream, {
+        status: 200,
+        headers: {
+            "Content-Type": "application/x-ndjson; charset=utf-8",
+            "Cache-Control": "no-store",
+        },
+    });
+}
 
 function resolveSummaryCacheTtlMs() {
     const raw = Number(process.env.MY_LEARNING_SUMMARY_CACHE_TTL_MS || "");
@@ -367,17 +445,42 @@ function hasCourseDetailContext(context = {}) {
     );
 }
 
-function resolveChatIntent(context = {}, lastMessageText = "", assessmentMode = false) {
+function resolveIntentWithConfidence(context = {}, lastMessageText = "", assessmentMode = false) {
     const explicitIntent = String(context?.intent || "").trim().toLowerCase();
-    if (explicitIntent === "my_learning_progress" || explicitIntent === "my_learning" || explicitIntent === "my_learning_summary") return "my_learning";
-    if (explicitIntent === "about_skillup") return "about_skillup";
-    if (explicitIntent === "course_detail") return "course_detail";
-    if (explicitIntent === "quiz_hint_only") return "quiz_hint_only";
-    if (assessmentMode) return "quiz_hint_only";
-    if (shouldUseLearningProgressContext(context, lastMessageText)) return "my_learning";
-    if (isAboutSkillupIntent(lastMessageText, context)) return "about_skillup";
-    if (hasCourseDetailContext(context) && COURSE_DETAIL_INTENT_PATTERN.test(lastMessageText)) return "course_detail";
-    return "general";
+    if (explicitIntent === "my_learning_progress" || explicitIntent === "my_learning" || explicitIntent === "my_learning_summary") {
+        return { intent: "my_learning", confidence: 0.98, ambiguous: false };
+    }
+    if (explicitIntent === "about_skillup") return { intent: "about_skillup", confidence: 0.98, ambiguous: false };
+    if (explicitIntent === "course_detail") return { intent: "course_detail", confidence: 0.96, ambiguous: false };
+    if (explicitIntent === "quiz_hint_only") return { intent: "quiz_hint_only", confidence: 0.98, ambiguous: false };
+    if (assessmentMode) return { intent: "quiz_hint_only", confidence: 0.9, ambiguous: false };
+
+    const hits = [];
+    if (shouldUseLearningProgressContext(context, lastMessageText)) hits.push({ intent: "my_learning", score: 0.86 });
+    if (isAboutSkillupIntent(lastMessageText, context)) hits.push({ intent: "about_skillup", score: 0.82 });
+    if (hasCourseDetailContext(context) && COURSE_DETAIL_INTENT_PATTERN.test(lastMessageText)) {
+        hits.push({ intent: "course_detail", score: 0.84 });
+    }
+    if (DIRECT_ANSWER_REQUEST_PATTERN.test(lastMessageText)) hits.push({ intent: "quiz_hint_only", score: 0.8 });
+
+    if (hits.length === 0) {
+        const shortMessage = String(lastMessageText || "").trim().length <= 30;
+        return {
+            intent: "general",
+            confidence: shortMessage ? 0.4 : 0.62,
+            ambiguous: shortMessage,
+        };
+    }
+
+    hits.sort((a, b) => b.score - a.score);
+    const top = hits[0];
+    const second = hits[1];
+    const ambiguous = Boolean(second && Math.abs(top.score - second.score) <= 0.08);
+    return {
+        intent: top.intent,
+        confidence: top.score,
+        ambiguous,
+    };
 }
 
 function buildPromptWithIntentRouting(basePrompt, context = {}, intent = "general") {
@@ -540,6 +643,8 @@ export async function POST(request) {
         const body = await request.json();
         const { messages } = body;
         const context = body?.context && typeof body.context === "object" ? body.context : {};
+        const streamRequested = body?.stream === true;
+        const requestStartedAtMs = Date.now();
         const geminiApiKey = String(
             process.env.GEMINI_API_KEY
             || process.env.GOOGLE_API_KEY
@@ -576,7 +681,9 @@ export async function POST(request) {
             return Response.json({ error: "Message content is required" }, { status: 400 });
         }
         const assessmentMode = isAssessmentContext(context);
-        const intent = resolveChatIntent(context, lastMessageText, assessmentMode);
+        const intentResult = resolveIntentWithConfidence(context, lastMessageText, assessmentMode);
+        const intent = intentResult.intent;
+        const intentConfidence = Number(intentResult?.confidence || 0);
         const quizHintOnlyMode = assessmentMode || intent === "quiz_hint_only";
 
         let cachedSession = null;
@@ -598,6 +705,7 @@ export async function POST(request) {
             provider = "rule",
             status = "ok",
             errorMessage = "",
+            responseMs = 0,
         } = {}) => {
             try {
                 const session = await getOptionalSession();
@@ -616,6 +724,8 @@ export async function POST(request) {
                     status,
                     assistantReply,
                     errorMessage,
+                    responseMs,
+                    intentConfidence,
                 });
             } catch (err) {
                 console.warn("[chat] structured log failed", err?.message || err);
@@ -623,23 +733,56 @@ export async function POST(request) {
         };
 
         const respondWithContent = async (content, provider = "rule") => {
+            const responseMs = Math.max(0, Date.now() - requestStartedAtMs);
+            const meta = {
+                intent,
+                intentConfidence,
+                provider,
+                responseMs,
+            };
             await writeChatLog({
                 assistantReply: content,
                 provider,
                 status: "ok",
+                responseMs,
             });
-            return Response.json({ content });
+            if (streamRequested) {
+                return buildStreamResponse({ content, meta });
+            }
+            return Response.json({ content, meta });
         };
 
         const respondWithError = async (errorMessage, statusCode = 500, provider = "system") => {
+            const responseMs = Math.max(0, Date.now() - requestStartedAtMs);
             await writeChatLog({
                 assistantReply: "",
                 provider,
                 status: "error",
                 errorMessage,
+                responseMs,
             });
             return Response.json({ error: errorMessage }, { status: statusCode });
         };
+
+        const sessionForSafety = await getOptionalSession();
+        const actorUserId = Number(sessionForSafety?.uid || 0);
+        const requestIp = getRequestIp(request);
+        const rateResult = evaluateRateLimit({ userId: actorUserId, ip: requestIp });
+        if (!rateResult.allowed) {
+            return respondWithError(buildSafetyReply("rate_limit"), 429, "rule:safety_rate_limit");
+        }
+        const spamResult = evaluateSpam({ userId: actorUserId, ip: requestIp, messageText: lastMessageText });
+        if (spamResult.blocked) {
+            return respondWithContent(buildSafetyReply("spam"), `rule:safety_spam:${spamResult.reason || "blocked"}`);
+        }
+        const injectionResult = detectPromptInjection(lastMessageText);
+        if (injectionResult.matched) {
+            return respondWithContent(buildSafetyReply("prompt_injection"), "rule:safety_prompt_injection");
+        }
+
+        if (intentResult.ambiguous || intentConfidence < INTENT_CONFIDENCE_THRESHOLD) {
+            return respondWithContent(buildClarificationReply(lastMessageText), "rule:intent_clarify");
+        }
 
         if (intent === "about_skillup") {
             return respondWithContent(buildAboutSkillupResponse(lastMessageText), "rule:about_skillup");
@@ -731,7 +874,15 @@ export async function POST(request) {
         );
         const promptWithLessonContext = buildPromptWithLessonContext(transcriptEnrichedPrompt, context);
         const promptWithIntent = buildPromptWithIntentRouting(promptWithLessonContext, context, intent);
-        const finalMessageForModel = buildPromptWithLearningSummary(promptWithIntent, learningSummary);
+        const knowledgeOrgId = Number(sessionForSafety?.organizationId || 0) || await ensureDefaultOrganization();
+        const knowledgeItems = await retrieveKnowledgeContext({
+            organizationId: knowledgeOrgId,
+            query: lastMessageText,
+            intent,
+            limit: 3,
+        });
+        const promptWithKnowledge = `${promptWithIntent}${buildKnowledgePromptBlock(knowledgeItems)}`;
+        const finalMessageForModel = buildPromptWithLearningSummary(promptWithKnowledge, learningSummary);
 
         // Try each model candidate until one succeeds.
         // Some API keys/projects may not have access to specific model versions,
@@ -739,7 +890,7 @@ export async function POST(request) {
         let lastError = null;
         let sawQuotaError = false;
         let sawFallbackProviderError = false;
-        const sessionForPromptTuning = await getOptionalSession();
+        const sessionForPromptTuning = sessionForSafety || await getOptionalSession();
         const weeklyFeedbackHints = sessionForPromptTuning
             ? await buildPromptTuningHints({
                 organizationId: Number(sessionForPromptTuning?.organizationId || 0),

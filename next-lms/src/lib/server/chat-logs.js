@@ -64,6 +64,8 @@ export async function createStructuredChatLog({
     status = 'ok',
     assistantReply = '',
     errorMessage = '',
+    responseMs = 0,
+    intentConfidence = 0,
 } = {}) {
     const organizationId = Number(session?.organizationId || 0);
     const actorUserId = Number(session?.uid || 0);
@@ -82,6 +84,10 @@ export async function createStructuredChatLog({
         intent: sanitizeText(intent, 80) || 'general',
         provider: sanitizeText(provider, 60) || 'rule',
         status: sanitizeText(status, 40) || 'ok',
+        responseMs: Number.isFinite(Number(responseMs)) ? Math.max(0, Math.round(Number(responseMs))) : null,
+        intentConfidence: Number.isFinite(Number(intentConfidence))
+            ? Math.max(0, Math.min(1, Number(intentConfidence)))
+            : null,
         assistantReply: redactedReply || null,
         errorMessage: redactedError || null,
         messages: redactedMessages,
@@ -122,4 +128,3 @@ export async function createStructuredChatLog({
     }
     return null;
 }
-

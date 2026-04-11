@@ -5,22 +5,30 @@ import { X, Menu, Send, ChevronRight, Sparkles, BookOpen, Lightbulb, FileText } 
 import { useMemo, useRef, useState, useEffect } from 'react';
 
 const STUDY_ACTIONS = [
-    { icon: FileText, label: 'Summarize this page', prompt: 'Summarize this lesson into key takeaways.', intent: 'course_detail' },
-    { icon: Lightbulb, label: 'Give me a hint', prompt: 'Give me a short hint to understand this lesson better.' },
-    { icon: BookOpen, label: 'Define Terms', prompt: 'List important terms from this lesson and define each briefly.' },
+    {
+        icon: FileText,
+        label: 'สรุปบทนี้',
+        prompt: 'สรุปบทที่กำลังเรียนนี้แบบสั้นๆ เป็นหัวข้อสำคัญ 3-5 ข้อ พร้อมตัวอย่างใช้งานจริง 1 ตัวอย่าง',
+        intent: 'course_detail',
+    },
+    {
+        icon: Lightbulb,
+        label: 'ขอ Hint',
+        prompt: 'ขอ Hint สั้นๆ สำหรับบทนี้ โดยไม่เฉลยคำตอบตรงๆ',
+        intent: 'quiz_hint_only',
+    },
+    {
+        icon: BookOpen,
+        label: 'ฉันค้างตรงไหน',
+        prompt: 'จากบทที่กำลังเรียน ช่วยวิเคราะห์ว่าฉันน่าจะค้างตรงไหน และควรทำอะไรต่อทีละขั้นแบบสั้นๆ',
+        intent: 'course_detail',
+    },
 ];
-const VIDEO_STUDY_ACTION = {
-    icon: FileText,
-    label: 'Summarize this video',
-    prompt: 'Summarize this lesson video in simple Thai. Include key concepts and practical examples.',
-    intent: 'video_summary',
-    useVideoTranscript: true,
-};
 
 const ASSESSMENT_ACTIONS = [
-    { icon: Lightbulb, label: 'Give me a hint', prompt: 'Give me a hint only, no direct final answer.', intent: 'quiz_hint_only' },
-    { icon: BookOpen, label: 'Explain concept', prompt: 'Explain the core concept I need for this question without giving the final answer.', intent: 'quiz_hint_only' },
-    { icon: FileText, label: 'How to think', prompt: 'Show a step-by-step thinking method for solving similar questions.', intent: 'quiz_hint_only' },
+    { icon: Lightbulb, label: 'ขอ Hint', prompt: 'ขอ Hint เท่านั้น ห้ามเฉลยคำตอบสุดท้าย', intent: 'quiz_hint_only' },
+    { icon: BookOpen, label: 'อธิบายแนวคิด', prompt: 'อธิบายแนวคิดหลักที่ต้องใช้กับข้อนี้ โดยไม่เฉลยคำตอบ', intent: 'quiz_hint_only' },
+    { icon: FileText, label: 'วิธีคิดทีละขั้น', prompt: 'ช่วยบอกวิธีคิดทีละขั้นสำหรับโจทย์ลักษณะนี้ โดยไม่เฉลยคำตอบ', intent: 'quiz_hint_only' },
 ];
 
 const ASSESSMENT_TITLE_PATTERN = /(quiz|exam|test|assessment|แบบทดสอบ|ข้อสอบ|post[- ]?test|pre[- ]?test|midterm|final)/i;
@@ -94,6 +102,7 @@ export default function LearningAiAssistant({
     const [message, setMessage] = useState('');
     const [chatMessages, setChatMessages] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const activeRequestRef = useRef(null);
     const messagesEndRef = useRef(null);
 
     const isAssessmentMode = useMemo(() => ASSESSMENT_TITLE_PATTERN.test(String(lessonTitle || '')), [lessonTitle]);
@@ -113,28 +122,60 @@ export default function LearningAiAssistant({
     const quickActions = useMemo(() => {
         if (isAssessmentMode) return ASSESSMENT_ACTIONS;
         if (!hasYouTubeLesson) return STUDY_ACTIONS;
-        return [VIDEO_STUDY_ACTION, ...STUDY_ACTIONS];
+        return STUDY_ACTIONS.map((action, index) => {
+            if (index !== 0) return action;
+            return {
+                ...action,
+                prompt: 'สรุปวิดีโอบทนี้แบบสั้น กระชับ และเข้าใจง่าย พร้อมตัวอย่างใช้งานจริง 1 ตัวอย่าง',
+                intent: 'video_summary',
+                useVideoTranscript: true,
+            };
+        });
     }, [isAssessmentMode, hasYouTubeLesson]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [chatMessages, isLoading]);
 
+    useEffect(() => () => {
+        if (activeRequestRef.current) {
+            activeRequestRef.current.abort();
+        }
+    }, []);
+
     const sendMessage = async (rawText, options = {}) => {
         const text = String(rawText || '').trim();
         if (!text || isLoading) return;
 
-        const nextMessages = [...chatMessages, { role: 'user', content: text }];
+        if (activeRequestRef.current) {
+            activeRequestRef.current.abort();
+            activeRequestRef.current = null;
+        }
+
+        const assistantId = `assistant_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const nextMessages = [...chatMessages, { role: 'user', content: text }, { id: assistantId, role: 'assistant', content: '' }];
         setChatMessages(nextMessages);
         setMessage('');
         setIsLoading(true);
+        let streamedText = '';
+
+        const applyAssistant = (updater) => {
+            setChatMessages((prev) => prev.map((item) => {
+                if (item?.id !== assistantId) return item;
+                return updater(item);
+            }));
+        };
 
         try {
+            const controller = new AbortController();
+            activeRequestRef.current = controller;
             const res = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
                 body: JSON.stringify({
                     messages: nextMessages,
+                    stream: true,
                     context: {
                         courseTitle: safeCourseTitle,
                         sectionTitle: safeSectionTitle,
@@ -150,26 +191,73 @@ export default function LearningAiAssistant({
                     },
                 }),
             });
-            const data = await res.json();
-            setChatMessages((prev) => [
-                ...prev,
-                {
-                    role: 'assistant',
-                    content: res.ok ? data.content : (data.error || 'เกิดข้อผิดพลาด กรุณาลองใหม่ครับ'),
-                },
-            ]);
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(String(data?.error || 'เกิดข้อผิดพลาด กรุณาลองใหม่ครับ'));
+            }
+
+            const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+            const isStream = contentType.includes('application/x-ndjson');
+            if (isStream && res.body) {
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+                    for (const rawLine of lines) {
+                        const line = String(rawLine || '').trim();
+                        if (!line) continue;
+                        let event = null;
+                        try {
+                            event = JSON.parse(line);
+                        } catch {
+                            continue;
+                        }
+                        if (event?.type === 'delta') {
+                            const delta = String(event?.text || '');
+                            if (!delta) continue;
+                            streamedText += delta;
+                            applyAssistant((item) => ({ ...item, content: streamedText }));
+                        } else if (event?.type === 'error') {
+                            throw new Error(String(event?.error || 'stream_error'));
+                        }
+                    }
+                }
+            } else {
+                const data = await res.json().catch(() => ({}));
+                const content = String(data?.content || '').trim();
+                streamedText = content;
+                applyAssistant((item) => ({ ...item, content: content || 'เกิดข้อผิดพลาด กรุณาลองใหม่ครับ' }));
+            }
+            if (!streamedText.trim()) {
+                applyAssistant((item) => ({ ...item, content: 'ไม่พบข้อความตอบกลับ ลองใหม่อีกครั้งได้เลยครับ' }));
+            }
         } catch {
-            setChatMessages((prev) => [
-                ...prev,
-                { role: 'assistant', content: 'ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่อีกครั้งครับ' },
-            ]);
+            if (activeRequestRef.current?.signal?.aborted) {
+                if (!streamedText.trim()) {
+                    applyAssistant((item) => ({ ...item, content: 'หยุดการตอบแล้วครับ' }));
+                }
+            } else {
+                applyAssistant((item) => ({ ...item, content: streamedText.trim() || 'ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่อีกครั้งครับ' }));
+            }
         } finally {
+            activeRequestRef.current = null;
             setIsLoading(false);
         }
     };
 
     const handleSend = () => {
         sendMessage(message);
+    };
+
+    const handleStop = () => {
+        if (activeRequestRef.current) {
+            activeRequestRef.current.abort();
+        }
     };
 
     return (
@@ -234,7 +322,7 @@ export default function LearningAiAssistant({
                                 </div>
                             </div>
                         ))}
-                        {isLoading && <TypingIndicator />}
+                        {isLoading && chatMessages[chatMessages.length - 1]?.content === '' ? <TypingIndicator /> : null}
                     </div>
                 )}
                 <div ref={messagesEndRef} />
@@ -274,15 +362,28 @@ export default function LearningAiAssistant({
                         disabled={isLoading}
                         className="flex-1 bg-transparent text-sm text-gray-700 placeholder-gray-400 outline-none disabled:opacity-60"
                     />
-                    <button
-                        onClick={handleSend}
-                        disabled={isLoading || !message.trim()}
-                        className={`p-1.5 rounded-lg transition-all ${
-                            message.trim() && !isLoading ? 'text-violet-600 hover:bg-violet-100' : 'text-gray-300'
-                        }`}
-                    >
-                        <Send size={16} />
-                    </button>
+                    {isLoading ? (
+                        <button
+                            type="button"
+                            onClick={handleStop}
+                            className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-50 transition-all"
+                            title="Stop"
+                        >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                                <rect x="6.5" y="6.5" width="11" height="11" rx="2" />
+                            </svg>
+                        </button>
+                    ) : (
+                        <button
+                            onClick={handleSend}
+                            disabled={!message.trim()}
+                            className={`p-1.5 rounded-lg transition-all ${
+                                message.trim() ? 'text-violet-600 hover:bg-violet-100' : 'text-gray-300'
+                            }`}
+                        >
+                            <Send size={16} />
+                        </button>
+                    )}
                 </div>
             </div>
         </aside>

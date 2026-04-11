@@ -106,6 +106,8 @@ const baseMenuItems = [
             { name: 'Certificate Report', path: '/admin-dashboard/report/certificate-report', matchPrefix: '/admin-dashboard/report/certificate-report' },
             { name: 'AI Feedback', path: '/admin-dashboard/report/ai-feedback', matchPrefix: '/admin-dashboard/report/ai-feedback' },
             { name: 'AI Insight Weekly', path: '/admin-dashboard/report/ai-insight-weekly', matchPrefix: '/admin-dashboard/report/ai-insight-weekly' },
+            { name: 'Chat Analytics', path: '/admin-dashboard/report/chat-analytics', matchPrefix: '/admin-dashboard/report/chat-analytics' },
+            { name: 'Chat Knowledge Base', path: '/admin-dashboard/report/chat-kb', matchPrefix: '/admin-dashboard/report/chat-kb' },
         ]
     },
 ];
@@ -206,7 +208,7 @@ export default function AdminLmsDashboard({ children }) {
                         const subItems = Array.isArray(item.subItems) ? item.subItems : [];
                         return {
                             ...item,
-                            subItems: subItems.filter((sub) => !['AI Feedback', 'AI Insight Weekly'].includes(String(sub?.name || ''))),
+                            subItems: subItems.filter((sub) => !['AI Feedback', 'AI Insight Weekly', 'Chat Analytics', 'Chat Knowledge Base'].includes(String(sub?.name || ''))),
                         };
                     }
                     const subItems = Array.isArray(item.subItems) ? item.subItems : [];

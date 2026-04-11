@@ -158,6 +158,8 @@ function mapFeedbackRow(row, courseIndex = []) {
     const request = meta?.request && typeof meta.request === 'object' ? meta.request : {};
     const createdAt = normalizeDate(meta?.createdAt || row?.uploadedAt) || new Date().toISOString();
     const assistantMessage = sanitizeText(meta?.assistantMessage || '', MAX_TEXT_LENGTH);
+    const intent = sanitizeText(meta?.intent, 60).toLowerCase() || 'unknown';
+    const provider = sanitizeText(meta?.provider, 80).toLowerCase() || '-';
     const actorUsername = sanitizeText(actor?.usernameMasked || actor?.username, 120) || '-';
     const actorEmail = sanitizeText(actor?.emailMasked || actor?.email, 255) || '-';
 
@@ -174,6 +176,8 @@ function mapFeedbackRow(row, courseIndex = []) {
         actorEmail,
         actorRole: sanitizeText(actor?.role, 30) || 'learner',
         messageId: sanitizeText(meta?.messageId, MAX_MESSAGE_ID_LENGTH) || null,
+        intent,
+        provider,
         requestPath: sanitizeText(request?.path, 120) || '-',
         createdAt,
         date: createdAt.slice(0, 10),
@@ -191,6 +195,8 @@ function matchesQuery(row, query) {
         row?.reason,
         row?.assistantMessage,
         row?.courseTitle,
+        row?.intent,
+        row?.provider,
         row?.actorUsername,
         row?.actorEmail,
     ]
@@ -277,6 +283,9 @@ export async function createChatFeedback({
     reason = '',
     conversation = [],
     pagePath = '',
+    intent = '',
+    provider = '',
+    intentConfidence = 0,
 } = {}) {
     const organizationId = Number(session?.organizationId || 0);
     const actorUserId = Number(session?.uid || 0);
@@ -323,6 +332,11 @@ export async function createChatFeedback({
             pagePath: sanitizeText(pagePath, 220) || null,
         },
         pagePath: sanitizeText(pagePath, 220) || null,
+        intent: sanitizeText(intent, 60).toLowerCase() || null,
+        provider: sanitizeText(provider, 80).toLowerCase() || null,
+        intentConfidence: Number.isFinite(Number(intentConfidence))
+            ? Math.max(0, Math.min(1, Number(intentConfidence)))
+            : null,
         createdAt: now.toISOString(),
     };
 
