@@ -154,6 +154,10 @@ export default function LearningAiAssistant({
 
         const assistantId = `assistant_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         const nextMessages = [...chatMessages, { role: 'user', content: text }, { id: assistantId, role: 'assistant', content: '' }];
+        const requestMessages = [...chatMessages, { role: 'user', content: text }].map((item) => ({
+            role: item.role,
+            content: String(item.content || ''),
+        }));
         setChatMessages(nextMessages);
         setMessage('');
         setIsLoading(true);
@@ -174,7 +178,7 @@ export default function LearningAiAssistant({
                 headers: { 'Content-Type': 'application/json' },
                 signal: controller.signal,
                 body: JSON.stringify({
-                    messages: nextMessages,
+                    messages: requestMessages,
                     stream: true,
                     context: {
                         courseTitle: safeCourseTitle,

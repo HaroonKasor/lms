@@ -400,6 +400,10 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
             intentConfidence: null,
         };
         const newMessages = [...messages, userMsg, assistantMsg];
+        const requestMessages = [...messages, userMsg].map((item) => ({
+            role: item.role,
+            content: item.content,
+        }));
         setMessages(newMessages);
         setInput("");
         setIsLoading(true);
@@ -422,10 +426,7 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
                 headers: { "Content-Type": "application/json" },
                 signal: controller.signal,
                 body: JSON.stringify({
-                    messages: newMessages.map((item) => ({
-                        role: item.role,
-                        content: item.content,
-                    })),
+                    messages: requestMessages,
                     stream: true,
                     context: {
                         ...(options?.context && typeof options.context === "object" ? options.context : {}),
