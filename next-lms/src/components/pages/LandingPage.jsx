@@ -5,6 +5,7 @@ import Link from 'next/link';
 import FadeIn from '@/components/ui/FadeIn';
 import Header from '@/components/layout/Header';
 import PublicFooter from '@/components/layout/PublicFooter';
+import HomeFloatingChatbot from '@/components/ui/HomeFloatingChatbot';
 
 const NumberCounter = ({ end, duration = 2000, suffix = '', prefix = '', decimals = 0 }) => {
     const [count, setCount] = useState(0);
@@ -516,6 +517,7 @@ export default function LandingPage() {
             </section>
 
             <PublicFooter />
+            <HomeFloatingChatbot />
 
         </div>
     );

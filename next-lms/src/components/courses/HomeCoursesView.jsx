@@ -5,6 +5,7 @@ import Link from 'next/link';
 import Header from '@/components/layout/Header';
 import FadeIn from '@/components/ui/FadeIn';
 import PublicFooter from '@/components/layout/PublicFooter';
+import HomeFloatingChatbot from '@/components/ui/HomeFloatingChatbot';
 
 export default function HomeCoursesView() {
     const [searchQuery, setSearchQuery] = useState('');
@@ -360,6 +361,7 @@ export default function HomeCoursesView() {
             </main>
 
             <PublicFooter className="mt-auto" />
+            <HomeFloatingChatbot />
         </div>
     );
 }

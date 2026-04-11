@@ -103,7 +103,9 @@ const baseMenuItems = [
             { name: 'Learner Status', path: '/admin-dashboard/report/learner-status', matchPrefix: '/admin-dashboard/report/learner-status' },
             { name: 'Attempt report', path: '/admin-dashboard/report/attempt-report', matchPrefix: '/admin-dashboard/report/attempt-report' },
             { name: 'Examination Score', path: '/admin-dashboard/report/examination-score', matchPrefix: '/admin-dashboard/report/examination-score' },
-            { name: 'Certificate Report', path: '/admin-dashboard/report/certificate-report', matchPrefix: '/admin-dashboard/report/certificate-report' }
+            { name: 'Certificate Report', path: '/admin-dashboard/report/certificate-report', matchPrefix: '/admin-dashboard/report/certificate-report' },
+            { name: 'AI Feedback', path: '/admin-dashboard/report/ai-feedback', matchPrefix: '/admin-dashboard/report/ai-feedback' },
+            { name: 'AI Insight Weekly', path: '/admin-dashboard/report/ai-insight-weekly', matchPrefix: '/admin-dashboard/report/ai-insight-weekly' },
         ]
     },
 ];
@@ -191,14 +193,24 @@ export default function AdminLmsDashboard({ children }) {
             ? cloned
                 .filter((item) => ['Dashboard', 'Learn', 'Content', 'Report'].includes(String(item?.name || '')))
                 .map((item) => {
-                    if (item.name !== 'Learn') return item;
+                    if (item.name === 'Learn') {
+                        const subItems = Array.isArray(item.subItems) ? item.subItems : [];
+                        return {
+                            ...item,
+                            subItems: subItems.filter((sub) => (
+                                ['Category', 'Course', 'Learner Status'].includes(String(sub?.name || ''))
+                            )),
+                        };
+                    }
+                    if (item.name === 'Report') {
+                        const subItems = Array.isArray(item.subItems) ? item.subItems : [];
+                        return {
+                            ...item,
+                            subItems: subItems.filter((sub) => !['AI Feedback', 'AI Insight Weekly'].includes(String(sub?.name || ''))),
+                        };
+                    }
                     const subItems = Array.isArray(item.subItems) ? item.subItems : [];
-                    return {
-                        ...item,
-                        subItems: subItems.filter((sub) => (
-                            ['Category', 'Course', 'Learner Status'].includes(String(sub?.name || ''))
-                        )),
-                    };
+                    return { ...item, subItems };
                 })
             : cloned;
 

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import FadeIn from '@/components/ui/FadeIn';
 import Header from '@/components/layout/Header';
 import PublicFooter from '@/components/layout/PublicFooter';
+import HomeFloatingChatbot from '@/components/ui/HomeFloatingChatbot';
 
 export default function ContactPage() {
     const [fullName, setFullName] = React.useState('');
@@ -285,6 +286,7 @@ export default function ContactPage() {
             </main>
 
             <PublicFooter className="mt-auto" />
+            <HomeFloatingChatbot />
         </div>
     );
 }

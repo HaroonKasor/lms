@@ -34,6 +34,12 @@ services:
       APP_URL: ${APP_URL:-https://goskillup.me}
       NEXT_PUBLIC_XAPI_OBJECT_BASE_URL: ${NEXT_PUBLIC_XAPI_OBJECT_BASE_URL:-https://goskillup.me}
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openai/gpt-4o-mini}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+      GROQ_BASE_URL: ${GROQ_BASE_URL:-https://api.groq.com/openai/v1}
       APP_NAME: ${APP_NAME:-SkillUp}
       CRON_SECRET: ${CRON_SECRET:-}
       PASSWORD_RESET_BASE_URL: ${PASSWORD_RESET_BASE_URL:-}

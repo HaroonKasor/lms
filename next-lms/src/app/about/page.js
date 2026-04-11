@@ -5,6 +5,7 @@ import Link from 'next/link';
 import FadeIn from '@/components/ui/FadeIn';
 import Header from '@/components/layout/Header';
 import PublicFooter from '@/components/layout/PublicFooter';
+import HomeFloatingChatbot from '@/components/ui/HomeFloatingChatbot';
 
 export default function AboutPage() {
     const [hoveredIndex, setHoveredIndex] = useState(null);
@@ -63,17 +64,42 @@ export default function AboutPage() {
                 <FadeIn direction="up" className="bg-[#F6F7FA] rounded-[30px] p-6 sm:p-8 md:p-12 lg:p-16 flex flex-col-reverse lg:flex-row items-center gap-10">
                     <div className="flex-1 flex flex-col gap-6 text-[#052143] font-sans text-[14px] md:text-[15px] leading-[1.8] font-medium">
                         <p>
-                            SkillUp is a web-based learning platform developed as part of a graduation project. The purpose of this project is to create an accessible, user-friendly, and effective online learning environment for students and individuals who want to improve their knowledge and skills.
+                            SkillUp is a web-based Learning Management System (LMS) developed as a senior capstone project by students of Ramkhamhaeng University, Faculty of Engineering, Department of Computer and Electronics Engineering. This project was initiated to respond to the growing need for a practical, flexible, and learner-centered digital education platform that supports both formal and self-directed learning.
                         </p>
                         <p>
-                            This platform was designed in response to the growing need for digital learning solutions that are flexible and convenient. Many learners need a system that allows them to access educational content easily, manage their learning progress, and study at their own pace. SkillUp aims to provide a practical solution to these needs through a simple and organized platform.
+                            The main objective of SkillUp is to provide an accessible, user-friendly, and effective online learning environment where learners can study at their own pace, access learning materials conveniently, and monitor their progress through a structured learning flow. We designed the platform to reduce common barriers in online education, such as fragmented content access, unclear progress visibility, and limited learner support during study sessions.
                         </p>
                         <p>
-                            The main objective of this project is to support self-paced learning by offering an easy-to-use system where users can explore courses, access learning materials, and track their progress. In addition, the platform is designed to create a better learning experience by combining technology with education in a meaningful way.
+                            SkillUp includes essential LMS capabilities such as course discovery, enrollment workflows, section-based lesson delivery, progress tracking, quiz and learning activity support, and certificate-related processes. In addition, the platform integrates AI-assisted features to help learners summarize content, clarify difficult concepts, and receive guided learning support in context. These AI features are designed to support understanding and learning confidence while maintaining appropriate academic integrity in assessment scenarios.
                         </p>
                         <p>
-                            We believe that learning should be available to everyone, anywhere, and at any time. Through this project, we hope to encourage continuous learning and skill development in the digital era.
+                            From a technical perspective, the project emphasizes practical software engineering implementation, including role-based access control, session-based authentication, administrative reporting modules, and operational APIs for learning data management. The system is structured for maintainability and future extension, allowing additional capabilities such as richer analytics, recommendation logic, and deeper personalization in subsequent phases.
                         </p>
+                        <p>
+                            Beyond technical implementation, SkillUp reflects our commitment to educational impact. We believe learning should be available to everyone, anywhere, and at any time. Through this project, we aim to encourage continuous learning, strengthen digital skills, and contribute to a more inclusive and effective learning ecosystem for students and lifelong learners.
+                        </p>
+                        <div className="rounded-[16px] bg-white border border-[#E6EBFF] px-4 py-3">
+                            <h3 className="text-[16px] font-semibold text-[#052143] mb-1.5">Project Information</h3>
+                            <p className="text-[#4D5A75] text-[14px] leading-[1.7]">
+                                Project Type: Senior Project (Capstone)
+                                <br />
+                                Institution: Ramkhamhaeng University
+                                <br />
+                                Faculty: Faculty of Engineering
+                                <br />
+                                Department: Computer and Electronics Engineering
+                            </p>
+                        </div>
+                        <div className="rounded-[16px] bg-white border border-[#E6EBFF] px-4 py-3">
+                            <h3 className="text-[16px] font-semibold text-[#052143] mb-1.5">Project Team</h3>
+                            <p className="text-[#4D5A75] text-[14px] leading-[1.7]">
+                                1. Miss Suppansa Nakprasert
+                                <br />
+                                2. Mr. Ekthaphong Lonhin
+                                <br />
+                                3. Mr. Haroon Kasor
+                            </p>
+                        </div>
                     </div>
                     <div className="flex-1 flex justify-center w-full">
                         <img 
@@ -155,6 +181,7 @@ export default function AboutPage() {
             </main>
 
             <PublicFooter className="mt-auto" />
+            <HomeFloatingChatbot />
         </div>
     );
 }

@@ -22,11 +22,10 @@ export default function LoadScreen({
         document.documentElement.style.overflow = 'hidden';
 
         return () => {
-            // Keep root scroll behavior stable after loading:
-            // html stays non-scrollable, body is the only scroll container.
-            document.body.style.overflow = prevBodyOverflow || 'auto';
-            document.body.style.height = prevBodyHeight || '100vh';
-            document.documentElement.style.overflow = prevHtmlOverflow || 'hidden';
+            // Restore exactly what the page had before lock.
+            document.body.style.overflow = prevBodyOverflow || '';
+            document.body.style.height = prevBodyHeight || '';
+            document.documentElement.style.overflow = prevHtmlOverflow || '';
         };
     }, []);
 

@@ -8,6 +8,7 @@ import Navbar from '@/components/layout/Navbar';
 import Header from '@/components/layout/Header';
 import FadeIn from '@/components/ui/FadeIn';
 import LoadScreen from '@/components/ui/LoadScreen';
+import HomeFloatingChatbot from '@/components/ui/HomeFloatingChatbot';
 import { getUser } from '@/lib/auth';
 import { toast } from 'react-toastify';
 
@@ -370,6 +371,7 @@ export default function CourseDetailPage() {
         return (
             <div className="min-h-screen font-['Outfit',sans-serif]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
                 {user ? <Navbar /> : <Header />}
+                {!user ? <HomeFloatingChatbot /> : null}
                 <div className="flex items-center justify-center py-40">
                     <div className="text-center">
                         <div className="text-6xl mb-4">😕</div>
@@ -405,6 +407,7 @@ export default function CourseDetailPage() {
     return (
         <div className="min-h-screen font-['Outfit',sans-serif]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
             {user ? <Navbar /> : <Header />}
+            {!user ? <HomeFloatingChatbot /> : null}
 
             <main className="max-w-[1290px] mx-auto px-4 sm:px-6 pt-8 sm:pt-12 pb-20 sm:pb-24 flex flex-col gap-8">
                 <FadeIn direction="up">

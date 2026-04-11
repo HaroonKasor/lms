@@ -88,8 +88,16 @@ export default function MyLearning() {
 
     const unlockReviewScroll = useCallback((force = false) => {
         if (typeof document === 'undefined') return;
+        if (force) {
+            document.body.style.removeProperty('overflow');
+            document.documentElement.style.removeProperty('overflow');
+            document.body.classList.remove('overflow-hidden');
+            document.documentElement.classList.remove('overflow-hidden');
+            reviewScrollLockRef.current = null;
+            return;
+        }
         const previous = reviewScrollLockRef.current;
-        if (!previous && !force) return;
+        if (!previous) return;
         document.body.style.overflow = previous?.bodyOverflow || '';
         document.documentElement.style.overflow = previous?.htmlOverflow || '';
         reviewScrollLockRef.current = null;
@@ -309,6 +317,12 @@ export default function MyLearning() {
             unlockReviewScroll();
         }
     }, [reviewModalOpen, unlockReviewScroll]);
+
+    useEffect(() => {
+        return () => {
+            unlockReviewScroll(true);
+        };
+    }, [unlockReviewScroll]);
 
     // Map enrollment status to tab names
     const getTabStatus = (enrollment) => {

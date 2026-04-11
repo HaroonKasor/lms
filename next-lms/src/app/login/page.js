@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { saveUser, getRememberMePreference, setRememberMePreference } from '@/lib/auth';
+import { beginChatSession, saveUser, getRememberMePreference, setRememberMePreference } from '@/lib/auth';
 
 export default function Login() {
     const [showPassword, setShowPassword] = useState(false);
@@ -50,6 +50,7 @@ export default function Login() {
             const data = await res.json();
             if (res.ok && data.success) {
                 saveUser(data.user, { remember: rememberMe });
+                beginChatSession({ remember: rememberMe });
                 setRememberMePreference(rememberMe);
                 // Admin goes to admin dashboard, user goes to learner dashboard
                 const nextPath = typeof window !== 'undefined'

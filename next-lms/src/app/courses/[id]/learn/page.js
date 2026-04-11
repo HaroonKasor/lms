@@ -5684,6 +5684,13 @@ export default function LearnPage() {
             return 'ยังไม่เริ่ม';
         };
         const activeLessonTitle = lessonItems[selectedLessonIndex]?.name || lessonItems[selectedLessonIndex]?.title || content.title;
+        const assistantCourseTitle = String(course?.title || '').trim();
+        const assistantSectionTitle = String(content?.title || '').trim();
+        const assistantLessonOutline = lessonItems.map((lesson, index) => ({
+            index: index + 1,
+            title: String(lesson?.name || lesson?.title || `Lesson ${index + 1}`),
+            status: String(lessonStatuses[index] || ''),
+        }));
         const lessonModules = [
             {
                 id: 1,
@@ -5817,7 +5824,16 @@ export default function LearnPage() {
                     }`}
                 >
                     <div className="h-full w-[88vw] max-w-[320px] lg:w-[320px]">
-                        <LearningAiAssistant onClose={handleCloseLearningAi} />
+                        <LearningAiAssistant
+                            onClose={handleCloseLearningAi}
+                            courseTitle={assistantCourseTitle}
+                            sectionTitle={assistantSectionTitle}
+                            lessonTitle={activeLessonTitle}
+                            activeLessonIndex={selectedLessonIndex + 1}
+                            totalLessons={lessonItems.length}
+                            lessonOutline={assistantLessonOutline}
+                            lessonSrc={resolvePlayerSrc(content.entryPoint)}
+                        />
                     </div>
                 </div>
             </div>

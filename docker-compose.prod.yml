@@ -25,7 +25,7 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: production
-      NEXT_TELEMETRY_DISABLED: "1"
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       SESSION_SECRET: ${SESSION_SECRET}
       SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       APP_NAME: ${APP_NAME:-SkillUp}
@@ -109,3 +109,4 @@ volumes:
   mysql_data:
   caddy_data:
   caddy_config:
+

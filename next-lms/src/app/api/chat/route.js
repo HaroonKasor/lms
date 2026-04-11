@@ -1,6 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+import * as YoutubeTranscriptPkg from "youtube-transcript";
+import { requireSession } from "@/lib/server/auth";
+import { buildMyLearningSummary } from "@/lib/server/my-learning-summary";
+import { logMyLearningSummaryAccess } from "@/lib/server/my-learning-summary-audit";
 
 const SYSTEM_PROMPT = `คุณคือ "SkillBot" ผู้ช่วย AI ของแพลตฟอร์มการเรียนรู้ SkillUp LMS
 หน้าที่ของคุณคือ:
@@ -14,33 +16,494 @@ const SYSTEM_PROMPT = `คุณคือ "SkillBot" ผู้ช่วย AI �
 ตอบกระชับ ชัดเจน และเป็นมิตร`;
 
 const MODEL_CANDIDATES = [
-    // Keep broadly available models first for better compatibility across projects.
-    "gemini-1.5-flash",
-    "gemini-2.0-flash-lite",
+    // Keep broadly available and currently supported models first.
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
     "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
 ];
+const OPENROUTER_DEFAULT_MODEL = "openai/gpt-4o-mini";
+const GROQ_DEFAULT_MODEL = "llama-3.1-8b-instant";
+const ASSESSMENT_TITLE_PATTERN = /(quiz|exam|test|assessment|แบบทดสอบ|ข้อสอบ|post[- ]?test|pre[- ]?test|midterm|final)/i;
+const VIDEO_TRANSCRIPT_INTENT_PATTERN = /(video_summary|video_explain|youtube_summary|youtube_explain)/i;
+const TRANSCRIPT_REQUEST_PATTERN = /(summarize|summary|transcript|video|clip|explain this lesson|สรุป|สรุปบท|ซับ|ถอดความ|คลิป|วิดีโอ|อธิบายบทนี้|ไม่เข้าใจบทนี้)/i;
+const DIRECT_ANSWER_REQUEST_PATTERN = /(คำตอบที่ถูก|เฉลย|ตอบข้อไหน|ตัวเลือกที่ถูก|ข้อที่ถูก|answer\s*(is|=)|correct answer|which option|choose (a|b|c|d)|เลือกข้อ|เลือกตัวเลือก|ระหว่าง\s*[กขคงabcd]|(?:[กขคง]\.|[a-d][\.\)])[\s\S]{0,160}(?:[กขคง]\.|[a-d][\.\)]))/i;
+const DIRECT_ANSWER_RESPONSE_PATTERN = /(คำตอบที่ถูก|เฉลยคือ|ตอบที่|correct answer|answer is|ตัวเลือกที่ถูก|ดังนั้นคำตอบ|ข้อตอบ)/i;
+const LEARNING_PROGRESS_INTENT_PATTERN = /(ความคืบหน้า|สถานะการเรียน|เรียนไปกี่|กี่เปอร์เซ็น|กี่ %|เรียนจบ|จบยัง|คอร์สที่เรียน|วิชาที่เรียน|progress|completion|completed|finished|how much.*learn|my course status|enroll(?:ed|ment)? status)/i;
+const YOUTUBE_HOST_PATTERN = /(?:youtube\.com|youtu\.be)/i;
+const TRANSCRIPT_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+const MAX_TRANSCRIPT_CHARS = 12000;
+const ENROLLMENT_STATUS_RANK = {
+    COMPLETED: 5,
+    LEARNING: 4,
+    APPROVED: 3,
+    PENDING: 2,
+    FAILED: 1,
+    CANCELLED: 0,
+};
+const MAX_LESSON_OUTLINE_ITEMS = 30;
+const MAX_CONTEXT_TEXT_LENGTH = 200;
+
+function resolveSummaryCacheTtlMs() {
+    const raw = Number(process.env.MY_LEARNING_SUMMARY_CACHE_TTL_MS || "");
+    if (!Number.isFinite(raw) || raw <= 0) return 45 * 1000;
+    return Math.max(30 * 1000, Math.min(60 * 1000, Math.floor(raw)));
+}
 
 function extractErrorStatus(err) {
     const status = Number(err?.status || err?.httpStatusCode || err?.code || 0);
     return Number.isFinite(status) ? status : 0;
 }
 
+function buildModelCandidates() {
+    const preferred = String(process.env.GEMINI_MODEL || "").trim();
+    const merged = preferred ? [preferred, ...MODEL_CANDIDATES] : MODEL_CANDIDATES;
+    return Array.from(new Set(merged.filter(Boolean)));
+}
+
+function buildOpenRouterConfig() {
+    const apiKey = String(process.env.OPENROUTER_API_KEY || "").trim();
+    if (!apiKey) return null;
+    const baseUrl = String(process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1")
+        .trim()
+        .replace(/\/+$/, "");
+    const model = String(process.env.OPENROUTER_MODEL || OPENROUTER_DEFAULT_MODEL).trim();
+    const appUrl = String(process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "").trim();
+    const appName = String(process.env.APP_NAME || "SkillUp LMS").trim();
+    return { apiKey, baseUrl, model, appUrl, appName };
+}
+
+function buildGroqConfig() {
+    const apiKey = String(process.env.GROQ_API_KEY || "").trim();
+    if (!apiKey) return null;
+    const baseUrl = String(process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1")
+        .trim()
+        .replace(/\/+$/, "");
+    const model = String(process.env.GROQ_MODEL || GROQ_DEFAULT_MODEL).trim();
+    return { apiKey, baseUrl, model };
+}
+
+function getTranscriptCacheStore() {
+    if (!globalThis.__skillupYoutubeTranscriptCache) {
+        globalThis.__skillupYoutubeTranscriptCache = new Map();
+    }
+    return globalThis.__skillupYoutubeTranscriptCache;
+}
+
+function extractYouTubeVideoId(input) {
+    const raw = String(input || "").trim();
+    if (!raw) return "";
+    if (/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw;
+
+    try {
+        const parsed = new URL(raw);
+        const host = String(parsed.hostname || "").toLowerCase();
+        if (host.includes("youtu.be")) {
+            const id = parsed.pathname.split("/").filter(Boolean)[0] || "";
+            return /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : "";
+        }
+        if (host.includes("youtube.com")) {
+            const fromQuery = String(parsed.searchParams.get("v") || "").trim();
+            if (/^[a-zA-Z0-9_-]{11}$/.test(fromQuery)) return fromQuery;
+            const pathParts = parsed.pathname.split("/").filter(Boolean);
+            const embedIdx = pathParts.findIndex((part) => part === "embed" || part === "shorts" || part === "live");
+            if (embedIdx >= 0 && pathParts[embedIdx + 1] && /^[a-zA-Z0-9_-]{11}$/.test(pathParts[embedIdx + 1])) {
+                return pathParts[embedIdx + 1];
+            }
+        }
+    } catch {
+        return "";
+    }
+    return "";
+}
+
+function resolveYouTubeSource(context = {}) {
+    const candidates = [
+        context?.lessonSrc,
+        context?.youtubeUrl,
+        context?.videoUrl,
+    ];
+    for (const candidate of candidates) {
+        const value = String(candidate || "").trim();
+        if (!value) continue;
+        if (YOUTUBE_HOST_PATTERN.test(value) || /^[a-zA-Z0-9_-]{11}$/.test(value)) {
+            return value;
+        }
+    }
+    return "";
+}
+
+function shouldUseTranscript(context = {}, lastMessageText = "") {
+    if (context?.useVideoTranscript === true) return true;
+    const intent = String(context?.intent || "").trim().toLowerCase();
+    if (VIDEO_TRANSCRIPT_INTENT_PATTERN.test(intent)) return true;
+    return TRANSCRIPT_REQUEST_PATTERN.test(String(lastMessageText || ""));
+}
+
+async function getYoutubeTranscriptText(youtubeSource) {
+    const videoId = extractYouTubeVideoId(youtubeSource);
+    if (!videoId) return null;
+
+    const cache = getTranscriptCacheStore();
+    const now = Date.now();
+    const cached = cache.get(videoId);
+    if (cached && now - Number(cached.fetchedAt || 0) <= TRANSCRIPT_CACHE_TTL_MS) {
+        return cached.text;
+    }
+
+    const fetchTranscriptFn = YoutubeTranscriptPkg.fetchTranscript
+        || YoutubeTranscriptPkg.YoutubeTranscript?.fetchTranscript;
+    if (typeof fetchTranscriptFn !== "function") return null;
+    const rows = await fetchTranscriptFn(videoId);
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    const merged = rows
+        .map((row) => String(row?.text || "").replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join(" ");
+    const compact = merged.replace(/\s{2,}/g, " ").trim();
+    if (!compact) return null;
+
+    const text = compact.slice(0, MAX_TRANSCRIPT_CHARS);
+    cache.set(videoId, { text, fetchedAt: now });
+    return text;
+}
+
+function buildPromptWithTranscript(lastMessageText, transcriptText, lessonTitle = "") {
+    if (!transcriptText) return lastMessageText;
+    const titleLine = lessonTitle ? `บทเรียน: ${lessonTitle}\n` : "";
+    return `ใช้ transcript วิดีโอนี้เป็นแหล่งอ้างอิงหลักในการตอบ และตอบให้อ่านง่ายสำหรับผู้เรียน
+${titleLine}Transcript:
+${transcriptText}
+
+คำถามผู้ใช้:
+${lastMessageText}`;
+}
+
+function shouldUseLearningProgressContext(context = {}, lastMessageText = "") {
+    if (context?.intent === "my_learning_progress") return true;
+    return LEARNING_PROGRESS_INTENT_PATTERN.test(String(lastMessageText || ""));
+}
+
+function buildPromptWithLearningSummary(basePrompt, summary) {
+    if (!summary) return basePrompt;
+    return `${basePrompt}
+
+ข้อมูลสถานะการเรียนของผู้ใช้ปัจจุบันจาก backend (ใช้เฉพาะข้อมูลนี้ ห้ามเดาข้อมูลของผู้อื่น):
+${JSON.stringify(summary)}
+
+คำสั่งเพิ่มเติม:
+- ตอบสถานะจากข้อมูลจริงใน JSON ด้านบนเท่านั้น
+- ถ้าผู้ใช้ถามข้อมูลของคนอื่น ให้ปฏิเสธอย่างสุภาพ`;
+}
+
+function sanitizeContextText(value, maxLength = MAX_CONTEXT_TEXT_LENGTH) {
+    return String(value || "").replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function normalizeContextLessonOutline(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw
+        .map((item, index) => {
+            const title = sanitizeContextText(item?.title || item?.name || item, 180);
+            if (!title) return null;
+            const idx = Number(item?.index);
+            const status = sanitizeContextText(item?.status || "", 40).toLowerCase();
+            return {
+                index: Number.isInteger(idx) && idx > 0 ? idx : index + 1,
+                title,
+                status,
+            };
+        })
+        .filter(Boolean)
+        .slice(0, MAX_LESSON_OUTLINE_ITEMS);
+}
+
+function buildLessonContextText(context = {}) {
+    const courseTitle = sanitizeContextText(context?.courseTitle, 180);
+    const sectionTitle = sanitizeContextText(context?.sectionTitle, 180);
+    const lessonTitle = sanitizeContextText(context?.lessonTitle, 180);
+    const lessonIndex = Number(context?.activeLessonIndex || 0);
+    const totalLessons = Number(context?.totalLessons || 0);
+    const outline = normalizeContextLessonOutline(context?.lessonOutline);
+    const summary = [];
+
+    if (courseTitle) summary.push(`คอร์สปัจจุบัน: ${courseTitle}`);
+    if (sectionTitle) summary.push(`หัวข้อ/หน้าที่เปิด: ${sectionTitle}`);
+    if (lessonTitle) summary.push(`บทที่กำลังเปิด: ${lessonTitle}`);
+    if (Number.isInteger(lessonIndex) && lessonIndex > 0 && Number.isInteger(totalLessons) && totalLessons > 0) {
+        summary.push(`ตำแหน่งบท: ${lessonIndex}/${totalLessons}`);
+    }
+    if (outline.length > 0) {
+        const lessonList = outline
+            .map((row) => `${row.index}. ${row.title}${row.status ? ` [${row.status}]` : ""}`)
+            .join("\n");
+        summary.push(`รายการบทเรียนในหน้านี้:\n${lessonList}`);
+    }
+    return summary.join("\n");
+}
+
+function buildPromptWithLessonContext(basePrompt, context = {}) {
+    const lessonContextText = buildLessonContextText(context);
+    if (!lessonContextText) return basePrompt;
+    return `${basePrompt}
+
+บริบทจากหน้าเรียนปัจจุบัน (เชื่อถือได้):
+${lessonContextText}
+
+คำสั่งเพิ่มเติม:
+- ถ้าผู้ใช้ถามว่า "กำลังเรียนหลักสูตร/บทไหน" ให้ตอบจากบริบทด้านบนทันที
+- ถ้าผู้ใช้ขอ "สรุปบทนี้/หน้านี้/คอร์สนี้" ให้ยึดบริบทด้านบนเป็นหลัก
+- หากข้อมูลไม่พอ ให้บอกข้อจำกัดตามจริง แต่ยังตอบโดยอิงบริบทที่มีอยู่`;
+}
+
+function formatSummaryTimestamp(iso) {
+    const date = new Date(iso || 0);
+    if (Number.isNaN(date.getTime())) return "-";
+    try {
+        return new Intl.DateTimeFormat("th-TH", {
+            dateStyle: "medium",
+            timeStyle: "short",
+            timeZone: "Asia/Bangkok",
+        }).format(date);
+    } catch {
+        return date.toISOString();
+    }
+}
+
+function toThaiLearningStatus(status) {
+    const key = String(status || "").toUpperCase();
+    if (key === "COMPLETED") return "เรียนจบแล้ว";
+    if (key === "LEARNING") return "กำลังเรียน";
+    if (key === "APPROVED") return "พร้อมเริ่มเรียน";
+    if (key === "PENDING") return "รออนุมัติ";
+    if (key === "FAILED") return "ไม่ผ่าน";
+    if (key === "CANCELLED") return "ยกเลิก";
+    return "ไม่ระบุ";
+}
+
+function buildLearningProgressTableResponse(summary) {
+    const totals = summary?.totals || {};
+    const courses = Array.isArray(summary?.courses) ? summary.courses : [];
+    const courseQuery = String(summary?.courseQuery || "").trim();
+    const timestampText = formatSummaryTimestamp(summary?.lastUpdatedAt || summary?.generatedAt);
+    const rows = courses
+        .slice()
+        .sort((a, b) => {
+            const rankA = ENROLLMENT_STATUS_RANK[String(a?.status || "").toUpperCase()] ?? 0;
+            const rankB = ENROLLMENT_STATUS_RANK[String(b?.status || "").toUpperCase()] ?? 0;
+            if (rankB !== rankA) return rankB - rankA;
+            return Number(b?.progressPercent || 0) - Number(a?.progressPercent || 0);
+        })
+        .slice(0, 20)
+        .map((item) => {
+            const courseName = String(item?.courseName || "-").replace(/\|/g, "/").trim() || "-";
+            const status = toThaiLearningStatus(item?.status);
+            const progress = Math.max(0, Math.min(100, Number(item?.progressPercent || 0)));
+            return `| ${courseName} | ${status} | ${progress}% |`;
+        });
+
+    const header = [
+        "สรุปความคืบหน้าการเรียนของคุณ",
+        "",
+        `ทั้งหมด ${Number(totals?.totalCourses || 0)} คอร์ส | จบแล้ว ${Number(totals?.completedCourses || 0)} | กำลังเรียน ${Number(totals?.learningCourses || 0)} | รออนุมัติ ${Number(totals?.pendingCourses || 0)} | เฉลี่ย ${Number(totals?.averageProgressPercent || 0)}%`,
+        `อัปเดตล่าสุดเมื่อ: ${timestampText}`,
+        courseQuery ? `ตัวกรองคอร์ส: ${courseQuery}` : "",
+        "",
+        "| คอร์ส | สถานะ | % |",
+        "|---|---|---|",
+    ].filter(Boolean);
+
+    if (rows.length === 0) {
+        return `${header.join("\n")}\n| - | - | 0% |`;
+    }
+    return `${header.join("\n")}\n${rows.join("\n")}`;
+}
+
+function extractCourseQuery(lastMessageText = "", context = {}) {
+    const explicit = String(context?.courseQuery || "").trim();
+    if (explicit) return explicit;
+
+    const text = String(lastMessageText || "").trim();
+    const patterns = [
+        /(?:คอร์ส|วิชา)\s*[\"'“”]?([^\"'“”\n]+?)[\"'“”]?\s*(?:เหลือ|กี่|จบ|สถานะ|ไปถึง|เรียน)/i,
+        /(?:course|subject)\s*[\"']?([^\"'\n]+?)[\"']?\s*(?:progress|status|completed|finish|left|how|is)/i,
+    ];
+    for (const pattern of patterns) {
+        const match = text.match(pattern);
+        const candidate = String(match?.[1] || "").trim();
+        if (candidate && candidate.length <= 120) return candidate;
+    }
+    return "";
+}
+
+function isAssessmentContext(context = {}) {
+    const lessonTitle = String(context?.lessonTitle || "").trim();
+    return Boolean(context?.isAssessment) || ASSESSMENT_TITLE_PATTERN.test(lessonTitle);
+}
+
+function buildNoAnswerPolicyReply() {
+    return `ขอโทษครับ ฉันไม่สามารถเฉลยคำตอบหรือบอกตัวเลือกที่ถูกต้องโดยตรงในโหมดแบบทดสอบได้
+
+แต่ฉันช่วยคุณผ่านโจทย์นี้ได้โดย:
+1) อธิบายแนวคิดที่เกี่ยวข้อง
+2) ตัดช้อยส์ที่ไม่น่าใช่ออกทีละข้อ
+3) ให้ hint จนคุณหาคำตอบเองได้
+
+พิมพ์ว่า "ขอ hint ทีละขั้น" ได้เลยครับ`;
+}
+
+function buildSystemInstruction(context = {}) {
+    const lessonTitle = sanitizeContextText(context?.lessonTitle, 180);
+    const courseTitle = sanitizeContextText(context?.courseTitle, 180);
+    const isAssessment = isAssessmentContext(context);
+    const lessonContextLine = lessonTitle ? `\n\nบริบทบทเรียนปัจจุบัน: ${lessonTitle}` : "";
+    const courseContextLine = courseTitle ? `\nคอร์สปัจจุบัน: ${courseTitle}` : "";
+    const assessmentRules = isAssessment
+        ? `
+
+เมื่ออยู่ในบททดสอบ/แบบฝึกหัด:
+- ห้ามให้คำตอบสุดท้ายหรือบอกตัวเลือกที่ถูกต้องโดยตรง
+- ให้เฉลยเชิงแนวคิด, วิธีคิดทีละขั้น, และ hint แทน
+- ถ้าผู้ใช้ขอเฉลยตรง ๆ ให้ปฏิเสธอย่างสุภาพ แล้วช่วยชี้แนวทางแทน`
+        : "";
+    return `${SYSTEM_PROMPT}${courseContextLine}${lessonContextLine}${assessmentRules}`;
+}
+
+function buildOpenRouterMessages(messages = [], finalMessageForModel = "", systemInstruction = "") {
+    const history = messages
+        .slice(0, -1)
+        .map((msg) => {
+            const role = msg?.role === "assistant" ? "assistant" : "user";
+            const content = String(msg?.content || "").trim();
+            if (!content) return null;
+            return { role, content };
+        })
+        .filter(Boolean);
+
+    const payload = [];
+    if (systemInstruction) {
+        payload.push({ role: "system", content: systemInstruction });
+    }
+    payload.push(...history);
+    payload.push({ role: "user", content: String(finalMessageForModel || "").trim() });
+    return payload;
+}
+
+async function generateWithOpenRouter({ config, messages, finalMessageForModel, systemInstruction }) {
+    if (!config?.apiKey) {
+        const err = new Error("OPENROUTER_API_KEY is not set");
+        err.status = 503;
+        throw err;
+    }
+    const endpoint = `${config.baseUrl}/chat/completions`;
+    const requestBody = {
+        model: config.model,
+        messages: buildOpenRouterMessages(messages, finalMessageForModel, systemInstruction),
+        temperature: 0.3,
+    };
+
+    const headers = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+    };
+    if (config.appUrl) headers["HTTP-Referer"] = config.appUrl;
+    if (config.appName) headers["X-Title"] = config.appName;
+
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(requestBody),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const errorText = String(
+            data?.error?.message
+            || data?.error
+            || `OpenRouter request failed with status ${response.status}`
+        );
+        const err = new Error(errorText);
+        err.status = response.status;
+        throw err;
+    }
+
+    const text = String(data?.choices?.[0]?.message?.content || "").trim();
+    if (!text) {
+        const err = new Error("OpenRouter returned empty response");
+        err.status = 502;
+        throw err;
+    }
+    return text;
+}
+
+async function generateWithGroq({ config, messages, finalMessageForModel, systemInstruction }) {
+    if (!config?.apiKey) {
+        const err = new Error("GROQ_API_KEY is not set");
+        err.status = 503;
+        throw err;
+    }
+    const endpoint = `${config.baseUrl}/chat/completions`;
+    const requestBody = {
+        model: config.model,
+        messages: buildOpenRouterMessages(messages, finalMessageForModel, systemInstruction),
+        temperature: 0.3,
+    };
+
+    const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const errorText = String(
+            data?.error?.message
+            || data?.error
+            || `Groq request failed with status ${response.status}`
+        );
+        const err = new Error(errorText);
+        err.status = response.status;
+        throw err;
+    }
+
+    const text = String(data?.choices?.[0]?.message?.content || "").trim();
+    if (!text) {
+        const err = new Error("Groq returned empty response");
+        err.status = 502;
+        throw err;
+    }
+    return text;
+}
+
 export async function POST(request) {
     try {
         const body = await request.json();
         const { messages } = body;
+        const context = body?.context && typeof body.context === "object" ? body.context : {};
+        const geminiApiKey = String(
+            process.env.GEMINI_API_KEY
+            || process.env.GOOGLE_API_KEY
+            || process.env.NEXT_PUBLIC_GEMINI_API_KEY
+            || ""
+        ).trim();
+        const openRouterConfig = buildOpenRouterConfig();
+        const groqConfig = buildGroqConfig();
 
         if (!messages || !Array.isArray(messages) || messages.length === 0) {
             return Response.json({ error: "Messages are required" }, { status: 400 });
         }
-
-        if (!process.env.GEMINI_API_KEY) {
-            console.error("GEMINI_API_KEY is not set");
+        if (!geminiApiKey && !openRouterConfig && !groqConfig) {
+            console.error("No AI provider configured (Gemini/OpenRouter/Groq)");
             return Response.json(
                 { error: "AI ยังไม่ได้ตั้งค่า กรุณาติดต่อผู้ดูแลระบบ" },
                 { status: 503 }
             );
         }
+        const genAI = geminiApiKey ? new GoogleGenerativeAI(geminiApiKey) : null;
 
         const rawHistory = messages.slice(0, -1).map((msg) => ({
             role: msg.role === "assistant" ? "model" : "user",
@@ -51,58 +514,215 @@ export async function POST(request) {
         const firstUserIndex = rawHistory.findIndex((h) => h.role === "user");
         const history = firstUserIndex >= 0 ? rawHistory.slice(firstUserIndex) : [];
         const lastMessage = messages[messages.length - 1];
+        const lastMessageText = String(lastMessage?.content || "").trim();
+
+        if (!lastMessageText) {
+            return Response.json({ error: "Message content is required" }, { status: 400 });
+        }
+        const assessmentMode = isAssessmentContext(context);
+
+        // Hard guardrail: never provide direct answers in quizzes/exams.
+        if (assessmentMode && DIRECT_ANSWER_REQUEST_PATTERN.test(lastMessageText)) {
+            return Response.json({ content: buildNoAnswerPolicyReply() });
+        }
+
+        let learningSummary = null;
+        if (shouldUseLearningProgressContext(context, lastMessageText)) {
+            const { session, response } = await requireSession(request);
+            if (response) {
+                return Response.json({
+                    content: "หากต้องการดูความคืบหน้าการเรียน กรุณาเข้าสู่ระบบก่อนครับ",
+                });
+            }
+            const courseQuery = extractCourseQuery(lastMessageText, context);
+            learningSummary = await buildMyLearningSummary({
+                session,
+                courseQuery,
+                cacheTtlMs: resolveSummaryCacheTtlMs(),
+            });
+            if (Number(learningSummary?.totals?.totalCourses || 0) <= 0) {
+                if (courseQuery) {
+                    await logMyLearningSummaryAccess({
+                        request,
+                        session,
+                        source: "chat",
+                        courseQuery,
+                        totalCourses: 0,
+                        status: "course_not_found",
+                    });
+                    return Response.json({
+                        content: `ไม่พบคอร์สชื่อ "${courseQuery}" ในรายการเรียนของบัญชีนี้ครับ`,
+                    });
+                }
+                await logMyLearningSummaryAccess({
+                    request,
+                    session,
+                    source: "chat",
+                    courseQuery,
+                    totalCourses: 0,
+                    status: "no_course",
+                });
+                return Response.json({
+                    content: "ตอนนี้ยังไม่พบคอร์สที่ลงทะเบียนไว้ในบัญชีนี้ครับ",
+                });
+            }
+            await logMyLearningSummaryAccess({
+                request,
+                session,
+                source: "chat",
+                courseQuery,
+                totalCourses: Number(learningSummary?.totals?.totalCourses || 0),
+                status: "ok",
+            });
+            return Response.json({
+                content: buildLearningProgressTableResponse(learningSummary),
+            });
+        }
+
+        let transcriptText = null;
+        const youtubeSource = resolveYouTubeSource(context);
+        const transcriptRequested = youtubeSource && shouldUseTranscript(context, lastMessageText);
+        if (transcriptRequested) {
+            try {
+                transcriptText = await getYoutubeTranscriptText(youtubeSource);
+            } catch (err) {
+                console.warn("Unable to load YouTube transcript:", err?.message || err);
+            }
+        }
+        if (transcriptRequested && !transcriptText) {
+            return Response.json({
+                content: "ตอนนี้ดึง subtitle จากวิดีโอนี้ไม่ได้ จึงสรุปจากคลิปตรง ๆ ให้ไม่ได้ในขณะนี้ ลองใช้คลิปที่เปิดคำบรรยาย (CC) หรือส่งประเด็นที่ไม่เข้าใจมา แล้วฉันจะช่วยอธิบายให้ทันทีครับ",
+            });
+        }
+
+        const transcriptEnrichedPrompt = buildPromptWithTranscript(
+            lastMessageText,
+            transcriptText,
+            String(context?.lessonTitle || "").trim()
+        );
+        const promptWithLessonContext = buildPromptWithLessonContext(transcriptEnrichedPrompt, context);
+        const finalMessageForModel = buildPromptWithLearningSummary(promptWithLessonContext, learningSummary);
 
         // Try each model candidate until one succeeds.
         // Some API keys/projects may not have access to specific model versions,
         // so we should continue trying on compatibility errors as well.
         let lastError = null;
         let sawQuotaError = false;
-        for (const modelName of MODEL_CANDIDATES) {
+        let sawFallbackProviderError = false;
+        const systemInstruction = buildSystemInstruction(context);
+        if (genAI) {
+            for (const modelName of buildModelCandidates()) {
+                try {
+                    const model = genAI.getGenerativeModel({
+                        model: modelName,
+                        systemInstruction,
+                    });
+                    const chat = model.startChat(history.length > 0 ? { history } : {});
+                    const result = await chat.sendMessage(finalMessageForModel);
+                    const text = String(result.response.text() || "").trim();
+                    if (assessmentMode && DIRECT_ANSWER_RESPONSE_PATTERN.test(text)) {
+                        return Response.json({ content: buildNoAnswerPolicyReply() });
+                    }
+                    return Response.json({ content: text });
+                } catch (err) {
+                    lastError = err;
+                    const status = extractErrorStatus(err);
+
+                    if (status === 429) {
+                        sawQuotaError = true;
+                        console.warn(`Model ${modelName} quota exceeded, trying next...`);
+                        continue;
+                    }
+
+                    // Retry on model compatibility/access errors as well.
+                    if (status === 400 || status === 403 || status === 404) {
+                        console.warn(`Model ${modelName} unavailable for this key/project (status ${status}), trying next...`);
+                        continue;
+                    }
+
+                    // Unexpected error: keep trying remaining models if any.
+                    console.error(`Model ${modelName} failed with status ${status || "unknown"}`, err);
+                }
+            }
+        } else {
+            console.warn("Gemini API key is not configured, skipping Gemini provider.");
+        }
+
+        // Provider fallback: OpenRouter/OpenAI-compatible endpoint.
+        if (openRouterConfig) {
             try {
-                const model = genAI.getGenerativeModel({
-                    model: modelName,
-                    systemInstruction: SYSTEM_PROMPT,
+                const fallbackText = await generateWithOpenRouter({
+                    config: openRouterConfig,
+                    messages,
+                    finalMessageForModel,
+                    systemInstruction,
                 });
-                const chat = model.startChat(history.length > 0 ? { history } : {});
-                const result = await chat.sendMessage(lastMessage.content);
-                const text = result.response.text();
-                return Response.json({ content: text });
-            } catch (err) {
-                lastError = err;
-                const status = extractErrorStatus(err);
-
-                if (status === 429) {
+                console.warn("Chat fallback provider used: OpenRouter");
+                if (assessmentMode && DIRECT_ANSWER_RESPONSE_PATTERN.test(fallbackText)) {
+                    return Response.json({ content: buildNoAnswerPolicyReply() });
+                }
+                return Response.json({ content: fallbackText });
+            } catch (fallbackErr) {
+                lastError = fallbackErr;
+                const fallbackStatus = extractErrorStatus(fallbackErr);
+                if (fallbackStatus === 429) {
                     sawQuotaError = true;
-                    console.warn(`Model ${modelName} quota exceeded, trying next...`);
-                    continue;
+                } else {
+                    sawFallbackProviderError = true;
                 }
-
-                // Retry on model compatibility/access errors as well.
-                if (status === 400 || status === 403 || status === 404) {
-                    console.warn(`Model ${modelName} unavailable for this key/project (status ${status}), trying next...`);
-                    continue;
-                }
-
-                // Unexpected error: keep trying remaining models if any.
-                console.error(`Model ${modelName} failed with status ${status || 'unknown'}`, err);
+                console.error(`OpenRouter fallback failed with status ${fallbackStatus || "unknown"}`, fallbackErr);
             }
         }
 
+        // Provider fallback layer 2: Groq (OpenAI-compatible endpoint).
+        if (groqConfig) {
+            try {
+                const groqText = await generateWithGroq({
+                    config: groqConfig,
+                    messages,
+                    finalMessageForModel,
+                    systemInstruction,
+                });
+                console.warn("Chat fallback provider used: Groq");
+                if (assessmentMode && DIRECT_ANSWER_RESPONSE_PATTERN.test(groqText)) {
+                    return Response.json({ content: buildNoAnswerPolicyReply() });
+                }
+                return Response.json({ content: groqText });
+            } catch (groqErr) {
+                lastError = groqErr;
+                const groqStatus = extractErrorStatus(groqErr);
+                if (groqStatus === 429) {
+                    sawQuotaError = true;
+                } else {
+                    sawFallbackProviderError = true;
+                }
+                console.error(`Groq fallback failed with status ${groqStatus || "unknown"}`, groqErr);
+            }
+        }
+
+        if (sawFallbackProviderError) {
+            console.error("Fallback AI provider is unavailable/misconfigured:", lastError);
+            return Response.json(
+                { error: "ผู้ให้บริการ AI สำรองยังไม่พร้อมใช้งาน กรุณาตรวจสอบการตั้งค่า OpenRouter/Groq และสิทธิ์โมเดล" },
+                { status: 503 }
+            );
+        }
+
         if (sawQuotaError) {
-            console.error("All Gemini models quota exceeded:", lastError);
+            console.error("All configured AI providers quota exceeded:", lastError);
             return Response.json(
                 { error: "AI หมดโควต้าชั่วคราว กรุณาลองใหม่อีกครั้งในอีกสักครู่" },
                 { status: 429 }
             );
         }
 
-        console.error("All Gemini models unavailable for this key/project:", lastError);
+        console.error("All configured AI providers unavailable:", lastError);
         return Response.json(
-            { error: "คีย์ AI ปัจจุบันยังไม่พร้อมใช้งานกับโมเดลที่ระบบตั้งไว้ กรุณาตรวจสอบ API key และสิทธิ์การใช้งาน" },
+            { error: "คีย์ AI ปัจจุบันยังไม่พร้อมใช้งาน กรุณาตรวจสอบการตั้งค่า Gemini/OpenRouter/Groq และสิทธิ์การใช้งาน" },
             { status: 503 }
         );
     } catch (error) {
-        console.error("Gemini API Error:", error);
+        console.error("AI Provider Error:", error);
         return Response.json(
             { error: "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้ กรุณาลองใหม่อีกครั้ง" },
             { status: 500 }

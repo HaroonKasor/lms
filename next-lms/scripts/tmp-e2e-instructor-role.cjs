@@ -89,8 +89,11 @@ function killProcessTree(pid){
 
     console.log('[step] login');
     await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded', timeout: 45000 });
-    await page.locator('input[name="username"]').first().fill(USERNAME);
-    await page.locator('input[name="password"]').first().fill(PASSWORD);
+    const usernameInput = page.locator('input[placeholder="Enter username"]').first();
+    const passwordInput = page.locator('input[placeholder="Enter Password"]').first();
+    await usernameInput.waitFor({ state: 'visible', timeout: 45000 });
+    await usernameInput.fill(USERNAME);
+    await passwordInput.fill(PASSWORD);
     await page.locator('button[type="submit"]').first().click();
     await page.waitForURL((url)=>!url.pathname.includes('/login'), { timeout: 45000 });
 
