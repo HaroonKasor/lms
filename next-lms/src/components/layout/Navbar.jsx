@@ -119,6 +119,15 @@ export default function Navbar() {
     const toastTimersRef = useRef(new Map());
     const notificationRequestInFlightRef = useRef(false);
     const userSyncAttemptedRef = useRef(false);
+    const chatTeaserRouteKey = React.useMemo(() => buildChatTeaserRouteKey(pathname), [pathname]);
+    const chatTeaserMessage = React.useMemo(
+        () => resolveChatTeaserMessage(pathname, Boolean(user)),
+        [pathname, user]
+    );
+    const chatTeaserUserScope = React.useMemo(() => {
+        const id = String(user?.id || user?.username || user?.email || 'guest').trim() || 'guest';
+        return `user:${id}`;
+    }, [user]);
 
     const readStoredUser = React.useCallback(() => {
         const current = getUser();
@@ -490,15 +499,6 @@ export default function Navbar() {
     const displayName = user?.fullName || user?.username || 'User';
     const shortName = displayName.length > 15 ? displayName.slice(0, 12) + '...' : displayName;
     const avatarUrl = String(user?.avatar || '').trim() || DEFAULT_AVATAR_URL;
-    const chatTeaserRouteKey = React.useMemo(() => buildChatTeaserRouteKey(pathname), [pathname]);
-    const chatTeaserMessage = React.useMemo(
-        () => resolveChatTeaserMessage(pathname, Boolean(user)),
-        [pathname, user]
-    );
-    const chatTeaserUserScope = React.useMemo(() => {
-        const id = String(user?.id || user?.username || user?.email || 'guest').trim() || 'guest';
-        return `user:${id}`;
-    }, [user]);
 
     // Close dropdowns when clicking outside
     useEffect(() => {

@@ -518,6 +518,7 @@ export default function UserCoursesView() {
                                                 src={thumbnail}
                                                 alt={course.name}
                                                 className="w-full h-full object-cover"
+                                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                                                 onError={(e) => {
                                                     e.currentTarget.onerror = null;
                                                     e.currentTarget.src = '/course.png';
