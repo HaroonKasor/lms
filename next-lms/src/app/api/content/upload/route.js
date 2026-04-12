@@ -7,8 +7,78 @@ import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
 
 const ASSESSMENT_NAME_REGEX = /quiz|test|exam|assessment|post[\s-_]?test|pre[\s-_]?test|แบบทดสอบ|ทดสอบ/i;
+const CONTENT_ROOT = path.join(process.cwd(), 'public', 'content');
+const MAX_EXTRACTED_ZIP_BYTES = 500 * 1024 * 1024; // 500MB
+
+function sanitizeContentId(value = '') {
+    const normalized = String(value || '').trim();
+    if (!normalized) return '';
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{5,127}$/.test(normalized)) return '';
+    return normalized;
+}
+
+function resolveContentDirectory(contentId = '') {
+    const safeId = sanitizeContentId(contentId);
+    if (!safeId) return null;
+
+    const resolved = path.resolve(CONTENT_ROOT, safeId);
+    if (resolved === CONTENT_ROOT || !resolved.startsWith(`${CONTENT_ROOT}${path.sep}`)) {
+        return null;
+    }
+    return { safeId, resolved };
+}
+
+function cleanupDirectory(targetDir) {
+    try {
+        if (targetDir && fs.existsSync(targetDir)) {
+            fs.rmSync(targetDir, { recursive: true, force: true });
+        }
+    } catch {
+        // no-op cleanup
+    }
+}
+
+function extractZipSafely(zip, destinationDir) {
+    const destinationRoot = path.resolve(destinationDir);
+    const entries = zip.getEntries();
+    let totalExtractedBytes = 0;
+
+    for (const entry of entries) {
+        const rawName = String(entry?.entryName || '')
+            .replace(/\\/g, '/')
+            .replace(/^\/+/, '');
+        if (!rawName) continue;
+
+        const segments = rawName.split('/').filter(Boolean);
+        if (segments.some((segment) => segment === '.' || segment === '..')) {
+            throw new Error('Invalid ZIP entry path');
+        }
+
+        const targetPath = path.resolve(destinationRoot, ...segments);
+        if (targetPath !== destinationRoot && !targetPath.startsWith(`${destinationRoot}${path.sep}`)) {
+            throw new Error('ZIP entry escapes destination directory');
+        }
+
+        if (entry.isDirectory) {
+            fs.mkdirSync(targetPath, { recursive: true });
+            continue;
+        }
+
+        const entrySize = Number(entry?.header?.size || 0);
+        if (Number.isFinite(entrySize) && entrySize > 0) {
+            totalExtractedBytes += entrySize;
+            if (totalExtractedBytes > MAX_EXTRACTED_ZIP_BYTES) {
+                throw new Error('ZIP package is too large after extraction');
+            }
+        }
+
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.writeFileSync(targetPath, entry.getData());
+    }
+}
 
 export async function POST(request) {
+    let contentDir = '';
     try {
         const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
@@ -22,17 +92,11 @@ export async function POST(request) {
         const file = formData.get('file');
         const title = formData.get('title') || 'Untitled';
 
-        if (!file) {
+        if (!file || typeof file === 'string') {
             return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
         }
 
-        const uuid = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-        const contentDir = path.join(process.cwd(), 'public', 'content', uuid);
-        fs.mkdirSync(contentDir, { recursive: true });
-
-        const bytes = await file.arrayBuffer();
-        const buffer = Buffer.from(bytes);
-        const fileName = file.name;
+        const fileName = String(file?.name || '').trim() || 'package.zip';
         const ext = path.extname(fileName).toLowerCase();
 
         let activities = [];
@@ -43,46 +107,59 @@ export async function POST(request) {
             return NextResponse.json({ error: 'Only TinCan .zip package is supported' }, { status: 400 });
         }
 
-        const zipPath = path.join(contentDir, fileName);
+        const uuid = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+        contentDir = path.join(CONTENT_ROOT, uuid);
+        fs.mkdirSync(contentDir, { recursive: true });
+
+        const bytes = await file.arrayBuffer();
+        const buffer = Buffer.from(bytes);
+        const zipPath = path.join(contentDir, 'package.zip');
         fs.writeFileSync(zipPath, buffer);
 
         try {
             const zip = new AdmZip(zipPath);
-            zip.extractAllTo(contentDir, true);
-            const processed = processExtractedContent(contentDir);
-            type = processed.type;
-            entryPoint = processed.entryPoint;
-            activities = processed.activities;
-            const completionPolicy = processed.completionPolicy || null;
-            const packageConfig = processed.packageConfig || null;
-
-            if (type !== 'tincan') {
-                return NextResponse.json({ error: 'Invalid TinCan package: tincan.xml not found' }, { status: 400 });
-            }
-
-            if (!entryPoint) {
-                return NextResponse.json({ error: 'No launchable file found in package' }, { status: 400 });
-            }
-
-            const content = {
-                id: uuid,
-                title: String(title),
-                type,
-                fileName,
-                entryPoint,
-                status: 'active',
-                activities,
-                completionPolicy,
-                packageConfig,
-                uploadedAt: new Date().toISOString(),
-            };
-
-            await saveContent(content);
-            return NextResponse.json({ success: true, content });
-        } catch {
+            extractZipSafely(zip, contentDir);
+            fs.rmSync(zipPath, { force: true });
+        } catch (extractErr) {
+            cleanupDirectory(contentDir);
+            console.warn('[content/upload][POST] rejected ZIP package', extractErr);
             return NextResponse.json({ error: 'Could not extract ZIP package' }, { status: 400 });
         }
+
+        const processed = processExtractedContent(contentDir);
+        type = processed.type;
+        entryPoint = processed.entryPoint;
+        activities = processed.activities;
+        const completionPolicy = processed.completionPolicy || null;
+        const packageConfig = processed.packageConfig || null;
+
+        if (type !== 'tincan') {
+            cleanupDirectory(contentDir);
+            return NextResponse.json({ error: 'Invalid TinCan package: tincan.xml not found' }, { status: 400 });
+        }
+
+        if (!entryPoint) {
+            cleanupDirectory(contentDir);
+            return NextResponse.json({ error: 'No launchable file found in package' }, { status: 400 });
+        }
+
+        const content = {
+            id: uuid,
+            title: String(title),
+            type,
+            fileName,
+            entryPoint,
+            status: 'active',
+            activities,
+            completionPolicy,
+            packageConfig,
+            uploadedAt: new Date().toISOString(),
+        };
+
+        await saveContent(content);
+        return NextResponse.json({ success: true, content });
     } catch (err) {
+        cleanupDirectory(contentDir);
         console.error('[content/upload][POST] failed', err);
         return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
     }
@@ -115,14 +192,13 @@ export async function DELETE(request) {
         if (response) return response;
 
         const { searchParams } = new URL(request.url);
-        const id = searchParams.get('id');
-        if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+        const resolved = resolveContentDirectory(searchParams.get('id'));
+        if (!resolved?.safeId) return NextResponse.json({ error: 'Missing or invalid id' }, { status: 400 });
 
-        await deleteContent(id);
+        await deleteContent(resolved.safeId);
 
-        const contentDir = path.join(process.cwd(), 'public', 'content', id);
-        if (fs.existsSync(contentDir)) {
-            fs.rmSync(contentDir, { recursive: true, force: true });
+        if (fs.existsSync(resolved.resolved)) {
+            fs.rmSync(resolved.resolved, { recursive: true, force: true });
         }
 
         return NextResponse.json({ success: true });

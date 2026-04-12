@@ -8,6 +8,8 @@ import {
     ensureUserRole,
 } from '@/lib/server/enterprise-context';
 
+const MIN_SEED_PASSWORD_LENGTH = 12;
+
 function isSeedEnabled() {
     return String(process.env.ALLOW_AUTH_SEED || '').toLowerCase() === 'true';
 }
@@ -15,10 +17,17 @@ function isSeedEnabled() {
 function isAuthorizedSeedRequest(request) {
     if (!isSeedEnabled()) return false;
     const expectedToken = String(process.env.AUTH_SEED_TOKEN || '').trim();
-    if (!expectedToken) return true;
+    if (!expectedToken) return false;
     const headerToken = String(request?.headers?.get('x-seed-token') || '').trim();
-    const queryToken = String(request?.nextUrl?.searchParams?.get('token') || '').trim();
-    return headerToken === expectedToken || queryToken === expectedToken;
+    return headerToken === expectedToken;
+}
+
+function getSeedAdminPassword() {
+    const fromEnv = String(process.env.AUTH_SEED_ADMIN_PASSWORD || '').trim();
+    if (!fromEnv || fromEnv.length < MIN_SEED_PASSWORD_LENGTH) {
+        throw new Error(`AUTH_SEED_ADMIN_PASSWORD must be set and at least ${MIN_SEED_PASSWORD_LENGTH} characters`);
+    }
+    return fromEnv;
 }
 
 function disabledResponse() {
@@ -62,6 +71,7 @@ export async function GET(request) {
 export async function POST(request) {
     try {
         if (!isAuthorizedSeedRequest(request)) return disabledResponse();
+        const adminPassword = getSeedAdminPassword();
 
         const organizationId = await ensureDefaultOrganization();
         await ensureRole(prisma, {
@@ -88,7 +98,7 @@ export async function POST(request) {
             });
         }
 
-        const hashedPassword = await hashPassword('12345678');
+        const hashedPassword = await hashPassword(adminPassword);
 
         const admin = await prisma.$transaction(async (tx) => {
             const created = await tx.user.create({
@@ -123,6 +133,10 @@ export async function POST(request) {
             user: { id: admin.id, username: admin.username, email: admin.email, role: 'admin' },
         });
     } catch (err) {
+        const message = String(err?.message || '');
+        if (message.includes('AUTH_SEED_ADMIN_PASSWORD')) {
+            return NextResponse.json({ error: message }, { status: 503 });
+        }
         console.error('[auth/seed][POST] failed', err);
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
     }

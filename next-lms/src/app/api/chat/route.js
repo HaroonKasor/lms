@@ -619,7 +619,6 @@ export async function POST(request) {
         const geminiApiKey = String(
             process.env.GEMINI_API_KEY
             || process.env.GOOGLE_API_KEY
-            || process.env.NEXT_PUBLIC_GEMINI_API_KEY
             || ""
         ).trim();
         const openRouterConfig = buildOpenRouterConfig();

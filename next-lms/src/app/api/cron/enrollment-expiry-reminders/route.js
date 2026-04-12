@@ -1,9 +1,13 @@
 import { NextResponse } from 'next/server';
 import { triggerEnrollmentExpiryReminderSweep } from '@/lib/server/enrollment-email-reminders';
 
+function getCronSecret() {
+    return String(process.env.CRON_SECRET || '').trim();
+}
+
 function isAuthorized(request) {
-    const secret = String(process.env.CRON_SECRET || '').trim();
-    if (!secret) return true;
+    const secret = getCronSecret();
+    if (!secret) return false;
 
     const authHeader = String(request.headers.get('authorization') || '').trim();
     const tokenFromHeader = String(request.headers.get('x-cron-secret') || '').trim();
@@ -15,6 +19,9 @@ function isAuthorized(request) {
 }
 
 async function handle(request) {
+    if (!getCronSecret()) {
+        return NextResponse.json({ error: 'Cron secret is not configured' }, { status: 503 });
+    }
     if (!isAuthorized(request)) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }

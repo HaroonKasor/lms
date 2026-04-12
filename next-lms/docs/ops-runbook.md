@@ -53,6 +53,15 @@ Behavior:
   - `200` when healthy
   - `503` when degraded
 
+## Security notes
+
+- `CRON_SECRET` is required for `/api/cron/enrollment-expiry-reminders`.
+  - If missing, endpoint returns `503` and will not run.
+- `ALLOW_AUTH_SEED=true` now requires both:
+  - `AUTH_SEED_TOKEN` (send via `x-seed-token` header)
+  - `AUTH_SEED_ADMIN_PASSWORD` (minimum 12 chars)
+- `POST /api/auth/forgot-password` always returns a generic success payload to reduce account enumeration risk.
+
 ## 4) Backup/restore
 
 Use DB env variables:

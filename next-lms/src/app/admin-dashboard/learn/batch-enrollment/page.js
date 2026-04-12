@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
 import AdminShell from '@/components/admin/layout/AdminShell';
 
 const DEFAULT_FORM = { categoryId: '', courseId: '', status: 'APPROVED' };
@@ -30,10 +29,52 @@ function getPageNumbers(page, totalPages, windowSize = 5) {
 }
 
 function downloadTemplate() {
-  const worksheet = XLSX.utils.aoa_to_sheet([['username'], ['learner1'], ['learner2'], ['user@example.com']]);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'BatchEnrollment');
-  XLSX.writeFile(workbook, 'batch-enrollment-template.xlsx');
+  const csvRows = ['username', 'learner1', 'learner2', 'user@example.com'];
+  const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = 'batch-enrollment-template.csv';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
+function parseCsvLine(line = '') {
+  const cells = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === ',' && !inQuotes) {
+      cells.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current);
+  return cells.map((item) => String(item || '').trim());
+}
+
+function parseCsvText(text = '') {
+  const normalized = String(text || '').replace(/^\uFEFF/, '');
+  const lines = normalized
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.map((line) => parseCsvLine(line));
 }
 
 function StatMiniCard({ label, value, color, bg, border }) {
@@ -129,13 +170,9 @@ export default function BatchEnrollmentPage() {
     setParseInfo({ totalRows: trimmedRows.length, validRows: uniqueRows.length, duplicateRows, usedColumn: usedColumnLabel });
   };
 
-  const parseExcelFile = async (file) => {
-    const buffer = await file.arrayBuffer();
-    const workbook = XLSX.read(buffer, { type: 'array' });
-    const firstSheetName = workbook.SheetNames?.[0];
-    if (!firstSheetName) throw new Error('No sheet found in file');
-    const sheet = workbook.Sheets[firstSheetName];
-    const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false });
+  const parseCsvFile = async (file) => {
+    const text = await file.text();
+    const matrix = parseCsvText(text);
     if (!Array.isArray(matrix) || matrix.length === 0) throw new Error('No data found in file');
     const firstRow = Array.isArray(matrix[0]) ? matrix[0] : [];
     const normalizedHeaders = firstRow.map(normalizeHeader);
@@ -161,7 +198,7 @@ export default function BatchEnrollmentPage() {
     setParseInfo({ totalRows: 0, validRows: 0, duplicateRows: 0, usedColumn: '' });
     if (!file) { setFileName(''); return; }
     setFileName(file.name);
-    try { await parseExcelFile(file); setSuccess('File parsed successfully!'); }
+    try { await parseCsvFile(file); setSuccess('File parsed successfully!'); }
     catch (err) { setParsedRows([]); setError(err?.message || 'Cannot parse file'); }
   };
 
@@ -291,16 +328,16 @@ export default function BatchEnrollmentPage() {
 
             {/* File upload */}
             <div>
-              <label className="text-[13px] font-medium text-[#334155] mb-2 block">Upload Excel / CSV file</label>
+              <label className="text-[13px] font-medium text-[#334155] mb-2 block">Upload CSV file</label>
               <label className="w-full rounded-2xl border-2 border-dashed border-[#C4B5FD] bg-[#F8F7FF] px-6 py-8 flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-[#F0EDFF] transition-all group">
-                <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={onFileChange} disabled={loading || submitting} />
+                <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFileChange} disabled={loading || submitting} />
                 <div className="w-12 h-12 rounded-2xl bg-[#EEF1FF] flex items-center justify-center group-hover:bg-[#E0DAFF] transition">
                   <svg width="24" height="24" fill="none" stroke="#687EFF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                 </div>
                 <div className="text-[14px] font-medium text-[#687EFF]">
                   {fileName
                     ? <span className="flex items-center gap-1.5"><svg width="14" height="14" fill="none" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>{fileName}</span>
-                    : 'Click to choose .xlsx / .xls / .csv file'}
+                    : 'Click to choose .csv file'}
                 </div>
                 <div className="text-[12px] text-[#94A3B8]">Recommended columns: username / email / user_id</div>
               </label>
