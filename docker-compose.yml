@@ -52,6 +52,8 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_FROM: ${RESEND_FROM:-}
       RESEND_BASE_URL: ${RESEND_BASE_URL:-https://api.resend.com}
+      DEMO_PROTECTED_USERNAMES: ${DEMO_PROTECTED_USERNAMES:-demo_instructor}
+      DEMO_PROTECTED_EMAILS: ${DEMO_PROTECTED_EMAILS:-demo.instructor@skillup.local}
       DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-root}@db:3306/${MYSQL_DATABASE:-lms_enterprise}
     volumes:
       - ./next-lms/data:/app/data

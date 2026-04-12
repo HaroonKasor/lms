@@ -29,6 +29,42 @@ import {
 } from '@/lib/shared/role-directory';
 
 const PHONE_REGEX = /^\d{8,20}$/;
+const DEFAULT_PROTECTED_DEMO_INSTRUCTOR_USERNAME = 'demo_instructor';
+const DEFAULT_PROTECTED_DEMO_INSTRUCTOR_EMAIL = 'demo.instructor@skillup.local';
+
+function parseProtectedIdentitySet(raw, fallback = '') {
+    const source = String(raw || fallback || '')
+        .split(',')
+        .map((item) => String(item || '').trim().toLowerCase())
+        .filter(Boolean);
+    return new Set(source);
+}
+
+const PROTECTED_DEMO_INSTRUCTOR_USERNAMES = parseProtectedIdentitySet(
+    process.env.DEMO_PROTECTED_USERNAMES,
+    DEFAULT_PROTECTED_DEMO_INSTRUCTOR_USERNAME
+);
+const PROTECTED_DEMO_INSTRUCTOR_EMAILS = parseProtectedIdentitySet(
+    process.env.DEMO_PROTECTED_EMAILS,
+    DEFAULT_PROTECTED_DEMO_INSTRUCTOR_EMAIL
+);
+
+function isProtectedDemoInstructorIdentity({ username, email } = {}) {
+    const normalizedUsername = String(username || '').trim().toLowerCase();
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    return PROTECTED_DEMO_INSTRUCTOR_USERNAMES.has(normalizedUsername)
+        || PROTECTED_DEMO_INSTRUCTOR_EMAILS.has(normalizedEmail);
+}
+
+function isProtectedDemoInstructorAccount(user = {}, roleCodes = []) {
+    const hasInstructorRole = Array.isArray(roleCodes)
+        && roleCodes.some((code) => String(code || '').trim().toUpperCase() === 'INSTRUCTOR');
+    if (!hasInstructorRole) return false;
+    return isProtectedDemoInstructorIdentity({
+        username: user?.username,
+        email: user?.email,
+    });
+}
 
 function normalizeGroupCode(value) {
     return String(value || '').trim().toUpperCase();
@@ -314,7 +350,20 @@ export async function PUT(request) {
             ? normalizeGroupCodes(body.selectedGroups)
             : null;
         const organizationId = await ensureDefaultOrganization();
+        const targetUser = await prisma.user.findUnique({
+            where: { id },
+            select: { id: true, username: true, email: true },
+        });
+        if (!targetUser) {
+            return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        }
         const currentRoleCodes = await listUserRoleCodes(id, organizationId);
+        if (isProtectedDemoInstructorAccount(targetUser, currentRoleCodes)) {
+            return NextResponse.json(
+                { error: 'บัญชีผู้สอนเดโมถูกล็อก ไม่สามารถแก้ไขได้' },
+                { status: 403 }
+            );
+        }
         const fallbackRoleCode = normalizeEnterpriseRoleCode(currentRoleCodes[0] || 'LEARNER');
         const roleInput = String(body.role || '').trim() || fallbackRoleCode;
         const roleCode = await resolveRoleCodeFromSelectedGroups(selectedGroups, roleInput);
@@ -436,13 +485,28 @@ export async function PATCH(request) {
             return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 });
         }
 
+        const organizationId = await ensureDefaultOrganization();
+        const targetUser = await prisma.user.findUnique({
+            where: { id },
+            select: { id: true, username: true, email: true },
+        });
+        if (!targetUser) {
+            return NextResponse.json({ error: 'User not found' }, { status: 404 });
+        }
+        const targetRoleCodes = await listUserRoleCodes(id, organizationId);
+        if (isProtectedDemoInstructorAccount(targetUser, targetRoleCodes)) {
+            return NextResponse.json(
+                { error: 'บัญชีผู้สอนเดโมถูกล็อก ไม่สามารถรีเซ็ตรหัสผ่านได้' },
+                { status: 403 }
+            );
+        }
+
         const hashed = await hashPassword(password);
         await prisma.user.update({
             where: { id },
             data: { passwordHash: hashed },
         });
 
-        const organizationId = await ensureDefaultOrganization();
         await writeAdminAudit({
             organizationId,
             actorUserId: session.uid,
@@ -481,9 +545,18 @@ export async function DELETE(request) {
 
         const user = await prisma.user.findUnique({
             where: { id },
-            select: { id: true, status: true },
+            select: { id: true, username: true, email: true, status: true },
         });
         if (!user) return NextResponse.json({ error: 'User not found' }, { status: 404 });
+
+        const organizationId = await ensureDefaultOrganization();
+        const targetRoleCodes = await listUserRoleCodes(id, organizationId);
+        if (isProtectedDemoInstructorAccount(user, targetRoleCodes)) {
+            return NextResponse.json(
+                { error: 'บัญชีผู้สอนเดโมถูกล็อก ไม่สามารถลบได้' },
+                { status: 403 }
+            );
+        }
 
         if (String(user.status || '').toLowerCase() === 'active') {
             return NextResponse.json(
@@ -492,7 +565,6 @@ export async function DELETE(request) {
             );
         }
 
-        const organizationId = await ensureDefaultOrganization();
         const deletingUser = await prisma.user.findUnique({
             where: { id },
             include: { profile: true },
