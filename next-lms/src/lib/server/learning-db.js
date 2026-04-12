@@ -583,19 +583,19 @@ async function createXapiStatement({
     }
 
     if (contentId) {
-        const existingRegistration = await prisma.xapiRegistration.findUnique({
+        // iSpring/TinCan can emit several statements nearly at the same time on launch.
+        // Use an atomic upsert to avoid unique-key race on enrollmentId.
+        await prisma.xapiRegistration.upsert({
             where: { enrollmentId: enrollment.id },
-            select: { id: true },
+            update: {
+                content_id: String(contentId),
+            },
+            create: {
+                enrollmentId: enrollment.id,
+                registrationUuid: createRegistrationUuid(),
+                content_id: String(contentId),
+            },
         });
-        if (!existingRegistration) {
-            await prisma.xapiRegistration.create({
-                data: {
-                    enrollmentId: enrollment.id,
-                    registrationUuid: createRegistrationUuid(),
-                    content_id: String(contentId),
-                },
-            });
-        }
     }
 
     const resolvedStatementId = String(statementId || '').trim() || createRegistrationUuid();

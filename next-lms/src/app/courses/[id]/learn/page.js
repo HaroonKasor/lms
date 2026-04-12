@@ -1227,12 +1227,21 @@ export default function LearnPage() {
             areAssessmentActivitiesPassedFromStatuses &&
             (completedByActivities || completedByVerb || completedByPackage) &&
             isFinalActivity;
+        const hasFinalSlideCompletionFallback =
+            !hasAssessmentInActivities &&
+            isFinalActivity &&
+            safeActivityIndex >= 0;
 
         // Guard against instant false-positive completion on initial launch.
         const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
-        if (studiedSeconds < 10 && !hasStrongAssessmentCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
+        if (
+            studiedSeconds < 10 &&
+            !hasStrongAssessmentCompletionSignal &&
+            !hasTerminalAssessmentPassSignal &&
+            !hasFinalSlideCompletionFallback
+        ) return false;
 
-        if (!hasValidCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
+        if (!hasValidCompletionSignal && !hasTerminalAssessmentPassSignal && !hasFinalSlideCompletionFallback) return false;
         const requiresSuccessValidation =
             effectiveTinCanCondition !== 'all_completed'
             || requireAssessmentPass;
@@ -2600,11 +2609,13 @@ export default function LearnPage() {
         const frameWindow = iframeRef.current.contentWindow;
         if (!frameWindow) return -1;
         const preferInnerOnly = options?.preferInnerOnly === true;
+        let innerContentWindow = null;
 
         // TinCan wrapper keeps the real activity in its inner iframe (#contentFrame).
         // Prefer this source over currentPage because runtime page counters can be stale during transitions.
         try {
             const contentFrame = frameWindow.document?.getElementById('contentFrame');
+            innerContentWindow = contentFrame?.contentWindow || null;
             const innerSrc = contentFrame?.getAttribute('src') || contentFrame?.src || '';
             const inner = normalizeActivityPathKey(innerSrc);
             if (inner) {
@@ -2638,24 +2649,37 @@ export default function LearnPage() {
         // Fallback: runtime counters. Keep this last because wrappers can report selected page
         // before the actual activity iframe has navigated.
         try {
-            const runtimeRows = getTinCanRuntimeRows();
-            const runtimeDataReady = runtimeRows.length > 0;
-            const directIndex = Number(frameWindow.currentPage);
-            if (Number.isFinite(directIndex) && directIndex >= 0) {
-                const mapped = mapRuntimePageToActivityIndex(directIndex);
+            const toActivityIndexFromRuntimeCounter = (rawValue) => {
+                const numeric = Number(rawValue);
+                if (!Number.isFinite(numeric) || numeric < 0) return -1;
+                const whole = Math.floor(numeric);
+                const mapped = mapRuntimePageToActivityIndex(whole);
                 if (mapped >= 0) return mapped;
-                // Fallback for packages that expose currentPage before runtime map is ready.
-                if (!runtimeDataReady && directIndex < content.activities.length) {
-                    return Math.floor(directIndex);
-                }
-            }
 
-            const lastSeenIndex = Number(frameWindow.currentState?.lastSeenIndex);
-            if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
-                const mapped = mapRuntimePageToActivityIndex(lastSeenIndex);
-                if (mapped >= 0) return mapped;
-                if (!runtimeDataReady && lastSeenIndex < content.activities.length) {
-                    return Math.floor(lastSeenIndex);
+                // Some iSpring packages keep runtime counters valid but expose
+                // inconsistent path keys in tree/data maps. Use a safe in-range fallback.
+                if (whole >= 0 && whole < content.activities.length) {
+                    return whole;
+                }
+                const oneBased = whole - 1;
+                if (oneBased >= 0 && oneBased < content.activities.length) {
+                    return oneBased;
+                }
+                return -1;
+            };
+
+            const runtimeWindows = [frameWindow, innerContentWindow].filter(Boolean);
+            for (const runtimeWin of runtimeWindows) {
+                const directIndex = Number(runtimeWin?.currentPage);
+                if (Number.isFinite(directIndex) && directIndex >= 0) {
+                    const mapped = toActivityIndexFromRuntimeCounter(directIndex);
+                    if (mapped >= 0) return mapped;
+                }
+
+                const lastSeenIndex = Number(runtimeWin?.currentState?.lastSeenIndex);
+                if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
+                    const mapped = toActivityIndexFromRuntimeCounter(lastSeenIndex);
+                    if (mapped >= 0) return mapped;
                 }
             }
         } catch {
