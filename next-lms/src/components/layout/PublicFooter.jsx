@@ -55,6 +55,11 @@ export default function PublicFooter({ className = '' }) {
         }
     };
 
+    const openCookieSettings = () => {
+        if (typeof window === 'undefined') return;
+        window.dispatchEvent(new Event('open-cookie-settings'));
+    };
+
     return (
         <footer className={`w-full bg-[#052143] text-white relative z-20 ${className}`.trim()}>
             <div className="max-w-[1290px] mx-auto px-6 pt-16 pb-8">
@@ -98,7 +103,15 @@ export default function PublicFooter({ className = '' }) {
                             <ul className="space-y-3 text-white/60 text-[14px]">
                                 <li><a href="#" className="hover:text-white transition-colors">Terms of Service</a></li>
                                 <li><a href="#" className="hover:text-white transition-colors">Privacy Policy</a></li>
-                                <li><a href="#" className="hover:text-white transition-colors">Cookie Policy</a></li>
+                                <li>
+                                    <button
+                                        type="button"
+                                        onClick={openCookieSettings}
+                                        className="hover:text-white transition-colors"
+                                    >
+                                        Cookie Settings
+                                    </button>
+                                </li>
                                 <li><a href="#" className="hover:text-white transition-colors">FAQ</a></li>
                             </ul>
                         </div>
@@ -136,7 +149,13 @@ export default function PublicFooter({ className = '' }) {
                         <div className="flex gap-6 text-[13px] text-white/40">
                             <a href="#" className="hover:text-white transition-colors">Terms</a>
                             <a href="#" className="hover:text-white transition-colors">Privacy</a>
-                            <a href="#" className="hover:text-white transition-colors">Cookies</a>
+                            <button
+                                type="button"
+                                onClick={openCookieSettings}
+                                className="hover:text-white transition-colors"
+                            >
+                                Cookies
+                            </button>
                         </div>
                     </div>
                 </FadeIn>

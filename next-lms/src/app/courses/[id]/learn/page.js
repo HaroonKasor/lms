@@ -2040,10 +2040,23 @@ export default function LearnPage() {
             }
         }
 
+        // Guard against legacy web packages that report "completed" as soon as
+        // the iframe boots or when a single-page package marks its only page
+        // as attempted on load.
+        const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
+        if (studiedSeconds < 10) {
+            return false;
+        }
+
         return Boolean(
             completedByRuntime
             || completedByDataIndex
-            || (reachedLastPage && attemptedAllByDataIndex && hasAnyAttemptByDataIndex)
+            || (
+                safeTotalPages > 1
+                && reachedLastPage
+                && attemptedAllByDataIndex
+                && hasAnyAttemptByDataIndex
+            )
         );
     }, [getLegacyWebRuntimeWindows]);
 

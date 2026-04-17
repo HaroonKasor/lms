@@ -6,7 +6,8 @@ import { usePathname } from 'next/navigation';
 
 export default function Header() {
     const pathname = usePathname();
-    const [mobileOpen, setMobileOpen] = useState(false);
+    const [mobileOpenForPath, setMobileOpenForPath] = useState('');
+    const mobileOpen = mobileOpenForPath === pathname;
     const isActive = (path) => pathname === path;
     const navLinks = [
         { href: '/', label: 'Home' },
@@ -16,9 +17,10 @@ export default function Header() {
         { href: '/contact', label: 'Contact' },
     ];
 
-    useEffect(() => {
-        setMobileOpen(false);
-    }, [pathname]);
+    const closeMobileMenu = () => setMobileOpenForPath('');
+    const toggleMobileMenu = () => {
+        setMobileOpenForPath((value) => (value === pathname ? '' : pathname));
+    };
 
     return (
         <header className="sticky top-0 z-40 w-full border-b border-dashed border-[#CDD0CE] bg-white/90 backdrop-blur-sm">
@@ -84,7 +86,7 @@ export default function Header() {
                     </Link>
                     <button
                         type="button"
-                        onClick={() => setMobileOpen((value) => !value)}
+                        onClick={toggleMobileMenu}
                         className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[#D1E3FB] text-[#052143] hover:border-[#687EFF] hover:text-[#687EFF]"
                         aria-label="Toggle menu"
                     >
@@ -115,7 +117,7 @@ export default function Header() {
                             <Link
                                 key={`mobile-${item.href}`}
                                 href={item.href}
-                                onClick={() => setMobileOpen(false)}
+                                onClick={closeMobileMenu}
                                 className={`rounded-xl px-3 py-2 text-[15px] font-medium transition-colors ${
                                     isActive(item.href)
                                         ? 'bg-[#EEF2FF] text-[#687EFF]'
@@ -129,14 +131,14 @@ export default function Header() {
                     <div className="mt-3 grid grid-cols-2 gap-2">
                         <Link
                             href="/login"
-                            onClick={() => setMobileOpen(false)}
+                            onClick={closeMobileMenu}
                             className="inline-flex items-center justify-center rounded-xl border border-[#D1E3FB] px-3 py-2 text-[14px] font-medium text-[#052143]"
                         >
                             Log in
                         </Link>
                         <Link
                             href="/register"
-                            onClick={() => setMobileOpen(false)}
+                            onClick={closeMobileMenu}
                             className="inline-flex items-center justify-center rounded-xl bg-[#687EFF] px-3 py-2 text-[14px] font-semibold text-white"
                         >
                             Register
@@ -147,6 +149,3 @@ export default function Header() {
         </header>
     );
 }
-
-
-

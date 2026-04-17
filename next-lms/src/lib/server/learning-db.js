@@ -327,7 +327,6 @@ async function upsertLearningProgress({
     const safeScoreScaled = Number.isFinite(Number(scoreScaled)) ? Number(scoreScaled) : (existing?.scoreScaled ?? null);
     const explicitSuccess = typeof success === 'boolean' ? success : null;
     const explicitCompletion = typeof completion === 'boolean' ? completion : null;
-    const resolvedSuccess = explicitSuccess ?? (typeof existing?.success === 'boolean' ? existing.success : null);
 
     const shouldHonorNegativeSignals = incomingStatus !== 'completed';
     const hasExplicitFailureSignal =
@@ -359,6 +358,13 @@ async function upsertLearningProgress({
             : explicitCompletion === true
                 ? true
                 : (typeof existing?.completion === 'boolean' ? existing.completion : null);
+    const resolvedSuccess = nextStatus === 'completed'
+        ? true
+        : explicitSuccess === false
+            ? false
+            : explicitSuccess === true
+                ? true
+                : (typeof existing?.success === 'boolean' ? existing.success : null);
 
     const baseData = {
         enrollmentId: enrollment.id,

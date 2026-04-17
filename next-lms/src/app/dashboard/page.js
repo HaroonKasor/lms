@@ -79,10 +79,9 @@ export default function LearnerDashboard() {
     });
     const [enrollments, setEnrollments] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [user, setUser] = useState(null);
+    const [user] = useState(() => getUser());
 
     useEffect(() => {
-        setUser(getUser());
         const load = async () => {
             try {
                 const res = await fetch('/api/enrollments', { cache: 'no-store' });

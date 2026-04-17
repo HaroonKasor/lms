@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import {
     createSessionToken,
+    getCandidateCookieDomains,
     getLogoutMarkerCookieOptions,
     getSessionCookieOptions,
     LOGOUT_MARKER_COOKIE_NAME,
@@ -11,12 +12,46 @@ import {
 } from '@/lib/session';
 import { triggerEnrollmentExpiryReminderSweep } from '@/lib/server/enrollment-email-reminders';
 
-function clearSessionCookie(response) {
-    response.cookies.set(SESSION_COOKIE_NAME, '', {
+function clearSessionCookie(response, request) {
+    const base = {
         ...getSessionCookieOptions(0),
         maxAge: 0,
         expires: new Date(0),
+    };
+
+    response.cookies.set(SESSION_COOKIE_NAME, '', {
+        ...base,
+        domain: undefined,
     });
+
+    const domains = getCandidateCookieDomains(request);
+    for (const domain of domains) {
+        response.cookies.set(SESSION_COOKIE_NAME, '', {
+            ...base,
+            domain,
+        });
+    }
+}
+
+function clearLogoutMarkerCookie(response, request) {
+    const base = {
+        ...getLogoutMarkerCookieOptions(0),
+        maxAge: 0,
+        expires: new Date(0),
+    };
+
+    response.cookies.set(LOGOUT_MARKER_COOKIE_NAME, '', {
+        ...base,
+        domain: undefined,
+    });
+
+    const domains = getCandidateCookieDomains(request);
+    for (const domain of domains) {
+        response.cookies.set(LOGOUT_MARKER_COOKIE_NAME, '', {
+            ...base,
+            domain,
+        });
+    }
 }
 
 export async function POST(request) {
@@ -24,7 +59,7 @@ export async function POST(request) {
         const isLoggedOut = request.cookies.get(LOGOUT_MARKER_COOKIE_NAME)?.value === '1';
         if (isLoggedOut) {
             const response = NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-            clearSessionCookie(response);
+            clearSessionCookie(response, request);
             return response;
         }
 
@@ -46,11 +81,7 @@ export async function POST(request) {
         );
 
         const response = NextResponse.json({ success: true });
-        response.cookies.set(LOGOUT_MARKER_COOKIE_NAME, '', {
-            ...getLogoutMarkerCookieOptions(0),
-            maxAge: 0,
-            expires: new Date(0),
-        });
+        clearLogoutMarkerCookie(response, request);
         response.cookies.set(
             SESSION_COOKIE_NAME,
             refreshedToken,

@@ -124,6 +124,24 @@ export function getLogoutMarkerCookieOptions(maxAge = LOGOUT_MARKER_TTL_SECONDS)
     return options;
 }
 
+export function getCandidateCookieDomains(request) {
+    const host = String(request?.headers?.get('host') || '')
+        .trim()
+        .toLowerCase()
+        .replace(/:\d+$/, '');
+    if (!host) return [];
+    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return [];
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return [];
+
+    const labels = host.split('.').filter(Boolean);
+    const rootDomain = labels.length >= 2 ? labels.slice(-2).join('.') : host;
+    const values = [host, `.${host}`];
+    if (rootDomain && rootDomain !== host) {
+        values.push(rootDomain, `.${rootDomain}`);
+    }
+    return Array.from(new Set(values));
+}
+
 export async function createSessionToken(payload, options = {}) {
     const secret = options.secret || getSessionSecret();
     const now = Math.floor(Date.now() / 1000);

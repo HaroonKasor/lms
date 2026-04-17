@@ -106,6 +106,13 @@ function pickScoreProgressRow(progressRows = []) {
     return progressRows.find((row) => toScorePercentFromProgress(row) !== null) || null;
 }
 
+function toScorePercentFromQuizAttempt(attempt = null) {
+    const raw = toOptionalScoreNumber(attempt?.score);
+    if (raw === null) return null;
+    const normalized = raw <= 1 ? raw * 100 : raw;
+    return Math.max(0, Math.min(100, normalized));
+}
+
 function normalizeThumbnail(thumbnail) {
     const value = String(thumbnail || '').trim();
     if (!value) return '/course.png';
@@ -265,7 +272,8 @@ function normalizeEnrollmentCourse(
     compatMaps = {},
     contentById = new Map(),
     reviewSummaryByCourseId = {},
-    sectionSettingsBySectionId = {}
+    sectionSettingsBySectionId = {},
+    quizScoreByEnrollmentId = new Map()
 ) {
     if (!enrollment?.courses) return enrollment;
     const courseKey = String(enrollment.courses.id);
@@ -327,13 +335,27 @@ function normalizeEnrollmentCourse(
         : learningProgressRows;
     const latestProgressRow = (sectionProgressRows[0] || learningProgressRows[0] || null);
     const scoreProgressRow = pickScoreProgressRow(sectionProgressRows) || pickScoreProgressRow(learningProgressRows);
-    const scorePercent = toScorePercentFromProgress(scoreProgressRow);
+    const scorePercentFromProgress = toScorePercentFromProgress(scoreProgressRow);
+    const scorePercentFromQuiz = toOptionalScoreNumber(
+        quizScoreByEnrollmentId instanceof Map
+            ? quizScoreByEnrollmentId.get(Number(enrollment?.id || 0))
+            : null
+    );
+    const scorePercent = scorePercentFromProgress !== null
+        ? scorePercentFromProgress
+        : (scorePercentFromQuiz !== null ? Math.max(0, Math.min(100, scorePercentFromQuiz)) : null);
     const progressStatus = String(latestProgressRow?.status || '').toLowerCase();
     const progressPercent = Number(latestProgressRow?.progressPercent || 0);
+    const hasAssessmentEvidence = scorePercent !== null;
+    const hasExplicitFailureSignal =
+        progressStatus === 'failed'
+        || latestProgressRow?.completion === false
+        || (
+            latestProgressRow?.success === false
+            && (hasAssessmentEvidence || progressStatus === 'failed')
+        );
     const progressSaysFailed =
-        progressStatus === 'failed' ||
-        latestProgressRow?.success === false ||
-        latestProgressRow?.completion === false;
+        hasExplicitFailureSignal;
     const progressSaysCompleted =
         !progressSaysFailed &&
         progressStatus === 'completed' &&
@@ -1136,18 +1158,51 @@ export async function GET(request) {
         const collapsed = raw === '1' ? normalized : collapseEnrollmentsByCourse(normalized);
 
         const sectionIds = collectSectionIds(collapsed);
+        const enrollmentIds = collapsed
+            .map((enrollment) => Number(enrollment?.id || 0))
+            .filter((id) => Number.isInteger(id) && id > 0);
         const [contentById, reviewSummaryByCourseId, sectionCompatMaps] = await Promise.all([
             buildContentMapForEnrollments(collapsed, compatMaps),
             buildReviewSummaryByCourse(collapsed.map((enrollment) => enrollment?.courses?.id || enrollment?.courseId)),
             getSectionCompatMaps(sectionIds),
         ]);
+        const quizScoreByEnrollmentId = new Map();
+        if (enrollmentIds.length > 0) {
+            const quizAttempts = await prisma.quizAttempt.findMany({
+                where: {
+                    enrollmentId: { in: enrollmentIds },
+                },
+                select: {
+                    id: true,
+                    enrollmentId: true,
+                    attemptNo: true,
+                    submittedAt: true,
+                    score: true,
+                },
+                orderBy: [
+                    { enrollmentId: 'asc' },
+                    { submittedAt: 'desc' },
+                    { attemptNo: 'desc' },
+                    { id: 'desc' },
+                ],
+            });
+            for (const attempt of quizAttempts) {
+                const enrollmentId = Number(attempt?.enrollmentId || 0);
+                if (!Number.isInteger(enrollmentId) || enrollmentId <= 0) continue;
+                if (quizScoreByEnrollmentId.has(enrollmentId)) continue;
+                const scorePercent = toScorePercentFromQuizAttempt(attempt);
+                if (scorePercent === null) continue;
+                quizScoreByEnrollmentId.set(enrollmentId, Number(scorePercent.toFixed(2)));
+            }
+        }
         return NextResponse.json(
             collapsed.map((enrollment) => normalizeEnrollmentCourse(
                 enrollment,
                 compatMaps,
                 contentById,
                 reviewSummaryByCourseId,
-                sectionCompatMaps?.sectionSettingsBySectionId || {}
+                sectionCompatMaps?.sectionSettingsBySectionId || {},
+                quizScoreByEnrollmentId
             ))
         );
     } catch (err) {

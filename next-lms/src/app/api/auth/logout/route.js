@@ -1,29 +1,12 @@
 import { NextResponse } from 'next/server';
 import {
+    getCandidateCookieDomains,
     getLogoutMarkerCookieOptions,
     getSessionCookieOptions,
     LOGOUT_MARKER_COOKIE_NAME,
     LOGOUT_MARKER_TTL_SECONDS,
     SESSION_COOKIE_NAME,
 } from '@/lib/session';
-
-function getCandidateCookieDomains(request) {
-    const host = String(request?.headers?.get('host') || '')
-        .trim()
-        .toLowerCase()
-        .replace(/:\d+$/, '');
-    if (!host) return [];
-    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return [];
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return [];
-
-    const labels = host.split('.').filter(Boolean);
-    const rootDomain = labels.length >= 2 ? labels.slice(-2).join('.') : host;
-    const values = [host, `.${host}`];
-    if (rootDomain && rootDomain !== host) {
-        values.push(rootDomain, `.${rootDomain}`);
-    }
-    return Array.from(new Set(values));
-}
 
 function clearSessionCookie(response, request) {
     const base = {

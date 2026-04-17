@@ -3,6 +3,7 @@ import prisma from '@/lib/prisma';
 import { verifyPassword } from '@/lib/password';
 import {
     createSessionToken,
+    getCandidateCookieDomains,
     getLogoutMarkerCookieOptions,
     getSessionCookieOptions,
     LOGOUT_MARKER_COOKIE_NAME,
@@ -23,24 +24,6 @@ import {
 const LOGIN_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const LOGIN_MAX_ATTEMPTS = 10;
 const INVALID_CREDENTIALS_MESSAGE = 'Invalid username or password';
-
-function getCandidateCookieDomains(request) {
-    const host = String(request?.headers?.get('host') || '')
-        .trim()
-        .toLowerCase()
-        .replace(/:\d+$/, '');
-    if (!host) return [];
-    if (host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') return [];
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return [];
-
-    const labels = host.split('.').filter(Boolean);
-    const rootDomain = labels.length >= 2 ? labels.slice(-2).join('.') : host;
-    const values = [host, `.${host}`];
-    if (rootDomain && rootDomain !== host) {
-        values.push(rootDomain, `.${rootDomain}`);
-    }
-    return Array.from(new Set(values));
-}
 
 function clearLogoutMarkerCookie(response, request) {
     const base = {

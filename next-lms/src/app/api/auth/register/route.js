@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { hashPassword } from '@/lib/password';
 import {
+    getCandidateCookieDomains,
     getSessionCookieOptions,
     SESSION_COOKIE_NAME,
 } from '@/lib/session';
@@ -24,12 +25,25 @@ function splitName(fullName) {
     return { firstName, lastName };
 }
 
-function clearSessionCookie(response) {
-    response.cookies.set(SESSION_COOKIE_NAME, '', {
+function clearSessionCookie(response, request) {
+    const base = {
         ...getSessionCookieOptions(0),
         maxAge: 0,
         expires: new Date(0),
+    };
+
+    response.cookies.set(SESSION_COOKIE_NAME, '', {
+        ...base,
+        domain: undefined,
     });
+
+    const domains = getCandidateCookieDomains(request);
+    for (const domain of domains) {
+        response.cookies.set(SESSION_COOKIE_NAME, '', {
+            ...base,
+            domain,
+        });
+    }
 }
 
 /**
@@ -97,7 +111,7 @@ export async function POST(request) {
                 role: 'learner',
             },
         });
-        clearSessionCookie(response);
+        clearSessionCookie(response, request);
 
         // Best-effort email notification for successful registration.
         // Registration should still succeed even if SMTP is not configured or temporarily fails.
