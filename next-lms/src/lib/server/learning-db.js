@@ -666,18 +666,37 @@ async function createXapiStatement({
 
     if (contentId) {
         // iSpring/TinCan can emit several statements nearly at the same time on launch.
-        // Use an atomic upsert to avoid unique-key race on enrollmentId.
-        await prisma.xapiRegistration.upsert({
+        // Some environments still throw P2002 during upsert under concurrency, so we
+        // use update-then-create with P2002 fallback instead.
+        const normalizedContentId = String(contentId);
+        const updated = await prisma.xapiRegistration.updateMany({
             where: { enrollmentId: enrollment.id },
-            update: {
-                content_id: String(contentId),
-            },
-            create: {
-                enrollmentId: enrollment.id,
-                registrationUuid: createRegistrationUuid(),
-                content_id: String(contentId),
+            data: {
+                content_id: normalizedContentId,
             },
         });
+
+        if (Number(updated?.count || 0) === 0) {
+            try {
+                await prisma.xapiRegistration.create({
+                    data: {
+                        enrollmentId: enrollment.id,
+                        registrationUuid: createRegistrationUuid(),
+                        content_id: normalizedContentId,
+                    },
+                });
+            } catch (createErr) {
+                if (createErr?.code !== 'P2002') {
+                    throw createErr;
+                }
+                await prisma.xapiRegistration.updateMany({
+                    where: { enrollmentId: enrollment.id },
+                    data: {
+                        content_id: normalizedContentId,
+                    },
+                });
+            }
+        }
     }
 
     const resolvedStatementId = String(statementId || '').trim() || createRegistrationUuid();
