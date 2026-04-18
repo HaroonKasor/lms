@@ -113,6 +113,24 @@ function toScorePercentFromQuizAttempt(attempt = null) {
     return Math.max(0, Math.min(100, normalized));
 }
 
+function isProgressRowCompleted(row = null) {
+    if (!row || typeof row !== 'object') return false;
+    const status = String(row?.status || '').trim().toLowerCase();
+    if (status === 'failed') return false;
+    if (row?.success === false || row?.completion === false) return false;
+    if (status === 'completed') return true;
+    if (row?.completion === true) return true;
+    return false;
+}
+
+function toProgressAggregateValue(row = null) {
+    if (!row || typeof row !== 'object') return 0;
+    if (isProgressRowCompleted(row)) return 100;
+    const n = Number(row?.progressPercent || 0);
+    if (!Number.isFinite(n)) return 0;
+    return Math.max(0, Math.min(99, n));
+}
+
 function normalizeThumbnail(thumbnail) {
     const value = String(thumbnail || '').trim();
     if (!value) return '/course.png';
@@ -334,6 +352,32 @@ function normalizeEnrollmentCourse(
         ? learningProgressRows.filter((row) => Number(row?.sectionId || 0) === Number(selectedSectionId))
         : learningProgressRows;
     const latestProgressRow = (sectionProgressRows[0] || learningProgressRows[0] || null);
+    const progressBySectionId = new Map();
+    for (const row of learningProgressRows) {
+        const sectionId = Number(row?.sectionId || 0);
+        if (!Number.isInteger(sectionId) || sectionId <= 0) continue;
+        if (!progressBySectionId.has(sectionId)) {
+            progressBySectionId.set(sectionId, row);
+        }
+    }
+    const requiredSectionIds = (Array.isArray(availableSections) ? availableSections : [])
+        .filter((item) => item?.isActive !== false)
+        .map((item) => Number(item?.id || 0))
+        .filter((id) => Number.isInteger(id) && id > 0);
+    const fallbackRequiredSectionIds = requiredSectionIds.length > 0
+        ? requiredSectionIds
+        : Array.from(progressBySectionId.keys());
+    const hasMultipleRequiredSections = fallbackRequiredSectionIds.length > 1;
+    const allRequiredSectionsCompleted = hasMultipleRequiredSections
+        && fallbackRequiredSectionIds.every((sectionId) => isProgressRowCompleted(progressBySectionId.get(sectionId)));
+    const aggregateSectionProgress = fallbackRequiredSectionIds.length > 0
+        ? Math.round(
+            fallbackRequiredSectionIds.reduce(
+                (sum, sectionId) => sum + toProgressAggregateValue(progressBySectionId.get(sectionId)),
+                0
+            ) / fallbackRequiredSectionIds.length
+        )
+        : null;
     const scoreProgressRow = pickScoreProgressRow(sectionProgressRows) || pickScoreProgressRow(learningProgressRows);
     const scorePercentFromProgress = toScorePercentFromProgress(scoreProgressRow);
     const scorePercentFromQuiz = toOptionalScoreNumber(
@@ -358,12 +402,31 @@ function normalizeEnrollmentCourse(
         hasExplicitFailureSignal;
     const progressSaysCompleted =
         !progressSaysFailed &&
-        progressStatus === 'completed' &&
         (
-            latestProgressRow?.success === true ||
-            latestProgressRow?.completion === true ||
-            (Number.isFinite(progressPercent) && progressPercent >= 100)
+            hasMultipleRequiredSections
+                ? allRequiredSectionsCompleted
+                : (
+                    progressStatus === 'completed' &&
+                    (
+                        latestProgressRow?.success === true ||
+                        latestProgressRow?.completion === true ||
+                        (Number.isFinite(progressPercent) && progressPercent >= 100)
+                    )
+                )
         );
+    const enrollmentMarkedCompleted = String(enrollment?.status || '').trim().toLowerCase() === 'completed' || Boolean(enrollment?.completedAt);
+    const shouldDowngradeStaleCompletion =
+        hasMultipleRequiredSections &&
+        enrollmentMarkedCompleted &&
+        !allRequiredSectionsCompleted;
+    const normalizedInProgressPercent = Math.min(
+        99,
+        Math.max(
+            Number(aggregateSectionProgress ?? 0),
+            Number(enrollment.progressPercent || 0),
+            Number(latestProgressRow?.progressPercent || 0)
+        )
+    );
 
     const effectiveEnrollment = progressSaysCompleted
         ? {
@@ -372,6 +435,13 @@ function normalizeEnrollmentCourse(
             progressPercent: 100,
             completedAt: enrollment?.completedAt || enrollment?.lastActivityAt || new Date().toISOString(),
         }
+        : shouldDowngradeStaleCompletion
+            ? {
+                ...enrollment,
+                status: 'in_progress',
+                progressPercent: normalizedInProgressPercent,
+                completedAt: null,
+            }
         : enrollment;
 
     const legacyStatus = resolveLegacyStatus(effectiveEnrollment, compatMaps?.autoApproveByCourseId || {});
@@ -417,9 +487,13 @@ function normalizeEnrollmentCourse(
         progress: toProgressNumber(
             progressSaysCompleted
                 ? 100
-                : Math.max(
-                    Number(enrollment.progressPercent || 0),
-                    Number(latestProgressRow?.progressPercent || 0)
+                : Math.min(
+                    99,
+                    Math.max(
+                        Number(aggregateSectionProgress ?? 0),
+                        Number(effectiveEnrollment.progressPercent || 0),
+                        Number(latestProgressRow?.progressPercent || 0)
+                    )
                 )
         ),
         scoreRaw: scorePercent !== null ? Number(scorePercent.toFixed(2)) : null,
@@ -1127,7 +1201,7 @@ export async function GET(request) {
                             scoreScaled: true,
                         },
                         orderBy: { id: 'desc' },
-                        take: 10,
+                        take: 500,
                     },
                 },
                 orderBy: { enrolledAt: 'desc' },

@@ -1198,17 +1198,6 @@ export default function LearnPage() {
             : -1;
         const isFinalActivity = totalActivities <= 1 || (safeActivityIndex >= 0 && safeActivityIndex >= totalActivities - 1);
 
-        // Do not trust raw progress-only signals for finalization because some runtimes
-        // can report 100% too early (e.g. single-page packages on launch).
-        const completionSignalForMulti =
-            completedByPackage ||
-            completedByActivities ||
-            (completedByVerb && isFinalActivity);
-        const completionSignalForSingle =
-            completedByPackage ||
-            completedByActivities ||
-            completedByVerb;
-
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         const hasActivitySignals = activities.some((_, idx) => {
             const item = statuses[idx];
@@ -1299,6 +1288,17 @@ export default function LearnPage() {
             completionByCondition = allActivitiesCompleted && allActivitiesSuccess;
         }
 
+        // Do not trust raw progress-only signals for finalization because some runtimes
+        // can report completion too early (for example right after launch).
+        const completionSignalForMulti =
+            completedByActivities ||
+            (completedByVerb && isFinalActivity) ||
+            (completedByPackage && isFinalActivity);
+        const completionSignalForSingle =
+            completedByPackage ||
+            completedByActivities ||
+            completedByVerb;
+
         const hasRuntimeCompletionSignal = hasMultipleActivities ? completionSignalForMulti : completionSignalForSingle;
         const hasValidCompletionSignal = completionByCondition || hasRuntimeCompletionSignal;
         const assessmentIndexes = activities.reduce((acc, activity, idx) => {
@@ -1326,7 +1326,13 @@ export default function LearnPage() {
             hasMultipleActivities &&
             !hasAssessmentInActivities &&
             isFinalActivity &&
-            safeActivityIndex >= 0;
+            safeActivityIndex >= 0 &&
+            statuses.some((item) =>
+                isTruthyFlag(item?.attempted)
+                || isTruthyFlag(item?.completed)
+                || isTruthyFlag(item?.passed)
+                || isTruthyFlag(item?.quizzed)
+            );
 
         // Guard against instant false-positive completion on initial launch.
         const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
@@ -5811,12 +5817,11 @@ export default function LearnPage() {
         const maxUnlockedLessonIndex = isTinCanContent
             ? Math.max(0, Math.min(lessonItems.length - 1, getMaxUnlockedActivityIndex()))
             : Math.max(0, Math.min(lessonItems.length - 1, getMaxUnlockedWebPageIndex()));
-        const tinCanHasCompletionEvidence = isTinCanContent && (
-            (Array.isArray(tinCanActivityStatus) && tinCanActivityStatus.some((st) => Boolean(st?.completed || st?.passed)))
-            || (resumePositionIndex >= 0 && resumePositionIndex >= lessonItems.length - 1)
-        );
+        const tinCanAllLessonsCompleted = isTinCanContent
+            && lessonItems.length > 0
+            && lessonItems.every((lesson, index) => isTinCanLessonPassed(tinCanActivityStatus[index], lesson));
         const inferredCompletedThrough = isTinCanContent
-            ? (normalizedStatus === 'COMPLETED' && tinCanHasCompletionEvidence
+            ? (normalizedStatus === 'COMPLETED' && tinCanAllLessonsCompleted
                 ? lessonItems.length - 1
                 : -1)
             : (normalizedStatus === 'COMPLETED'
@@ -5827,7 +5832,7 @@ export default function LearnPage() {
             : [];
         const completedFlags = lessonItems.map((lesson, index) => {
             if (isTinCanContent) {
-                if (normalizedStatus === 'COMPLETED' && tinCanHasCompletionEvidence) return true;
+                if (normalizedStatus === 'COMPLETED' && tinCanAllLessonsCompleted) return true;
                 const st = tinCanActivityStatus[index];
                 const explicitCompleted = Boolean(st?.passed || st?.completed);
                 if (explicitCompleted) return true;
