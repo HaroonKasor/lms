@@ -3192,6 +3192,26 @@ export default function LearnPage() {
         }
 
         idx = Math.max(0, merged);
+
+        // Don't auto-resume into an assessment that hasn't been started.
+        // If localStorage/server saved an assessment position but the user never attempted it,
+        // fall back to the last content lesson to avoid skipping all lessons.
+        if (isAssessmentActivity(content.activities[idx])) {
+            const statuses = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
+            const st = statuses[idx];
+            const assessmentStarted = st && (
+                isTruthyFlag(st?.attempted) || isTruthyFlag(st?.passed) || isTruthyFlag(st?.completed)
+            );
+            if (!assessmentStarted) {
+                let lastContentIdx = 0;
+                for (let i = 0; i < content.activities.length; i++) {
+                    if (!isAssessmentActivity(content.activities[i])) lastContentIdx = i;
+                    else break;
+                }
+                idx = lastContentIdx;
+            }
+        }
+
         highestSeenActivityIndexRef.current = Math.max(Number(highestSeenActivityIndexRef.current || 0), idx);
 
         setSelectedActivityIndex(idx);
@@ -3210,7 +3230,7 @@ export default function LearnPage() {
         }
         // Keep TinCan wrapper loaded (shows TOC/sidebar), then jump chapter via goToPage.
         setIframeSrc(resolvePlayerSrc(content.entryPoint));
-    }, [content, readTincanResumePath, getActivityCandidatePathKeys, readTincanResumeIndex, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, resolvePlayerSrc]);
+    }, [content, readTincanResumePath, getActivityCandidatePathKeys, readTincanResumeIndex, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, resolvePlayerSrc, isAssessmentActivity]);
 
     useEffect(() => {
         if (!content) return;
