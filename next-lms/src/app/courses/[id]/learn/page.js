@@ -5424,8 +5424,15 @@ export default function LearnPage() {
                     : 0
             )
         );
-        return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
-    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity]);
+        // Content lessons (non-assessment) unlock the next lesson automatically once the user is on them.
+        // Assessments still require passing before unlocking the next activity.
+        const isCurrentAssessment = isAssessmentActivity(activities[selectedSafe]);
+        const contentStepAhead = !isCurrentAssessment
+            ? Math.min(activities.length - 1, selectedSafe + 1)
+            : selectedSafe;
+
+        return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected, contentStepAhead);
+    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
