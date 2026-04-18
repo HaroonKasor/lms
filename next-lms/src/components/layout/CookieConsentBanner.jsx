@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Cookie } from "lucide-react";
 import {
     COOKIE_CONSENT_COOKIE_NAME,
     COOKIE_CONSENT_ID_STORAGE_KEY,
@@ -200,9 +201,10 @@ export default function CookieConsentBanner() {
                                 <button
                                     type="button"
                                     onClick={() => setShowSettings(true)}
-                                    className="rounded-xl border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-700 transition hover:bg-indigo-50"
+                                    className="inline-flex items-center gap-2 rounded-xl border border-indigo-200 px-4 py-2 text-sm font-medium text-indigo-700 transition hover:bg-indigo-50"
                                 >
-                                    Cookie settings
+                                    <Cookie size={16} aria-hidden="true" />
+                                    <span>Cookie settings</span>
                                 </button>
                                 <button
                                     type="button"
@@ -230,9 +232,11 @@ export default function CookieConsentBanner() {
                 <button
                     type="button"
                     onClick={() => setShowSettings(true)}
-                    className="fixed bottom-4 left-4 z-[85] rounded-full border border-indigo-200 bg-white px-4 py-2 text-xs font-semibold text-indigo-700 shadow-[0_8px_24px_rgba(15,23,42,0.15)] transition hover:bg-indigo-50"
+                    aria-label="Cookie settings"
+                    title="Cookie settings"
+                    className="fixed bottom-4 left-4 z-[85] inline-flex h-11 w-11 items-center justify-center rounded-full border border-indigo-200 bg-white text-indigo-700 shadow-[0_8px_24px_rgba(15,23,42,0.15)] transition hover:bg-indigo-50"
                 >
-                    Cookie settings
+                    <Cookie size={18} aria-hidden="true" />
                 </button>
             ) : null}
 

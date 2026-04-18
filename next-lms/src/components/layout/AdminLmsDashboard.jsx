@@ -104,6 +104,7 @@ const baseMenuItems = [
             { name: 'Attempt report', path: '/admin-dashboard/report/attempt-report', matchPrefix: '/admin-dashboard/report/attempt-report' },
             { name: 'Examination Score', path: '/admin-dashboard/report/examination-score', matchPrefix: '/admin-dashboard/report/examination-score' },
             { name: 'Certificate Report', path: '/admin-dashboard/report/certificate-report', matchPrefix: '/admin-dashboard/report/certificate-report' },
+            { name: 'Cookie Consent', path: '/admin-dashboard/report/cookie-consent', matchPrefix: '/admin-dashboard/report/cookie-consent' },
             { name: 'AI Feedback', path: '/admin-dashboard/report/ai-feedback', matchPrefix: '/admin-dashboard/report/ai-feedback' },
             { name: 'AI Insight Weekly', path: '/admin-dashboard/report/ai-insight-weekly', matchPrefix: '/admin-dashboard/report/ai-insight-weekly' },
             { name: 'Chat Analytics', path: '/admin-dashboard/report/chat-analytics', matchPrefix: '/admin-dashboard/report/chat-analytics' },
@@ -208,7 +209,7 @@ export default function AdminLmsDashboard({ children }) {
                         const subItems = Array.isArray(item.subItems) ? item.subItems : [];
                         return {
                             ...item,
-                            subItems: subItems.filter((sub) => !['AI Feedback', 'AI Insight Weekly', 'Chat Analytics', 'Chat Knowledge Base'].includes(String(sub?.name || ''))),
+                            subItems: subItems.filter((sub) => !['AI Feedback', 'AI Insight Weekly', 'Chat Analytics', 'Chat Knowledge Base', 'Cookie Consent'].includes(String(sub?.name || ''))),
                         };
                     }
                     const subItems = Array.isArray(item.subItems) ? item.subItems : [];
@@ -562,7 +563,9 @@ export default function AdminLmsDashboard({ children }) {
                                                     <div className="flex items-start gap-4 w-full relative">
                                                         {/* Avatar */}
                                                         <div className="w-[56px] h-[56px] rounded-full border border-[#687EFF] p-[3px] shrink-0">
-                                                            <img src={act.img} alt={act.name} className="w-full h-full rounded-full object-cover" />
+                                                            <div className="w-full h-full overflow-hidden rounded-full bg-white">
+                                                                <img src={act.img} alt={act.name} className="block w-full h-full object-cover" />
+                                                            </div>
                                                         </div>
 
                                                         {/* Details */}

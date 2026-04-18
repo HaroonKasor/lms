@@ -712,7 +712,7 @@ export default function Navbar() {
                                 <img
                                     src={avatarUrl}
                                     alt={shortName}
-                                    className="w-[40px] h-[40px] rounded-full object-cover border border-[#052143]"
+                                    className="block w-[40px] h-[40px] rounded-full object-cover border border-[#052143]"
                                     onError={(event) => {
                                         const image = event.currentTarget;
                                         if (image.dataset.fallbackApplied === '1') return;
