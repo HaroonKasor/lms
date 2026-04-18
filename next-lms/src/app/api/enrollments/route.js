@@ -1226,7 +1226,7 @@ export async function PATCH(request) {
 
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);
         if (invalidBodyResponse) return invalidBodyResponse;
-        const { id, status, progress } = body;
+        const { id, status, progress, resetProgress } = body;
 
         if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
@@ -1271,10 +1271,12 @@ export async function PATCH(request) {
         const safeIncomingProgress = Number.isFinite(incomingProgress)
             ? Math.max(0, Math.min(100, incomingProgress))
             : undefined;
+        const isAdminReset = session.isAdmin && isTruthyFlag(resetProgress);
         const allowsCompletionDowngrade =
             incomingStatus === 'FAILED'
             || incomingStatus === 'PENDING'
-            || incomingStatus === 'CANCELLED';
+            || incomingStatus === 'CANCELLED'
+            || isAdminReset;
         const shouldPreserveCompleted =
             existingStatus === 'COMPLETED' &&
             !!incomingStatus &&
@@ -1329,6 +1331,23 @@ export async function PATCH(request) {
                 },
             },
         });
+
+        if (isAdminReset) {
+            await prisma.learning_progress.updateMany({
+                where: { enrollmentId },
+                data: {
+                    status: 'in_progress',
+                    progressPercent: 0,
+                    currentTime: 0,
+                    duration: 0,
+                    scoreRaw: null,
+                    scoreScaled: null,
+                    success: null,
+                    completion: null,
+                    completedAt: null,
+                },
+            });
+        }
 
         if (session.isAdmin && existingStatus === 'PENDING' && incomingStatus === 'APPROVED') {
             await createNotification({

@@ -238,6 +238,26 @@ export default function EnrollmentPage() {
     } finally { setUpdatingId(''); }
   };
 
+  const handleResetProgress = async (row) => {
+    const enrollmentId = Number(row?.id || 0);
+    if (!enrollmentId) return;
+    if (!window.confirm(`Reset progress for ${row?.username || 'this learner'}? This will clear all completion data and set status back to Learning.`)) return;
+    try {
+      setUpdatingId(`reset-${enrollmentId}`); setError(''); setSuccess('');
+      const res = await fetch('/api/enrollments', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: enrollmentId, status: 'LEARNING', resetProgress: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Reset failed');
+      setEnrollments((prev) => prev.map((item) => Number(item?.id || 0) === enrollmentId ? { ...item, status: 'LEARNING', progressPercent: 0 } : item));
+      setSuccess('Progress reset successfully');
+    } catch (err) {
+      setError(err?.message || 'Reset failed');
+    } finally { setUpdatingId(''); }
+  };
+
   const inputCls = 'h-[42px] w-full rounded-xl border border-[#DDE4FF] bg-white px-3 text-[14px] text-[#1E293B] outline-none focus:border-[#687EFF] focus:ring-2 focus:ring-[#687EFF]/20 transition';
 
   return (
@@ -427,7 +447,8 @@ export default function EnrollmentPage() {
                     const learner = row?.learner || {};
                     const course = row?.course || {};
                     const isPending = toSafeString(row?.status).toUpperCase() === 'PENDING';
-                    const isUpdating = String(updatingId) === String(row?.id || '');
+                    const isResetting = String(updatingId) === `reset-${row?.id || ''}`;
+                    const isUpdating = String(updatingId) === String(row?.id || '') || isResetting;
                     return (
                       <tr key={row.id} className="border-t border-[#F1F5F9] hover:bg-[#FAFBFF] transition-colors">
                         <td className="px-4 py-3 text-[#94A3B8]">{(page - 1) * entries + idx + 1}</td>
@@ -447,15 +468,20 @@ export default function EnrollmentPage() {
                         </td>
                         <td className="px-4 py-3 text-[#64748B] whitespace-nowrap">{formatDateTime(row?.enrolledAt)}</td>
                         <td className="px-4 py-3 text-center">
-                          {isPending ? (
-                            <button type="button" disabled={isUpdating} onClick={() => handleApprove(row)}
-                              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white transition-all disabled:opacity-60"
-                              style={{ background: '#687EFF' }}>
-                              {isUpdating ? 'Approving...' : <><svg width="12" height="12" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Approve</>}
+                          <div className="flex items-center justify-center gap-2 flex-wrap">
+                            {isPending && (
+                              <button type="button" disabled={isUpdating} onClick={() => handleApprove(row)}
+                                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold text-white transition-all disabled:opacity-60"
+                                style={{ background: '#687EFF' }}>
+                                {isUpdating && !isResetting ? 'Approving...' : <><svg width="12" height="12" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Approve</>}
+                              </button>
+                            )}
+                            <button type="button" disabled={isUpdating} onClick={() => handleResetProgress({ ...row, username: learner?.username || learner?.email })}
+                              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition-all disabled:opacity-60"
+                              style={{ background: '#FFF1F2', color: '#E11D48', border: '1px solid #FECDD3' }}>
+                              {isResetting ? 'Resetting...' : <><svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg> Reset</>}
                             </button>
-                          ) : (
-                            <span className="text-[#CBD5E1] text-[18px]">—</span>
-                          )}
+                          </div>
                         </td>
                       </tr>
                     );
