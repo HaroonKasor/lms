@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { usePathname } from "next/navigation";
 import { getChatSessionId, getUser } from "@/lib/auth";
+import { Sparkles } from "lucide-react";
 
 const DEFAULT_QUICK_ACTIONS = [
     { label: "Summarize this page", prompt: "Summarize this page", context: { intent: "course_detail" } },
@@ -693,7 +694,7 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
                     <div className="flex flex-col h-full">
                         <div className="flex-1 flex flex-col items-center justify-center text-center px-4">
                             <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-violet-100 to-violet-200 flex items-center justify-center mb-4 text-violet-500 text-xl">
-                                ✦
+                                <Sparkles size={22} className="text-violet-500" aria-hidden="true" />
                             </div>
                             <h3 className="text-sm font-semibold text-gray-700 mb-1">How can I help?</h3>
                             <p className="text-xs text-gray-400 leading-relaxed">

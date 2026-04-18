@@ -338,6 +338,7 @@ export default function LearnPage() {
     const trackedStudyTickAtRef = useRef(0);
     const lastUserInteractionAtRef = useRef(0);
     const iframeInteractionCleanupRef = useRef(null);
+    const tinCanLocalAttemptRef = useRef({ idx: null, at: 0 });
     const iframeDeferredSyncTimeoutRef = useRef(null);
     const innerFrameLoadCleanupRef = useRef(null);
     const playerReflowTimeoutsRef = useRef([]);
@@ -556,6 +557,22 @@ export default function LearnPage() {
         }
         return Array.from(new Set(keys));
     }, [progressContentId, course?.id, routeId, scopedStorageSuffixes]);
+    const tincanStatusStorageKeys = useMemo(() => {
+        const values = [
+            String(progressContentId || '').trim(),
+            String(course?.id || '').trim(),
+            String(routeId || '').trim(),
+        ].filter(Boolean);
+
+        const uniqueValues = Array.from(new Set(values));
+        const keys = [];
+        for (const value of uniqueValues) {
+            for (const suffix of scopedStorageSuffixes) {
+                keys.push(`lms_tincan_status:${value}${suffix}`);
+            }
+        }
+        return Array.from(new Set(keys));
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffixes]);
     const webResumeStorageKeys = useMemo(() => {
         const values = [
             String(progressContentId || '').trim(),
@@ -624,6 +641,38 @@ export default function LearnPage() {
             return null;
         }
     }, [content, tincanResumeStorageKeys]);
+
+    const persistTincanStatusSnapshot = useCallback((statuses) => {
+        if (!content || content.type !== 'tincan') return;
+        if (!Array.isArray(tincanStatusStorageKeys) || tincanStatusStorageKeys.length === 0) return;
+        if (!Array.isArray(statuses)) return;
+        try {
+            const serialized = JSON.stringify(statuses);
+            for (const key of tincanStatusStorageKeys) {
+                localStorage.setItem(key, serialized);
+            }
+        } catch {
+            // ignore storage errors
+        }
+    }, [content, tincanStatusStorageKeys]);
+
+    const readTincanStatusSnapshot = useCallback(() => {
+        if (!content || content.type !== 'tincan') return null;
+        if (!Array.isArray(tincanStatusStorageKeys) || tincanStatusStorageKeys.length === 0) return null;
+        try {
+            for (const key of tincanStatusStorageKeys) {
+                const raw = localStorage.getItem(key);
+                if (!raw) continue;
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed) && parsed.length > 0) {
+                    return parsed;
+                }
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }, [content, tincanStatusStorageKeys]);
 
     const normalizeActivityPathKey = useCallback((value = '') => {
         const raw = String(value || '').trim();
@@ -1025,6 +1074,50 @@ export default function LearnPage() {
         }
         return false;
     }, [isAssessmentActivity, isTinCanLessonPassed]);
+
+    const ensureTinCanLocalAttempted = useCallback((rawIndex) => {
+        if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
+        if (!chapterLockEnabled) return;
+        if (!resumeLoaded) return;
+
+        const idx = Math.max(0, Math.min(content.activities.length - 1, Math.floor(Number(rawIndex) || 0)));
+        const activity = content.activities[idx];
+        if (isAssessmentActivity(activity)) return;
+
+        const statuses = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
+        const current = statuses[idx];
+        if (isTinCanLessonClearedForAdvance(current, activity)) return;
+
+        const now = Date.now();
+        const gate = tinCanLocalAttemptRef.current || { idx: null, at: 0 };
+        if (Number(gate.idx) === idx && now - Number(gate.at || 0) < 1500) return;
+        tinCanLocalAttemptRef.current = { idx, at: now };
+
+        const total = Math.max(0, Number(content.activities.length || 0));
+        const next = Array.from({ length: total }, (_, index) => {
+            const item = statuses[index];
+            return item && typeof item === 'object' ? { ...item } : null;
+        });
+        const existing = next[idx] && typeof next[idx] === 'object' ? next[idx] : {};
+        next[idx] = {
+            ...existing,
+            attempted: true,
+            status: String(existing?.status || '').trim() || 'learning',
+        };
+
+        const sig = JSON.stringify(next);
+        tinCanActivityStatusRef.current = next;
+        lastTinCanStatusSigRef.current = sig;
+        setTinCanActivityStatus(next);
+        persistTincanStatusSnapshot(next);
+    }, [
+        content,
+        chapterLockEnabled,
+        resumeLoaded,
+        isAssessmentActivity,
+        isTinCanLessonClearedForAdvance,
+        persistTincanStatusSnapshot,
+    ]);
 
     const hasAssessmentActivities = useMemo(() => {
         if (content?.type !== 'tincan' || !Array.isArray(content?.activities)) return false;
@@ -2804,7 +2897,7 @@ export default function LearnPage() {
                     );
                 const derivedCompletion = (isAssessment ? markedPass : markedComplete)
                     ? true
-                    : (hasFailStatus && hasAttemptSignal ? false : null);
+                    : (hasFailStatus && isTruthyFlag(row?.attempted) ? false : null);
                 return {
                     attempted: isTruthyFlag(row?.attempted),
                     completed: isAssessment ? markedPass : markedComplete,
@@ -3139,6 +3232,7 @@ export default function LearnPage() {
         completionLockRef.current = false;
         resumeGuardUntilRef.current = 0;
         manualSelectionRef.current = { target: null, until: 0 };
+        tinCanLocalAttemptRef.current = { idx: null, at: 0 };
         const persistedResumeIndex = content.type === 'tincan'
             ? readTincanResumeIndex()
             : null;
@@ -3150,6 +3244,19 @@ export default function LearnPage() {
         trackedStudyTickAtRef.current = 0;
         lastUserInteractionAtRef.current = Date.now();
         if (content.type === 'tincan' && content.activities?.length > 0) {
+            const storedStatuses = readTincanStatusSnapshot();
+            if (Array.isArray(storedStatuses) && storedStatuses.length > 0) {
+                const total = Math.max(0, Number(content.activities.length || 0));
+                const normalized = Array.from({ length: total }, (_, index) => {
+                    const item = storedStatuses[index];
+                    return item && typeof item === 'object' ? { ...item } : null;
+                });
+                const sig = JSON.stringify(normalized);
+                tinCanActivityStatusRef.current = normalized;
+                lastTinCanStatusSigRef.current = sig;
+                setTinCanActivityStatus(normalized);
+            }
+
             const maxIndex = Math.max(0, content.activities.length - 1);
             const initialResumeIndex = Math.max(0, Math.min(maxIndex, safePersistedResumeIndex));
             setSelectedActivityIndex(initialResumeIndex);
@@ -3159,13 +3266,18 @@ export default function LearnPage() {
             return;
         }
         setIframeSrc(resolvePlayerSrc(content.entryPoint));
-    }, [content, resolvePlayerSrc, clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync, readTincanResumeIndex]);
+    }, [content, resolvePlayerSrc, clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync, readTincanResumeIndex, readTincanStatusSnapshot]);
 
     useEffect(() => {
         if (!content || content.type !== 'tincan' || !resumeLoaded) return;
-        if (!resumeLoaded) return;
         applyTincanResumeToIframe();
     }, [content, selectedActivityIndex, resumeLoaded, applyTincanResumeToIframe]);
+
+    useEffect(() => {
+        if (!isLaunchMode || !content || content.type !== 'tincan') return;
+        if (!resumeLoaded) return;
+        ensureTinCanLocalAttempted(selectedActivityIndex);
+    }, [isLaunchMode, content, resumeLoaded, selectedActivityIndex, ensureTinCanLocalAttempted]);
 
     useEffect(() => {
         if (!content || content.type !== 'web' || !resumeLoaded) return;
@@ -5679,7 +5791,7 @@ export default function LearnPage() {
         const inferredCompletedThrough = isTinCanContent
             ? (normalizedStatus === 'COMPLETED' && tinCanHasCompletionEvidence
                 ? lessonItems.length - 1
-                : Math.max(-1, Math.min(lessonItems.length - 1, Math.max(resumePositionIndex, selectedLessonIndex - 1))))
+                : -1)
             : (normalizedStatus === 'COMPLETED'
                 ? lessonItems.length - 1
                 : Math.max(-1, Math.min(lessonItems.length - 1, selectedLessonIndex - 1)));
@@ -5688,12 +5800,10 @@ export default function LearnPage() {
             : [];
         const completedFlags = lessonItems.map((lesson, index) => {
             if (isTinCanContent) {
+                if (normalizedStatus === 'COMPLETED' && tinCanHasCompletionEvidence) return true;
                 const st = tinCanActivityStatus[index];
                 const explicitCompleted = Boolean(st?.passed || st?.completed);
                 if (explicitCompleted) return true;
-                if (!isAssessmentActivity(lesson) && index <= inferredCompletedThrough) {
-                    return true;
-                }
                 return false;
             }
             const st = webStatusSnapshot[index];
