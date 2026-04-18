@@ -1227,7 +1227,10 @@ export default function LearnPage() {
             areAssessmentActivitiesPassedFromStatuses &&
             (completedByActivities || completedByVerb || completedByPackage) &&
             isFinalActivity;
+        // "Final slide" heuristics are only meaningful when the package exposes multiple activities/pages.
+        // Single-activity packages would otherwise be marked complete immediately on launch.
         const hasFinalSlideCompletionFallback =
+            hasMultipleActivities &&
             !hasAssessmentInActivities &&
             isFinalActivity &&
             safeActivityIndex >= 0;
@@ -1237,8 +1240,7 @@ export default function LearnPage() {
         if (
             studiedSeconds < 10 &&
             !hasStrongAssessmentCompletionSignal &&
-            !hasTerminalAssessmentPassSignal &&
-            !hasFinalSlideCompletionFallback
+            !hasTerminalAssessmentPassSignal
         ) return false;
 
         if (!hasValidCompletionSignal && !hasTerminalAssessmentPassSignal && !hasFinalSlideCompletionFallback) return false;
