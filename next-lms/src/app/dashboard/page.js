@@ -66,6 +66,28 @@ function getContinueCardDate(enrollment) {
     );
 }
 
+function resolveLaunchSectionId(enrollment = null) {
+    const status = String(enrollment?.status || '').toUpperCase();
+    const progress = Number(enrollment?.progress || 0);
+    const hasStarted = status === 'LEARNING' || status === 'COMPLETED' || progress > 0;
+    const sections = Array.isArray(enrollment?.course?.sections)
+        ? [...enrollment.course.sections].sort((a, b) => {
+            const aOrder = Number(a?.orderNo || 0);
+            const bOrder = Number(b?.orderNo || 0);
+            if (aOrder !== bOrder) return aOrder - bOrder;
+            return Number(a?.id || 0) - Number(b?.id || 0);
+        })
+        : [];
+    const firstActiveId = Number(
+        sections.find((item) => item?.isActive !== false)?.id
+        || sections[0]?.id
+        || 0
+    );
+    const preferredId = Number(enrollment?.sectionId || enrollment?.section?.id || 0);
+    if (!hasStarted) return firstActiveId;
+    return preferredId > 0 ? preferredId : firstActiveId;
+}
+
 function formatCalendarLabel(value) {
     const date = value instanceof Date ? value : toDateOnly(value);
     if (!date) return '-';
@@ -111,7 +133,7 @@ export default function LearnerDashboard() {
 
     // Continue learning: first enrollment that is LEARNING or APPROVED
     const continueCourse = enrollments.find(e => ['APPROVED', 'LEARNING'].includes(e.status));
-    const continueSectionId = Number(continueCourse?.sectionId || continueCourse?.section?.id || 0);
+    const continueSectionId = resolveLaunchSectionId(continueCourse);
     const continueLearnHref = continueSectionId > 0
         ? `/courses/${continueCourse?.course?.id}/learn?launch=1&sectionId=${continueSectionId}`
         : `/courses/${continueCourse?.course?.id}/learn?launch=1`;

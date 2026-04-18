@@ -25,6 +25,31 @@ function normalizeEnrollmentStatus(status) {
     return String(status || '').trim().toUpperCase();
 }
 
+function resolveLaunchSectionIdForEnrollment(enrollment = null, fallbackSections = []) {
+    const normalizedStatus = normalizeEnrollmentStatus(enrollment?.status);
+    const safeProgress = Number(enrollment?.progress ?? enrollment?.progressPercent ?? 0);
+    const hasStarted = normalizedStatus === 'LEARNING'
+        || normalizedStatus === 'COMPLETED'
+        || (Number.isFinite(safeProgress) && safeProgress > 0);
+    const sections = Array.isArray(fallbackSections) && fallbackSections.length > 0
+        ? fallbackSections
+        : (Array.isArray(enrollment?.course?.sections) ? enrollment.course.sections : []);
+    const sortedSections = [...sections].sort((a, b) => {
+        const aOrder = Number(a?.orderNo || 0);
+        const bOrder = Number(b?.orderNo || 0);
+        if (aOrder !== bOrder) return aOrder - bOrder;
+        return Number(a?.id || 0) - Number(b?.id || 0);
+    });
+    const firstActiveSectionId = Number(
+        sortedSections.find((item) => item?.isActive !== false)?.id
+        || sortedSections[0]?.id
+        || 0
+    );
+    const preferredSectionId = Number(enrollment?.section?.id || enrollment?.sectionId || 0);
+    if (!hasStarted) return firstActiveSectionId;
+    return preferredSectionId > 0 ? preferredSectionId : firstActiveSectionId;
+}
+
 function toCourseKey(value) {
     if (value === undefined || value === null) return null;
     const asNumber = Number(value);
@@ -323,10 +348,9 @@ export default function UserCoursesView() {
 
             const enrolledStatus = normalizeEnrollmentStatus(nextEnrollment?.status);
             const courseId = Number(courseItem?.course?.id || 0);
-            const sectionId = Number(
-                nextEnrollment?.section?.id
-                || nextEnrollment?.sectionId
-                || 0
+            const sectionId = resolveLaunchSectionIdForEnrollment(
+                nextEnrollment,
+                Array.isArray(courseItem?.course?.sections) ? courseItem.course.sections : []
             );
             const learnHref = sectionId > 0
                 ? `/courses/${courseId}/learn?launch=1&sectionId=${sectionId}`
@@ -482,9 +506,9 @@ export default function UserCoursesView() {
                                 const averageRatingText = reviewCount > 0 && Number.isFinite(averageRating)
                                     ? averageRating.toFixed(1)
                                     : '0.0';
-                                const learnSectionId = Number(
-                                    item?.enrollment?.section?.id
-                                    || 0
+                                const learnSectionId = resolveLaunchSectionIdForEnrollment(
+                                    item?.enrollment,
+                                    Array.isArray(course?.sections) ? course.sections : []
                                 );
                                 const learnHref = learnSectionId > 0
                                     ? `/courses/${course.id}/learn?launch=1&sectionId=${learnSectionId}`

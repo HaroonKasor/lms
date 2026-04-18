@@ -64,17 +64,13 @@ function resolveEnrollmentSectionId({
     explicitSectionId = null,
     learningProgressRows = [],
     availableSections = [],
+    preferProgressRows = false,
 } = {}) {
     const sectionIds = new Set(
         (Array.isArray(availableSections) ? availableSections : [])
             .map((section) => toValidSectionId(section?.id))
             .filter(Boolean)
     );
-
-    const directSectionId = toValidSectionId(explicitSectionId);
-    if (directSectionId && (sectionIds.size === 0 || sectionIds.has(directSectionId))) {
-        return directSectionId;
-    }
 
     const normalizedProgressRows = (Array.isArray(learningProgressRows) ? learningProgressRows : [])
         .map((row) => ({
@@ -89,6 +85,15 @@ function resolveEnrollmentSectionId({
             if (b.progress !== a.progress) return b.progress - a.progress;
             return b.id - a.id;
         });
+
+    if (preferProgressRows && normalizedProgressRows.length > 0) {
+        return normalizedProgressRows[0].sectionId;
+    }
+
+    const directSectionId = toValidSectionId(explicitSectionId);
+    if (directSectionId && (sectionIds.size === 0 || sectionIds.has(directSectionId))) {
+        return directSectionId;
+    }
 
     if (normalizedProgressRows.length > 0) {
         return normalizedProgressRows[0].sectionId;

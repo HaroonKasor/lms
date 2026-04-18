@@ -95,7 +95,26 @@ function EnrollmentCard({ enrollment }) {
     const isCompleted = enrollment.status === 'COMPLETED';
     const isLearning = ['APPROVED', 'LEARNING'].includes(enrollment.status);
     const hasQuiz = course?.quizzes?.length > 0;
-    const learnSectionId = Number(section?.id || 0);
+    const sortedSections = Array.isArray(course?.sections)
+        ? [...course.sections].sort((a, b) => {
+            const aOrder = Number(a?.orderNo || 0);
+            const bOrder = Number(b?.orderNo || 0);
+            if (aOrder !== bOrder) return aOrder - bOrder;
+            return Number(a?.id || 0) - Number(b?.id || 0);
+        })
+        : [];
+    const firstActiveSectionId = Number(
+        sortedSections.find((item) => item?.isActive !== false)?.id
+        || sortedSections[0]?.id
+        || 0
+    );
+    const preferredSectionId = Number(enrollment?.sectionId || section?.id || 0);
+    const currentStatus = String(enrollment?.status || '').toUpperCase();
+    const currentProgress = Number(enrollment?.progress || 0);
+    const hasStarted = currentStatus === 'LEARNING' || currentStatus === 'COMPLETED' || currentProgress > 0;
+    const learnSectionId = hasStarted
+        ? (preferredSectionId > 0 ? preferredSectionId : firstActiveSectionId)
+        : firstActiveSectionId;
     const learnHref = learnSectionId > 0
         ? `/courses/${course?.id}/learn?launch=1&sectionId=${learnSectionId}`
         : `/courses/${course?.id}/learn?launch=1`;

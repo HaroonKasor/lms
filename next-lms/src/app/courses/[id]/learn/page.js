@@ -293,6 +293,7 @@ export default function LearnPage() {
     const [selectedActivityIndex, setSelectedActivityIndex] = useState(0);
     const [activeSectionId, setActiveSectionId] = useState(null);
     const [cohortModuleEnabled, setCohortModuleEnabled] = useState(false);
+    const [allowLocalResumeFallback, setAllowLocalResumeFallback] = useState(false);
     const [iframeSrc, setIframeSrc] = useState('');
     const [isTinCanFrameReady, setIsTinCanFrameReady] = useState(false);
     const [tinCanActivityStatus, setTinCanActivityStatus] = useState([]);
@@ -1816,7 +1817,13 @@ export default function LearnPage() {
 
                 const applyAssessmentPassFromAlert = (percentValue = null, passedOverride = null) => {
                     const safeCurrentPage = readRuntimeCurrentPage();
-                    const candidates = [safeCurrentPage, safeCurrentPage - 1, safeCurrentPage + 1];
+                    const resolveBestRuntimeRowIndex = () => {
+                        const hasRowAt = (idx) => Number.isInteger(idx) && idx >= 0 && Array.isArray(dataIndex) && Boolean(dataIndex[idx]);
+                        if (hasRowAt(safeCurrentPage)) return safeCurrentPage;
+                        if (hasRowAt(safeCurrentPage - 1)) return safeCurrentPage - 1;
+                        return safeCurrentPage;
+                    };
+                    const targetRowIndex = resolveBestRuntimeRowIndex();
                     const scorePercent = Number.isFinite(Number(percentValue))
                         ? Math.max(0, Math.min(100, Number(percentValue)))
                         : null;
@@ -1825,15 +1832,12 @@ export default function LearnPage() {
                         ? explicitPassed
                         : scorePercent === null ? true : scorePercent >= 80;
 
-                    for (const idx of candidates) {
-                        if (!Number.isFinite(idx) || idx < 0) continue;
-                        const treeRow = Array.isArray(treeArray) ? treeArray[idx] : null;
-                        const dataRow = Array.isArray(dataIndex) ? dataIndex[idx] : null;
-                        ensureRow(treeArray, idx, dataRow);
-                        ensureRow(dataIndex, idx, treeRow);
-                        const row = dataIndex[idx];
-                        if (!row || typeof row !== 'object') continue;
-
+                    const treeRow = Array.isArray(treeArray) ? treeArray[targetRowIndex] : null;
+                    const dataRow = Array.isArray(dataIndex) ? dataIndex[targetRowIndex] : null;
+                    ensureRow(treeArray, targetRowIndex, dataRow);
+                    ensureRow(dataIndex, targetRowIndex, treeRow);
+                    const row = dataIndex[targetRowIndex];
+                    if (row && typeof row === 'object') {
                         row.attempted = true;
                         row.quizzed = true;
                         row.completed = true;
@@ -1853,11 +1857,6 @@ export default function LearnPage() {
                             row.scoreMax = 100;
                             row.maxScore = 100;
                         }
-                    }
-
-                    if (passByPercent) {
-                        currentState.completed = true;
-                        currentState.completion = true;
                     }
                     const safeLastSeen = Number(currentState.lastSeenIndex);
                     if (!Number.isFinite(safeLastSeen) || safeCurrentPage > safeLastSeen) {
@@ -1916,17 +1915,6 @@ export default function LearnPage() {
                 wrapRuntimeFunctionSafely('sendCurrentPagePassedStatement', (args) => {
                     const percentValue = coercePercentFromScoreArgs(args?.[1], args?.[2], args?.[3]);
                     applyAssessmentPassFromAlert(percentValue, args?.[0] === true);
-                });
-                wrapRuntimeFunctionSafely('sendExperiencedStatement', () => {
-                    const pageIndex = readRuntimeCurrentPage();
-                    const row = Array.isArray(dataIndex) ? dataIndex[pageIndex] : null;
-                    const scoreRow = Array.isArray(row?.score) ? row.score[0] : null;
-                    const percentValue = coercePercentFromScoreArgs(
-                        scoreRow?.raw ?? row?.scoreRaw ?? row?.rawScore ?? row?.score,
-                        scoreRow?.total ?? row?.scoreMax ?? row?.maxScore ?? row?.totalScore,
-                        scoreRow?.percent ?? row?.scorePercent ?? row?.scaledScore ?? row?.scoreScaled
-                    );
-                    applyAssessmentPassFromAlert(percentValue, true);
                 });
                 wrapRuntimeFunctionSafely('setCurrentPageStatus');
                 wrapRuntimeFunctionSafely('setCurrentPageAttempted');
@@ -3139,14 +3127,14 @@ export default function LearnPage() {
         }, 250);
     }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug, detectActivityIndexFromIframe, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, hardenTinCanRuntimeWindow, resolveActivityUrl, normalizeActivityPathKey]);
 
-    const restoreTincanPositionFromProgress = useCallback((entry) => {
+    const restoreTincanPositionFromProgress = useCallback((entry, { allowLocalFallback = true } = {}) => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
 
         const total = content.activities.length;
         let idx = 0;
         let resolvedFromProgress = false;
 
-        const savedPathKey = readTincanResumePath();
+        const savedPathKey = allowLocalFallback ? readTincanResumePath() : '';
         const idxFromSavedPath = savedPathKey
             ? content.activities.findIndex((activity) => {
                 const candidateKeys = getActivityCandidatePathKeys(activity);
@@ -3177,22 +3165,22 @@ export default function LearnPage() {
         }
 
         // Source 2: local resume chapter saved from iframe navigation.
-        const savedIdx = readTincanResumeIndex();
+        const savedIdx = allowLocalFallback ? readTincanResumeIndex() : null;
         const idxFromSaved = Number.isFinite(savedIdx) && savedIdx >= 0 && savedIdx < total
             ? Math.floor(savedIdx)
             : -1;
-        const idxFromHighestSeen = Number.isFinite(Number(highestSeenActivityIndexRef.current))
+        const idxFromHighestSeen = allowLocalFallback && Number.isFinite(Number(highestSeenActivityIndexRef.current))
             ? Math.max(0, Math.min(total - 1, Math.floor(Number(highestSeenActivityIndexRef.current))))
             : -1;
 
         // Merge server/local resume safely:
         // prefer the furthest locally-known lesson to avoid stale server row resetting learner to chapter 1.
         let merged = idxFromCurrent >= 0 ? idxFromCurrent : -1;
-        const bestLocal = Math.max(
+        const bestLocal = allowLocalFallback ? Math.max(
             Number.isFinite(idxFromSaved) ? idxFromSaved : -1,
             Number.isFinite(idxFromSavedPath) ? idxFromSavedPath : -1,
             Number.isFinite(idxFromHighestSeen) ? idxFromHighestSeen : -1
-        );
+        ) : -1;
         if (bestLocal >= 0) {
             merged = Math.max(merged, bestLocal);
         }
@@ -3259,7 +3247,7 @@ export default function LearnPage() {
         resumeGuardUntilRef.current = 0;
         manualSelectionRef.current = { target: null, until: 0 };
         tinCanLocalAttemptRef.current = { idx: null, at: 0 };
-        const persistedResumeIndex = content.type === 'tincan'
+        const persistedResumeIndex = allowLocalResumeFallback && content.type === 'tincan'
             ? readTincanResumeIndex()
             : null;
         const safePersistedResumeIndex = Number.isFinite(Number(persistedResumeIndex)) && Number(persistedResumeIndex) >= 0
@@ -3269,7 +3257,7 @@ export default function LearnPage() {
         trackedStudySecondsRef.current = 0;
         trackedStudyTickAtRef.current = 0;
         lastUserInteractionAtRef.current = Date.now();
-        if (content.type === 'tincan' && content.activities?.length > 0) {
+        if (allowLocalResumeFallback && content.type === 'tincan' && content.activities?.length > 0) {
             const storedStatuses = readTincanStatusSnapshot();
             if (Array.isArray(storedStatuses) && storedStatuses.length > 0) {
                 const total = Math.max(0, Number(content.activities.length || 0));
@@ -3292,7 +3280,7 @@ export default function LearnPage() {
             return;
         }
         setIframeSrc(resolvePlayerSrc(content.entryPoint));
-    }, [content, resolvePlayerSrc, clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync, readTincanResumeIndex, readTincanStatusSnapshot]);
+    }, [content, allowLocalResumeFallback, resolvePlayerSrc, clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync, readTincanResumeIndex, readTincanStatusSnapshot]);
 
     useEffect(() => {
         if (!content || content.type !== 'tincan' || !resumeLoaded) return;
@@ -3676,6 +3664,7 @@ export default function LearnPage() {
                 setError('');
                 setActiveSectionId(null);
                 setCohortModuleEnabled(false);
+                setAllowLocalResumeFallback(false);
                 setEnrollmentId(null);
                 progressWriteBlockRef.current = { disabled: false, reason: '' };
 
@@ -3730,6 +3719,13 @@ export default function LearnPage() {
                     setError('Enrollment not found');
                     return;
                 }
+
+                const selectedEnrollmentStatus = String(selectedEnrollment?.status || '').toUpperCase();
+                const selectedEnrollmentProgress = Number(selectedEnrollment?.progress || 0);
+                const hasServerResumeSignals =
+                    selectedEnrollmentStatus === 'COMPLETED'
+                    || (Number.isFinite(selectedEnrollmentProgress) && selectedEnrollmentProgress > 0);
+                setAllowLocalResumeFallback(hasServerResumeSignals);
 
                 const courseAccess = evaluateCourseLearnAccess(selectedEnrollment?.course);
                 if (!courseAccess.allowed) {
@@ -3983,7 +3979,9 @@ export default function LearnPage() {
                         selectedTrackedStudySeconds
                     );
                 }
-                const savedWebIdx = content?.type === 'web' ? readWebResumeIndex() : null;
+                const savedWebIdx = (allowLocalResumeFallback && content?.type === 'web')
+                    ? readWebResumeIndex()
+                    : null;
                 const mergedCurrent = content?.type === 'web'
                     ? Math.max(
                         selectedCurrent,
@@ -4010,7 +4008,7 @@ export default function LearnPage() {
                 completionLockRef.current = restoredStatus === 'COMPLETED';
                 setCurrentTime(mergedCurrent || 0);
                 setDuration(mergedDuration || 0);
-                restoreTincanPositionFromProgress(selectedEntry);
+                restoreTincanPositionFromProgress(selectedEntry, { allowLocalFallback: allowLocalResumeFallback });
                 if (content?.type === 'web' && Number.isFinite(savedWebIdx) && savedWebIdx >= 0) {
                     persistWebResumeIndex(savedWebIdx);
                 }
@@ -4033,7 +4031,7 @@ export default function LearnPage() {
                 }
             }
 
-            if (!selectedEntry && content?.type === 'tincan') {
+            if (!selectedEntry && allowLocalResumeFallback && content?.type === 'tincan') {
                 const savedIdx = readTincanResumeIndex();
                 if (Number.isFinite(savedIdx) && savedIdx >= 0) {
                     const total = Math.max(1, Number(content?.activities?.length || 0));
@@ -4044,7 +4042,7 @@ export default function LearnPage() {
                     setStatus('LEARNING');
                 }
             }
-            if (!selectedEntry && content?.type === 'web') {
+            if (!selectedEntry && allowLocalResumeFallback && content?.type === 'web') {
                 const savedIdx = readWebResumeIndex();
                 if (Number.isFinite(savedIdx) && savedIdx >= 0) {
                     const safeIdx = Math.max(0, Math.floor(savedIdx));
@@ -4062,7 +4060,7 @@ export default function LearnPage() {
         if (content && progressContentId && progressUserCandidates.length > 0) {
             loadProgress();
         }
-    }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, effectiveSectionId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass]);
+    }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, effectiveSectionId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass, allowLocalResumeFallback]);
 
     // Load xAPI statements for this content
     useEffect(() => {
@@ -5836,6 +5834,12 @@ export default function LearnPage() {
                 const st = tinCanActivityStatus[index];
                 const explicitCompleted = Boolean(st?.passed || st?.completed);
                 if (explicitCompleted) return true;
+                const clearedByLinearProgress =
+                    chapterLockEnabled &&
+                    !isAssessmentActivity(lesson) &&
+                    index < selectedLessonIndex &&
+                    index < maxUnlockedLessonIndex;
+                if (clearedByLinearProgress) return true;
                 return false;
             }
             const st = webStatusSnapshot[index];

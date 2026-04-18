@@ -310,6 +310,7 @@ function normalizeEnrollmentCourse(
         explicitSectionId: enrollment?.sectionId,
         learningProgressRows,
         availableSections,
+        preferProgressRows: true,
     });
     const selectedSection = selectedSectionId
         ? availableSections.find((item) => Number(item?.id || 0) === Number(selectedSectionId))
@@ -1323,7 +1324,7 @@ export async function PATCH(request) {
         if (!session.isAdmin && existingStatus === 'PENDING') {
             return NextResponse.json({ error: 'Awaiting admin approval' }, { status: 403 });
         }
-        const incomingStatus = status ? String(status).toUpperCase() : '';
+        let incomingStatus = status ? String(status).toUpperCase() : '';
         if (!session.isAdmin) {
             const access = await evaluateEnrollmentLearningAccess({ enrollmentId });
             if (!access?.allowed) {
@@ -1340,17 +1341,87 @@ export async function PATCH(request) {
             }
         }
 
+        let requiredSectionIds = [];
+        let allRequiredSectionsCompleted = true;
+        let aggregateSectionProgress = null;
+        if (!session.isAdmin) {
+            const activeSections = await prisma.section.findMany({
+                where: {
+                    courseId: existing.courseId,
+                    isActive: true,
+                },
+                select: { id: true },
+                orderBy: [{ orderNo: 'asc' }, { id: 'asc' }],
+            });
+            requiredSectionIds = activeSections
+                .map((row) => Number(row?.id || 0))
+                .filter((sectionId) => Number.isInteger(sectionId) && sectionId > 0);
+
+            if (requiredSectionIds.length > 1) {
+                const progressRows = await prisma.learningProgress.findMany({
+                    where: {
+                        enrollmentId,
+                        sectionId: { in: requiredSectionIds },
+                    },
+                    select: {
+                        id: true,
+                        sectionId: true,
+                        status: true,
+                        progressPercent: true,
+                        success: true,
+                        completion: true,
+                    },
+                    orderBy: { id: 'desc' },
+                });
+                const latestBySection = new Map();
+                for (const row of progressRows) {
+                    const sectionId = Number(row?.sectionId || 0);
+                    if (!Number.isInteger(sectionId) || sectionId <= 0) continue;
+                    if (!latestBySection.has(sectionId)) {
+                        latestBySection.set(sectionId, row);
+                    }
+                }
+                const sectionSnapshots = requiredSectionIds.map((sectionId) => latestBySection.get(sectionId) || null);
+                allRequiredSectionsCompleted =
+                    sectionSnapshots.length > 0 &&
+                    sectionSnapshots.every((row) => isProgressRowCompleted(row));
+                aggregateSectionProgress = Math.round(
+                    sectionSnapshots.reduce((sum, row) => sum + toProgressAggregateValue(row), 0)
+                    / Math.max(sectionSnapshots.length, 1)
+                );
+            }
+        }
+
         const existingProgress = Number(existing.progressPercent || 0);
         const incomingProgress = progress !== undefined ? Number(progress) : undefined;
-        const safeIncomingProgress = Number.isFinite(incomingProgress)
+        let safeIncomingProgress = Number.isFinite(incomingProgress)
             ? Math.max(0, Math.min(100, incomingProgress))
             : undefined;
+        const hasMultipleRequiredSections = requiredSectionIds.length > 1;
+        const shouldPreventForcedCompletion =
+            !session.isAdmin &&
+            incomingStatus === 'COMPLETED' &&
+            hasMultipleRequiredSections &&
+            !allRequiredSectionsCompleted;
+        if (shouldPreventForcedCompletion) {
+            incomingStatus = 'LEARNING';
+            if (safeIncomingProgress === undefined) {
+                safeIncomingProgress = Number.isFinite(Number(aggregateSectionProgress))
+                    ? Math.max(0, Math.min(99, Number(aggregateSectionProgress)))
+                    : Math.max(0, Math.min(99, existingProgress));
+            }
+        }
         const isAdminReset = session.isAdmin && isTruthyFlag(resetProgress);
+        const allowsStaleCompletionDowngrade =
+            !session.isAdmin &&
+            hasMultipleRequiredSections &&
+            !allRequiredSectionsCompleted;
         const allowsCompletionDowngrade =
             incomingStatus === 'FAILED'
             || incomingStatus === 'PENDING'
             || incomingStatus === 'CANCELLED'
-            || isAdminReset;
+            || isAdminReset
+            || allowsStaleCompletionDowngrade;
         const shouldPreserveCompleted =
             existingStatus === 'COMPLETED' &&
             !!incomingStatus &&

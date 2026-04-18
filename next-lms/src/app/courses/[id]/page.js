@@ -386,12 +386,17 @@ export default function CourseDetailPage() {
     const enrollmentStatus = String(enrollment?.status || '').toUpperCase();
     const isPendingApproval = enrollmentStatus === 'PENDING';
     const isEnrolled = enrollment && ['APPROVED', 'LEARNING', 'COMPLETED'].includes(enrollmentStatus);
-    const enrolledSectionId = Number(
-        enrollment?.sectionId
-        || enrollment?.section?.id
-        || defaultSection?.id
-        || 0
-    );
+    const hasStartedLearning = enrollmentStatus === 'LEARNING'
+        || enrollmentStatus === 'COMPLETED'
+        || Number(enrollment?.progress || 0) > 0;
+    const enrolledSectionId = hasStartedLearning
+        ? Number(
+            enrollment?.sectionId
+            || enrollment?.section?.id
+            || defaultSection?.id
+            || 0
+        )
+        : Number(defaultSection?.id || enrollment?.sectionId || enrollment?.section?.id || 0);
     const showMaxLearner = !course?.maxLearnerUnlimit && Number(course?.maxLearner || 0) > 0;
     const ctaLabel = enrolling
         ? 'Enrolling...'

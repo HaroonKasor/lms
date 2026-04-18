@@ -40,6 +40,30 @@ function resolveEnrollmentStatus(enrollment) {
     return 'APPROVED';
 }
 
+function resolveLaunchSectionId(enrollment = null) {
+    const normalizedStatus = resolveEnrollmentStatus(enrollment);
+    const safeProgress = Number(enrollment?.progress ?? enrollment?.progressPercent ?? 0);
+    const hasStarted = normalizedStatus === 'LEARNING'
+        || normalizedStatus === 'COMPLETED'
+        || (Number.isFinite(safeProgress) && safeProgress > 0);
+    const sections = Array.isArray(enrollment?.course?.sections)
+        ? [...enrollment.course.sections].sort((a, b) => {
+            const aOrder = Number(a?.orderNo || 0);
+            const bOrder = Number(b?.orderNo || 0);
+            if (aOrder !== bOrder) return aOrder - bOrder;
+            return Number(a?.id || 0) - Number(b?.id || 0);
+        })
+        : [];
+    const firstActiveSectionId = Number(
+        sections.find((item) => item?.isActive !== false)?.id
+        || sections[0]?.id
+        || 0
+    );
+    const preferredSectionId = Number(enrollment?.section?.id || enrollment?.sectionId || 0);
+    if (!hasStarted) return firstActiveSectionId;
+    return preferredSectionId > 0 ? preferredSectionId : firstActiveSectionId;
+}
+
 const STAR_VALUES = [1, 2, 3, 4, 5];
 const ENROLLMENTS_TIMEOUT_MS = 15000;
 const REVIEWS_TIMEOUT_MS = 10000;
@@ -721,7 +745,7 @@ function CourseCard({ enrollment, formatDuration, currentUser }) {
         ? averageRating.toFixed(1)
         : '0.0';
     const canRenderPortal = typeof window !== 'undefined';
-    const learnSectionId = Number(enrollment?.section?.id || 0);
+    const learnSectionId = resolveLaunchSectionId(enrollment);
     const learnHref = learnSectionId > 0
         ? `/courses/${course?.id}/learn?launch=1&sectionId=${learnSectionId}`
         : `/courses/${course?.id}/learn?launch=1`;
