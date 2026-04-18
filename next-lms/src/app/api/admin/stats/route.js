@@ -59,14 +59,25 @@ async function getRoleMapByUserIds(userIds, organizationId) {
     return map;
 }
 
+function parseMonthsParam(request, fallback = 6) {
+    const { searchParams } = new URL(request.url);
+    const raw = String(searchParams.get('months') || '').trim();
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) return fallback;
+    const value = Math.floor(parsed);
+    if (value === 3 || value === 6 || value === 12) return value;
+    return fallback;
+}
+
 export async function GET(request) {
     try {
         const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
         if (response) return response;
         const organizationId = await ensureDefaultOrganization();
 
+        const monthsWindow = parseMonthsParam(request, 6);
         const now = new Date();
-        const start = new Date(now.getFullYear(), now.getMonth() - 5, 1);
+        const start = new Date(now.getFullYear(), now.getMonth() - (monthsWindow - 1), 1);
         const contentsCount = (await listContents()).length;
 
         const [
@@ -195,7 +206,7 @@ export async function GET(request) {
         );
 
         const months = [];
-        for (let i = 5; i >= 0; i -= 1) {
+        for (let i = (monthsWindow - 1); i >= 0; i -= 1) {
             months.push(new Date(now.getFullYear(), now.getMonth() - i, 1));
         }
 

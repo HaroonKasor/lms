@@ -34,6 +34,16 @@ function normalizeUserStatus(status, fallbackActive = true) {
     return fallbackActive ? 'active' : 'inactive';
 }
 
+function normalizeAuthProviders(values = []) {
+    if (!Array.isArray(values)) return [];
+    const unique = new Set();
+    for (const value of values) {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (normalized) unique.add(normalized);
+    }
+    return Array.from(unique);
+}
+
 export function mapUserRecord(user) {
     const status = normalizeUserStatus(user?.status, user?.isActive !== false);
     return {
@@ -44,6 +54,7 @@ export function mapUserRecord(user) {
         phone: String(user?.phone || '').trim(),
         role: normalizeUiRole(user?.role),
         groups: normalizeGroups(user?.groups),
+        authProviders: normalizeAuthProviders(user?.authProviders),
         status,
         isActive: status === 'active',
         avatar: String(user?.avatar || '').trim(),

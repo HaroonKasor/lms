@@ -32,6 +32,7 @@ export default function Login() {
                 google_token_exchange_failed: 'ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (แลก token ไม่สำเร็จ) กรุณาลองใหม่อีกครั้ง',
                 google_userinfo_failed: 'ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (ดึงข้อมูลผู้ใช้ไม่สำเร็จ) กรุณาลองใหม่อีกครั้ง',
                 google_email_unverified: 'อีเมล Google ยังไม่ได้ยืนยัน กรุณายืนยันอีเมลก่อนแล้วลองใหม่',
+                google_identity_conflict: 'บัญชี Google นี้ถูกผูกกับผู้ใช้อื่นแล้ว กรุณาติดต่อผู้ดูแลระบบ',
                 google_callback_failed: 'เกิดข้อผิดพลาดระหว่างเข้าสู่ระบบด้วย Google กรุณาลองใหม่อีกครั้ง',
                 oauth_hydrate_failed: 'เข้าสู่ระบบสำเร็จ แต่โหลดข้อมูลผู้ใช้ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
                 oauth_callback_failed: 'เกิดข้อผิดพลาดระหว่างเข้าสู่ระบบ กรุณาลองใหม่อีกครั้ง',

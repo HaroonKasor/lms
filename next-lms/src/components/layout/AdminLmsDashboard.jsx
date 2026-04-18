@@ -128,13 +128,66 @@ const MenuIcon = () => (
 
 // --- Custom Components ---
 
-function DropdownFilter() {
+function DropdownFilter({ value = 6, onChange }) {
+    const [open, setOpen] = React.useState(false);
+    const rootRef = React.useRef(null);
+
+    React.useEffect(() => {
+        if (!open) return undefined;
+        const onDown = (event) => {
+            const root = rootRef.current;
+            if (!root) return;
+            if (root.contains(event.target)) return;
+            setOpen(false);
+        };
+        document.addEventListener('mousedown', onDown, true);
+        document.addEventListener('touchstart', onDown, true);
+        return () => {
+            document.removeEventListener('mousedown', onDown, true);
+            document.removeEventListener('touchstart', onDown, true);
+        };
+    }, [open]);
+
+    const options = [
+        { label: 'Last 3 months', value: 3 },
+        { label: 'Last 6 months', value: 6 },
+        { label: 'Last 12 months', value: 12 },
+    ];
+
+    const selected = options.find((item) => item.value === value) || options[1];
+
     return (
-        <div className="flex items-center justify-between px-3 py-1 border border-[#6B778B] rounded-full bg-white h-[26px] cursor-pointer shrink-0">
-            <span className="text-[14px] text-[#6B778B] font-normal leading-[130%]">Last 6 months</span>
-            <svg className="w-3 h-3 ml-2 text-[#6B778B]" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M7 10l5 5 5-5z" />
-            </svg>
+        <div ref={rootRef} className="relative shrink-0">
+            <button
+                type="button"
+                onClick={() => setOpen((prev) => !prev)}
+                className="flex items-center justify-between gap-2 px-3 py-1 border border-[#6B778B] rounded-full bg-white h-[26px] cursor-pointer"
+                aria-haspopup="listbox"
+                aria-expanded={open}
+            >
+                <span className="text-[14px] text-[#6B778B] font-normal leading-[130%]">{selected.label}</span>
+                <svg className="w-3 h-3 text-[#6B778B]" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 10l5 5 5-5z" />
+                </svg>
+            </button>
+
+            {open ? (
+                <div className="absolute right-0 top-[34px] z-50 w-[170px] rounded-xl border border-[#D1E3FB] bg-white shadow-[0_18px_44px_rgba(15,23,42,0.16)] overflow-hidden">
+                    {options.map((item) => (
+                        <button
+                            key={item.value}
+                            type="button"
+                            className="w-full px-4 py-2.5 text-left text-[14px] text-[#22304A] hover:bg-[#F6F8FF]"
+                            onClick={() => {
+                                if (typeof onChange === 'function') onChange(item.value);
+                                setOpen(false);
+                            }}
+                        >
+                            {item.label}
+                        </button>
+                    ))}
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -182,6 +235,7 @@ export default function AdminLmsDashboard({ children }) {
         return String(getUser()?.role || '').toLowerCase();
     });
     const isInstructor = sessionRole === 'instructor';
+    const [chartRangeMonths, setChartRangeMonths] = useState(6);
 
     // Track multiple expanded menus
     const [expandedMenus, setExpandedMenus] = useState([]);
@@ -317,7 +371,9 @@ export default function AdminLmsDashboard({ children }) {
         let active = true;
         const loadStats = async () => {
             try {
-                const res = await fetch('/api/admin/stats', { cache: 'no-store' });
+                const months = Number.isInteger(Number(chartRangeMonths)) ? Number(chartRangeMonths) : 6;
+                const query = months && months !== 6 ? `?months=${encodeURIComponent(String(months))}` : '';
+                const res = await fetch(`/api/admin/stats${query}`, { cache: 'no-store' });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) return;
                 if (!active) return;
@@ -335,7 +391,7 @@ export default function AdminLmsDashboard({ children }) {
         return () => {
             active = false;
         };
-    }, [showDefaultDashboard]);
+    }, [showDefaultDashboard, chartRangeMonths]);
 
     React.useEffect(() => {
         setIsHydrated(true);
@@ -613,7 +669,7 @@ export default function AdminLmsDashboard({ children }) {
                                     <div className="flex-1 w-full min-w-0">
                                         <div className="flex justify-between items-center mb-6 px-4">
                                             <h2 className="text-[20px] font-medium text-[#052143]">Number of unique users</h2>
-                                            <DropdownFilter />
+                                            <DropdownFilter value={chartRangeMonths} onChange={setChartRangeMonths} />
                                         </div>
                                         <div className="h-[280px] w-full relative">
                                             <ResponsiveContainer width="100%" height="100%" minWidth={240} minHeight={180}>
@@ -648,7 +704,7 @@ export default function AdminLmsDashboard({ children }) {
                                     <div className="flex-1 w-full min-w-0">
                                         <div className="flex justify-between items-center mb-6 px-4">
                                             <h2 className="text-[20px] font-medium text-[#052143]">Number of course graduates</h2>
-                                            <DropdownFilter />
+                                            <DropdownFilter value={chartRangeMonths} onChange={setChartRangeMonths} />
                                         </div>
                                         <div className="h-[280px] w-full relative">
                                             <ResponsiveContainer width="100%" height="100%" minWidth={240} minHeight={180}>

@@ -27,6 +27,7 @@ import {
     inferEnterpriseRoleCodeFromGroup,
     normalizeEnterpriseRoleCode,
 } from '@/lib/shared/role-directory';
+import { getUserAuthProviderMapByUserIds } from '@/lib/server/user-auth-identities';
 
 const PHONE_REGEX = /^\d{8,20}$/;
 const DEFAULT_PROTECTED_DEMO_INSTRUCTOR_USERNAME = 'demo_instructor';
@@ -195,6 +196,7 @@ export async function GET(request) {
         const userIds = users.map((user) => user.id);
         const roleMap = await getRoleMapByUserIds(userIds, organizationId);
         const groupMap = await getUserGroupMapByUserIds(userIds, organizationId);
+        const authProviderMap = await getUserAuthProviderMapByUserIds(userIds);
         const mappedUsers = users.map((user) => mapUser(
             user,
             roleMap.get(String(user.id)) || [],
@@ -203,9 +205,13 @@ export async function GET(request) {
                 groupMap.get(Number(user.id)) || []
             )
         ));
+        const mappedUsersWithAuth = mappedUsers.map((row) => ({
+            ...row,
+            authProviders: authProviderMap.get(Number(row.id)) || [],
+        }));
         const filteredUsers = groupCodeFilter
-            ? mappedUsers.filter((user) => (user.groups || []).includes(groupCodeFilter))
-            : mappedUsers;
+            ? mappedUsersWithAuth.filter((user) => (user.groups || []).includes(groupCodeFilter))
+            : mappedUsersWithAuth;
         return NextResponse.json(
             filteredUsers
         );

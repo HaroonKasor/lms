@@ -14,89 +14,6 @@ export default function ProfilePage() {
     const [avatarMessage, setAvatarMessage] = useState('');
     const fileInputRef = useRef(null);
 
-    const AVATAR_EDITOR_SIZE = 240;
-    const AVATAR_OUTPUT_SIZE = 512;
-    const AVATAR_ZOOM_STORAGE_KEY = 'lms_avatar_crop_zoom_v1';
-    const DEFAULT_AVATAR_ZOOM = 2.2;
-    const [avatarEditorOpen, setAvatarEditorOpen] = useState(false);
-    const [pendingAvatarFile, setPendingAvatarFile] = useState(null);
-    const [pendingAvatarUrl, setPendingAvatarUrl] = useState('');
-    const [pendingAvatarNatural, setPendingAvatarNatural] = useState({ width: 0, height: 0 });
-    const [pendingAvatarZoom, setPendingAvatarZoom] = useState(1);
-    const [pendingAvatarOffset, setPendingAvatarOffset] = useState({ x: 0, y: 0 });
-    const avatarDragRef = useRef({ active: false, pointerId: null, startX: 0, startY: 0, originX: 0, originY: 0 });
-
-    const getPendingAvatarScale = useCallback((zoom = pendingAvatarZoom) => {
-        const width = Number(pendingAvatarNatural?.width || 0);
-        const height = Number(pendingAvatarNatural?.height || 0);
-        if (!width || !height) return 1;
-        const baseScale = Math.max(AVATAR_EDITOR_SIZE / width, AVATAR_EDITOR_SIZE / height);
-        return baseScale * Math.max(1, Number(zoom) || 1);
-    }, [pendingAvatarNatural?.width, pendingAvatarNatural?.height, pendingAvatarZoom]);
-
-    const clampPendingAvatarOffset = useCallback((nextOffset, zoom = pendingAvatarZoom) => {
-        const width = Number(pendingAvatarNatural?.width || 0);
-        const height = Number(pendingAvatarNatural?.height || 0);
-        if (!width || !height) return { x: 0, y: 0 };
-
-        const scale = getPendingAvatarScale(zoom);
-        const scaledW = width * scale;
-        const scaledH = height * scale;
-        const maxX = Math.max(0, (scaledW - AVATAR_EDITOR_SIZE) / 2);
-        const maxY = Math.max(0, (scaledH - AVATAR_EDITOR_SIZE) / 2);
-
-        const x = Math.max(-maxX, Math.min(maxX, Number(nextOffset?.x || 0)));
-        const y = Math.max(-maxY, Math.min(maxY, Number(nextOffset?.y || 0)));
-        return { x, y };
-    }, [pendingAvatarNatural?.width, pendingAvatarNatural?.height, pendingAvatarZoom, getPendingAvatarScale]);
-
-    const closeAvatarEditor = useCallback(() => {
-        setAvatarEditorOpen(false);
-        setPendingAvatarFile(null);
-        setPendingAvatarNatural({ width: 0, height: 0 });
-        setPendingAvatarZoom(1);
-        setPendingAvatarOffset({ x: 0, y: 0 });
-        if (pendingAvatarUrl) {
-            try {
-                URL.revokeObjectURL(pendingAvatarUrl);
-            } catch {
-                // ignore revoke errors
-            }
-        }
-        setPendingAvatarUrl('');
-    }, [pendingAvatarUrl]);
-
-    const openAvatarEditor = useCallback((file) => {
-        if (!file) return;
-        if (pendingAvatarUrl) {
-            try {
-                URL.revokeObjectURL(pendingAvatarUrl);
-            } catch {
-                // ignore revoke errors
-            }
-        }
-        let initialZoom = DEFAULT_AVATAR_ZOOM;
-        try {
-            const raw = typeof window !== 'undefined'
-                ? String(window.localStorage.getItem(AVATAR_ZOOM_STORAGE_KEY) || '').trim()
-                : '';
-            const parsed = Number(raw);
-            if (Number.isFinite(parsed)) {
-                initialZoom = parsed;
-            }
-        } catch {
-            // ignore storage read errors
-        }
-        initialZoom = Math.max(1, Math.min(3, initialZoom || DEFAULT_AVATAR_ZOOM));
-
-        const url = URL.createObjectURL(file);
-        setPendingAvatarFile(file);
-        setPendingAvatarUrl(url);
-        setPendingAvatarNatural({ width: 0, height: 0 });
-        setPendingAvatarZoom(initialZoom);
-        setPendingAvatarOffset({ x: 0, y: 0 });
-        setAvatarEditorOpen(true);
-    }, [pendingAvatarUrl]);
 
     const uploadAvatarBlob = useCallback(async (blob) => {
         if (!blob) throw new Error('Invalid avatar image');
@@ -132,93 +49,6 @@ export default function ProfilePage() {
         }
     }, []);
 
-    const renderPendingAvatarBlob = useCallback(async () => {
-        const file = pendingAvatarFile;
-        if (!file) throw new Error('No image selected');
-
-        const loadBitmap = async () => {
-            if (typeof createImageBitmap === 'function') {
-                try {
-                    return await createImageBitmap(file, { imageOrientation: 'from-image' });
-                } catch {
-                    try {
-                        return await createImageBitmap(file);
-                    } catch {
-                        // fall through
-                    }
-                }
-            }
-
-            const url = URL.createObjectURL(file);
-            try {
-                const img = new Image();
-                img.decoding = 'async';
-                img.src = url;
-                await new Promise((resolve, reject) => {
-                    img.onload = () => resolve();
-                    img.onerror = () => reject(new Error('Failed to load image'));
-                });
-                return img;
-            } finally {
-                try {
-                    URL.revokeObjectURL(url);
-                } catch {
-                    // ignore revoke errors
-                }
-            }
-        };
-
-        const source = await loadBitmap();
-        const srcW = Number(source?.width || source?.naturalWidth || 0);
-        const srcH = Number(source?.height || source?.naturalHeight || 0);
-        if (!srcW || !srcH) throw new Error('Invalid image dimensions');
-
-        const baseScale = Math.max(AVATAR_EDITOR_SIZE / srcW, AVATAR_EDITOR_SIZE / srcH);
-        const zoom = Math.max(1, Number(pendingAvatarZoom) || 1);
-        const scale = baseScale * zoom;
-        const cropW = AVATAR_EDITOR_SIZE / scale;
-        const cropH = AVATAR_EDITOR_SIZE / scale;
-
-        const offsetX = Number(pendingAvatarOffset?.x || 0);
-        const offsetY = Number(pendingAvatarOffset?.y || 0);
-        const rawCropX = (srcW - cropW) / 2 - (offsetX / scale);
-        const rawCropY = (srcH - cropH) / 2 - (offsetY / scale);
-        const cropX = Math.max(0, Math.min(srcW - cropW, rawCropX));
-        const cropY = Math.max(0, Math.min(srcH - cropH, rawCropY));
-
-        const canvas = document.createElement('canvas');
-        canvas.width = AVATAR_OUTPUT_SIZE;
-        canvas.height = AVATAR_OUTPUT_SIZE;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error('Canvas not supported');
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(
-            source,
-            cropX,
-            cropY,
-            cropW,
-            cropH,
-            0,
-            0,
-            AVATAR_OUTPUT_SIZE,
-            AVATAR_OUTPUT_SIZE
-        );
-
-        const toBlob = (type, quality) => new Promise((resolve) => {
-            try {
-                canvas.toBlob((b) => resolve(b || null), type, quality);
-            } catch {
-                resolve(null);
-            }
-        });
-
-        const webp = await toBlob('image/webp', 0.92);
-        if (webp) return webp;
-        const jpeg = await toBlob('image/jpeg', 0.9);
-        if (jpeg) return jpeg;
-        throw new Error('Failed to encode image');
-    }, [pendingAvatarFile, pendingAvatarZoom, pendingAvatarOffset?.x, pendingAvatarOffset?.y]);
 
     useEffect(() => {
         const loadProfile = async () => {
@@ -277,8 +107,16 @@ export default function ProfilePage() {
         if (!file) return;
 
         setAvatarMessage('');
-        openAvatarEditor(file);
         if (fileInputRef.current) fileInputRef.current.value = '';
+
+        setUploadingAvatar(true);
+        try {
+            await uploadAvatarBlob(file);
+        } catch (uploadErr) {
+            setAvatarMessage(uploadErr?.message || 'Failed to upload avatar');
+        } finally {
+            setUploadingAvatar(false);
+        }
     };
 
     const profile = useMemo(() => {
@@ -517,167 +355,6 @@ export default function ProfilePage() {
                     </div>
                 </div>
 
-                {avatarEditorOpen ? (
-                    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
-                        <div className="w-full max-w-[560px] overflow-hidden rounded-2xl border border-[#D1E3FB] bg-white shadow-[0_28px_90px_rgba(15,23,42,0.35)] max-h-[calc(100vh-2rem)] overflow-y-auto">
-                            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
-                                <div>
-                                    <h2 className="text-xl font-bold text-[#052143]">Adjust profile photo</h2>
-                                    <p className="mt-1 text-sm text-[#6B778B]">Drag to reposition and use the slider to zoom.</p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={closeAvatarEditor}
-                                    className="rounded-full border border-[#D1E3FB] bg-white px-3 py-2 text-sm font-medium text-[#6B778B] shadow-sm hover:bg-[#F6F8FF] disabled:opacity-60"
-                                    disabled={uploadingAvatar}
-                                >
-                                    Close
-                                </button>
-                            </div>
-
-                            <div className="px-6 py-6">
-                                <div className="flex flex-col items-center gap-4">
-                                    <div
-                                        className="relative overflow-hidden rounded-full border border-[#D1E3FB] shadow-[0_20px_50px_rgba(104,126,255,0.14)]"
-                                        style={{
-                                            width: `${AVATAR_EDITOR_SIZE}px`,
-                                            height: `${AVATAR_EDITOR_SIZE}px`,
-                                            background: 'linear-gradient(135deg, #E8D5E0 0%, #D4B8C8 100%)',
-                                            touchAction: 'none',
-                                        }}
-                                        onPointerDown={(event) => {
-                                            if (!pendingAvatarUrl || uploadingAvatar) return;
-                                            avatarDragRef.current = {
-                                                active: true,
-                                                pointerId: event.pointerId,
-                                                startX: event.clientX,
-                                                startY: event.clientY,
-                                                originX: pendingAvatarOffset.x,
-                                                originY: pendingAvatarOffset.y,
-                                            };
-                                            try {
-                                                event.currentTarget.setPointerCapture(event.pointerId);
-                                            } catch {
-                                                // ignore
-                                            }
-                                        }}
-                                        onPointerMove={(event) => {
-                                            const drag = avatarDragRef.current;
-                                            if (!drag.active) return;
-                                            if (drag.pointerId !== event.pointerId) return;
-                                            const dx = event.clientX - drag.startX;
-                                            const dy = event.clientY - drag.startY;
-                                            setPendingAvatarOffset((prev) => clampPendingAvatarOffset({
-                                                x: drag.originX + dx,
-                                                y: drag.originY + dy,
-                                            }, pendingAvatarZoom));
-                                        }}
-                                        onPointerUp={(event) => {
-                                            const drag = avatarDragRef.current;
-                                            if (drag.pointerId !== event.pointerId) return;
-                                            avatarDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, originX: 0, originY: 0 };
-                                            try {
-                                                event.currentTarget.releasePointerCapture(event.pointerId);
-                                            } catch {
-                                                // ignore
-                                            }
-                                        }}
-                                        onPointerCancel={() => {
-                                            avatarDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, originX: 0, originY: 0 };
-                                        }}
-                                    >
-                                        {pendingAvatarUrl ? (
-                                            <img
-                                                src={pendingAvatarUrl}
-                                                alt="Avatar preview"
-                                                className="absolute left-1/2 top-1/2 select-none"
-                                                draggable={false}
-                                                style={{
-                                                    transform: `translate(calc(-50% + ${pendingAvatarOffset.x}px), calc(-50% + ${pendingAvatarOffset.y}px)) scale(${getPendingAvatarScale(pendingAvatarZoom)})`,
-                                                    transformOrigin: 'center',
-                                                    willChange: 'transform',
-                                                }}
-                                                onLoad={(event) => {
-                                                    const img = event.currentTarget;
-                                                    const width = Number(img.naturalWidth || 0);
-                                                    const height = Number(img.naturalHeight || 0);
-                                                    setPendingAvatarNatural({ width, height });
-                                                    setPendingAvatarOffset((prev) => clampPendingAvatarOffset(prev, pendingAvatarZoom));
-                                                }}
-                                            />
-                                        ) : null}
-
-                                        <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/35" />
-
-                                        {uploadingAvatar ? (
-                                            <div className="absolute inset-0 flex items-center justify-center bg-white/60 text-[#052143] text-sm font-semibold backdrop-blur-[2px]">
-                                                Uploading...
-                                            </div>
-                                        ) : null}
-                                    </div>
-
-                                    <div className="w-full max-w-[420px] rounded-2xl border border-[#D1E3FB] bg-[#F6F8FF] px-4 py-4">
-                                        <div className="flex items-center justify-between text-xs font-medium uppercase tracking-[0.16em] text-[#6B778B]">
-                                            <span>Zoom</span>
-                                            <span>{Math.round(pendingAvatarZoom * 100)}%</span>
-                                        </div>
-                                        <input
-                                            type="range"
-                                            min={1}
-                                            max={3}
-                                            step={0.01}
-                                            value={pendingAvatarZoom}
-                                            onChange={(event) => {
-                                                const nextZoom = Math.max(1, Math.min(3, Number(event.target.value) || 1));
-                                                setPendingAvatarZoom(nextZoom);
-                                                setPendingAvatarOffset((prev) => clampPendingAvatarOffset(prev, nextZoom));
-                                                try {
-                                                    window.localStorage.setItem(AVATAR_ZOOM_STORAGE_KEY, String(nextZoom));
-                                                } catch {
-                                                    // ignore storage write errors
-                                                }
-                                            }}
-                                            className="mt-3 w-full accent-indigo-600"
-                                            disabled={uploadingAvatar}
-                                        />
-                                    </div>
-
-                                    <div className="flex w-full max-w-[420px] justify-end gap-2 pt-1">
-                                        <button
-                                            type="button"
-                                            onClick={closeAvatarEditor}
-                                            className="rounded-xl border border-[#D1E3FB] bg-white px-4 py-2 text-sm font-semibold text-[#6B778B] hover:bg-[#F6F8FF]"
-                                            disabled={uploadingAvatar}
-                                        >
-                                            Cancel
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={async () => {
-                                                if (uploadingAvatar) return;
-                                                setAvatarMessage('');
-                                                setUploadingAvatar(true);
-                                                try {
-                                                    const blob = await renderPendingAvatarBlob();
-                                                    await uploadAvatarBlob(blob);
-                                                    closeAvatarEditor();
-                                                } catch (uploadErr) {
-                                                    setAvatarMessage(uploadErr?.message || 'Failed to upload avatar');
-                                                } finally {
-                                                    setUploadingAvatar(false);
-                                                }
-                                            }}
-                                            className="rounded-xl bg-[#687EFF] px-5 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(104,126,255,0.28)] transition hover:bg-[#5A6DE6] disabled:opacity-70"
-                                            disabled={uploadingAvatar || !pendingAvatarFile}
-                                        >
-                                            Save photo
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                ) : null}
             </main>
         </div>
     );

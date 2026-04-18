@@ -156,7 +156,7 @@ export default function UserManagementPage() {
             const matchesGroup = !groupCodeFilter || assignedGroups.includes(groupCodeFilter);
             if (!matchesGroup) return false;
             if (!keyword) return true;
-            return [u.username, u.email, u.fullName, u.phone, u.role, ...(u.groups || [])]
+            return [u.username, u.email, u.fullName, u.phone, u.role, ...(u.groups || []), ...(u.authProviders || [])]
                 .concat(u.status || '')
                 .filter(Boolean)
                 .some((v) => String(v).toLowerCase().includes(keyword));
@@ -352,7 +352,21 @@ export default function UserManagementPage() {
                                 {!loading && !error && filteredRows.map((row) => (
                                     <tr key={row.id} className="border-b border-[#EEF2FF] transition-colors hover:bg-[#FBFCFF]">
                                         <AdminTd>{row.id}</AdminTd>
-                                        <AdminTd className="font-medium text-[#22304A]">{row.username}</AdminTd>
+                                        <AdminTd className="font-medium text-[#22304A]">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span>{row.username}</span>
+                                                <span
+                                                    className={
+                                                        (row.authProviders || []).includes('google')
+                                                            ? 'inline-flex items-center rounded-full bg-[#EEF2FF] px-2.5 py-1 text-xs font-semibold text-[#1D4ED8] ring-1 ring-inset ring-[#C7D2FE]'
+                                                            : 'inline-flex items-center rounded-full bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600 ring-1 ring-inset ring-slate-200'
+                                                    }
+                                                    title="Login method"
+                                                >
+                                                    {(row.authProviders || []).includes('google') ? 'Google' : 'Password'}
+                                                </span>
+                                            </div>
+                                        </AdminTd>
                                         <AdminTd className="break-all">{row.email}</AdminTd>
                                         <AdminTd>{row.fullName || '-'}</AdminTd>
                                         <AdminTd>{row.phone || '-'}</AdminTd>

@@ -19,6 +19,7 @@ import {
     listUserRoleCodes,
     mapRoleCodesToSessionRole,
 } from '@/lib/server/enterprise-context';
+import { AUTH_PROVIDER_GOOGLE, upsertUserAuthIdentity } from '@/lib/server/user-auth-identities';
 
 const OAUTH_STATE_COOKIE = 'lms_oauth_google_state';
 
@@ -194,6 +195,7 @@ export async function GET(request) {
         const email = String(userInfo.email || '').trim().toLowerCase();
         const fullName = String(userInfo.name || '').trim();
         const pictureUrl = String(userInfo.picture || '').trim();
+        const googleSub = String(userInfo.sub || '').trim();
         const { firstName, lastName } = splitName(fullName);
 
         const organizationId = await ensureDefaultOrganization();
@@ -250,6 +252,25 @@ export async function GET(request) {
 
             return created;
         });
+
+        if (googleSub) {
+            try {
+                await upsertUserAuthIdentity({
+                    userId: Number(user.id),
+                    provider: AUTH_PROVIDER_GOOGLE,
+                    providerUserId: googleSub,
+                    emailAtLink: email,
+                    lastLoginAt: new Date(),
+                });
+            } catch (identityErr) {
+                console.error('[auth/google/callback] identity link failed', identityErr);
+                const dest = new URL('/login', origin);
+                dest.searchParams.set('error', 'google_identity_conflict');
+                const response = NextResponse.redirect(dest.toString());
+                clearOAuthStateCookie(response, request);
+                return response;
+            }
+        }
 
         const roleCodes = await listUserRoleCodes(user.id, organizationId);
         const role = mapRoleCodesToSessionRole(roleCodes);
