@@ -313,23 +313,6 @@ export default function ProfilePage() {
         };
     }, [user]);
 
-    const pendingAvatarDetails = useMemo(() => {
-        if (!pendingAvatarFile) return null;
-
-        const sizeInBytes = Number(pendingAvatarFile.size || 0);
-        const sizeInKb = sizeInBytes / 1024;
-        const sizeLabel = sizeInKb >= 1024
-            ? `${(sizeInKb / 1024).toFixed(sizeInKb >= 10240 ? 0 : 1)} MB`
-            : `${Math.max(1, Math.round(sizeInKb))} KB`;
-        const typeLabel = String(pendingAvatarFile.type || '').replace('image/', '').toUpperCase() || 'IMAGE';
-
-        return {
-            name: pendingAvatarFile.name,
-            sizeLabel,
-            typeLabel,
-        };
-    }, [pendingAvatarFile]);
-
     return (
         <div className="min-h-screen bg-gradient-to-b from-white via-[#F6F8FF] to-[#F6F8FF] font-['Outfit',sans-serif]">
             <Navbar />
@@ -349,14 +332,9 @@ export default function ProfilePage() {
                         <div className="absolute inset-x-0 top-0 h-24 bg-gradient-to-b from-[#EEF2FF] via-transparent to-transparent pointer-events-none" />
 
                         {/* Avatar */}
-                        <div className="relative mb-5 pt-2">
-                            <div className="absolute inset-0 -z-10 flex items-center justify-center">
-                                <div className="h-[160px] w-[160px] rounded-full bg-[radial-gradient(circle,_rgba(104,126,255,0.22),_rgba(104,126,255,0.08)_55%,_transparent_72%)] blur-xl" />
-                            </div>
-                            <div className="relative rounded-full bg-white p-1 shadow-[0_18px_42px_rgba(104,126,255,0.14)] ring-1 ring-[#D1E3FB]">
-                                <div className="w-[128px] h-[128px] rounded-full flex items-center justify-center overflow-hidden" style={{ background: 'linear-gradient(135deg, #E8D5E0 0%, #D4B8C8 100%)' }}>
-                                    <img src={profile.avatar} alt={profile.name} className="block w-full h-full object-cover" />
-                                </div>
+                        <div className="relative mb-6">
+                            <div className="w-[128px] h-[128px] rounded-full flex items-center justify-center overflow-hidden border border-[#D1E3FB] bg-white" style={{ background: 'linear-gradient(135deg, #E8D5E0 0%, #D4B8C8 100%)' }}>
+                                <img src={profile.avatar} alt={profile.name} className="block w-full h-full object-cover" />
                             </div>
                             <input
                                 ref={fileInputRef}
@@ -371,26 +349,21 @@ export default function ProfilePage() {
                                 disabled={uploadingAvatar}
                                 aria-label="Change profile photo"
                                 title={uploadingAvatar ? 'Uploading...' : 'Change profile photo'}
-                                className="absolute right-3 bottom-2 flex h-11 min-w-11 items-center justify-center gap-2 rounded-full bg-[#687EFF] px-3 text-white shadow-[0_16px_30px_rgba(104,126,255,0.32)] border-4 border-white transition hover:-translate-y-0.5 hover:bg-[#5A6DE6] disabled:opacity-60"
+                                className="absolute right-1 bottom-1 flex h-10 w-10 items-center justify-center rounded-full bg-[#687EFF] text-white shadow-[0_16px_30px_rgba(104,126,255,0.32)] border-4 border-white transition hover:-translate-y-0.5 hover:bg-[#5A6DE6] disabled:opacity-60"
                             >
                                 {uploadingAvatar ? (
-                                    <span className="text-[10px] font-semibold leading-none tracking-[0.14em] uppercase">Saving</span>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="animate-spin" aria-hidden="true">
+                                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.35" />
+                                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                                    </svg>
                                 ) : (
-                                    <>
-                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M12 20h9" />
-                                            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-                                        </svg>
-                                        <span className="text-xs font-semibold">Change</span>
-                                    </>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                        <path d="M12 20h9" />
+                                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                    </svg>
                                 )}
                             </button>
                         </div>
-
-                        <p className="mb-1 text-center text-xs font-medium uppercase tracking-[0.18em] text-[#6B778B]">Profile photo</p>
-                        <p className="mb-6 max-w-[220px] text-center text-sm text-[#6B778B]">
-                            Square images work best. JPG, PNG, WebP, GIF, and AVIF are supported.
-                        </p>
 
                         {/* Name */}
                         <h2 className="text-[#052143] font-semibold text-xl mb-2">{profile.name}</h2>
@@ -546,198 +519,159 @@ export default function ProfilePage() {
 
                 {avatarEditorOpen ? (
                     <div className="fixed inset-0 z-[95] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
-                        <div className="w-full max-w-[760px] overflow-hidden rounded-[28px] border border-white/60 bg-white shadow-[0_28px_90px_rgba(15,23,42,0.35)] max-h-[calc(100vh-2rem)] overflow-y-auto">
-                            <div className="border-b border-slate-100 bg-gradient-to-r from-[#F6F8FF] via-white to-[#EEF2FF] px-6 py-5">
-                                <div className="flex items-start justify-between gap-4">
-                                    <div>
-                                        <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[#687EFF] ring-1 ring-[#D1E3FB]">
-                                            Profile photo editor
-                                        </div>
-                                        <h2 className="text-2xl font-bold text-[#052143]">Adjust profile photo</h2>
-                                        <p className="mt-1 text-sm text-[#6B778B]">Drag the image to reposition it, then fine-tune zoom before saving.</p>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={closeAvatarEditor}
-                                        className="rounded-full border border-[#D1E3FB] bg-white px-3 py-2 text-sm font-medium text-[#6B778B] shadow-sm hover:bg-[#F6F8FF] disabled:opacity-60"
-                                        disabled={uploadingAvatar}
-                                    >
-                                        Close
-                                    </button>
+                        <div className="w-full max-w-[560px] overflow-hidden rounded-2xl border border-[#D1E3FB] bg-white shadow-[0_28px_90px_rgba(15,23,42,0.35)] max-h-[calc(100vh-2rem)] overflow-y-auto">
+                            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+                                <div>
+                                    <h2 className="text-xl font-bold text-[#052143]">Adjust profile photo</h2>
+                                    <p className="mt-1 text-sm text-[#6B778B]">Drag to reposition and use the slider to zoom.</p>
                                 </div>
+                                <button
+                                    type="button"
+                                    onClick={closeAvatarEditor}
+                                    className="rounded-full border border-[#D1E3FB] bg-white px-3 py-2 text-sm font-medium text-[#6B778B] shadow-sm hover:bg-[#F6F8FF] disabled:opacity-60"
+                                    disabled={uploadingAvatar}
+                                >
+                                    Close
+                                </button>
                             </div>
 
-                            <div className="grid gap-0 lg:grid-cols-[1fr_260px]">
-                                <div className="p-6">
-                                    <div className="flex flex-col items-center gap-4">
-                                        <div
-                                            className="relative overflow-hidden rounded-full border border-[#D1E3FB] shadow-[0_20px_50px_rgba(104,126,255,0.14)]"
-                                            style={{
-                                                width: `${AVATAR_EDITOR_SIZE}px`,
-                                                height: `${AVATAR_EDITOR_SIZE}px`,
-                                                background: 'linear-gradient(135deg, #E8D5E0 0%, #D4B8C8 100%)',
-                                                touchAction: 'none',
-                                            }}
-                                            onPointerDown={(event) => {
-                                                if (!pendingAvatarUrl || uploadingAvatar) return;
-                                                avatarDragRef.current = {
-                                                    active: true,
-                                                    pointerId: event.pointerId,
-                                                    startX: event.clientX,
-                                                    startY: event.clientY,
-                                                    originX: pendingAvatarOffset.x,
-                                                    originY: pendingAvatarOffset.y,
-                                                };
-                                                try {
-                                                    event.currentTarget.setPointerCapture(event.pointerId);
-                                                } catch {
-                                                    // ignore
-                                                }
-                                            }}
-                                            onPointerMove={(event) => {
-                                                const drag = avatarDragRef.current;
-                                                if (!drag.active) return;
-                                                if (drag.pointerId !== event.pointerId) return;
-                                                const dx = event.clientX - drag.startX;
-                                                const dy = event.clientY - drag.startY;
-                                                setPendingAvatarOffset((prev) => clampPendingAvatarOffset({
-                                                    x: drag.originX + dx,
-                                                    y: drag.originY + dy,
-                                                }, pendingAvatarZoom));
-                                            }}
-                                            onPointerUp={(event) => {
-                                                const drag = avatarDragRef.current;
-                                                if (drag.pointerId !== event.pointerId) return;
-                                                avatarDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, originX: 0, originY: 0 };
-                                                try {
-                                                    event.currentTarget.releasePointerCapture(event.pointerId);
-                                                } catch {
-                                                    // ignore
-                                                }
-                                            }}
-                                            onPointerCancel={() => {
-                                                avatarDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, originX: 0, originY: 0 };
-                                            }}
-                                        >
-                                            {pendingAvatarUrl ? (
-                                                <img
-                                                    src={pendingAvatarUrl}
-                                                    alt="Avatar preview"
-                                                    className="absolute left-1/2 top-1/2 select-none"
-                                                    draggable={false}
-                                                    style={{
-                                                        transform: `translate(calc(-50% + ${pendingAvatarOffset.x}px), calc(-50% + ${pendingAvatarOffset.y}px)) scale(${getPendingAvatarScale(pendingAvatarZoom)})`,
-                                                        transformOrigin: 'center',
-                                                        willChange: 'transform',
-                                                    }}
-                                                    onLoad={(event) => {
-                                                        const img = event.currentTarget;
-                                                        const width = Number(img.naturalWidth || 0);
-                                                        const height = Number(img.naturalHeight || 0);
-                                                        setPendingAvatarNatural({ width, height });
-                                                        setPendingAvatarOffset((prev) => clampPendingAvatarOffset(prev, pendingAvatarZoom));
-                                                    }}
-                                                />
-                                            ) : null}
-
-                                            <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/35" />
-
-                                            {uploadingAvatar ? (
-                                                <div className="absolute inset-0 flex items-center justify-center bg-white/60 text-[#052143] text-sm font-semibold backdrop-blur-[2px]">
-                                                    Uploading...
-                                                </div>
-                                            ) : null}
-                                        </div>
-
-                                        <div className="w-full max-w-[420px] rounded-2xl border border-[#D1E3FB] bg-[#F6F8FF] px-4 py-4">
-                                            <div className="flex items-center justify-between text-xs font-medium uppercase tracking-[0.16em] text-[#6B778B]">
-                                                <span>Zoom</span>
-                                                <span>{Math.round(pendingAvatarZoom * 100)}%</span>
-                                            </div>
-                                            <input
-                                                type="range"
-                                                min={1}
-                                                max={3}
-                                                step={0.01}
-                                                value={pendingAvatarZoom}
-                                                onChange={(event) => {
-                                                    const nextZoom = Math.max(1, Math.min(3, Number(event.target.value) || 1));
-                                                    setPendingAvatarZoom(nextZoom);
-                                                    setPendingAvatarOffset((prev) => clampPendingAvatarOffset(prev, nextZoom));
-                                                    try {
-                                                        window.localStorage.setItem(AVATAR_ZOOM_STORAGE_KEY, String(nextZoom));
-                                                    } catch {
-                                                        // ignore storage write errors
-                                                    }
+                            <div className="px-6 py-6">
+                                <div className="flex flex-col items-center gap-4">
+                                    <div
+                                        className="relative overflow-hidden rounded-full border border-[#D1E3FB] shadow-[0_20px_50px_rgba(104,126,255,0.14)]"
+                                        style={{
+                                            width: `${AVATAR_EDITOR_SIZE}px`,
+                                            height: `${AVATAR_EDITOR_SIZE}px`,
+                                            background: 'linear-gradient(135deg, #E8D5E0 0%, #D4B8C8 100%)',
+                                            touchAction: 'none',
+                                        }}
+                                        onPointerDown={(event) => {
+                                            if (!pendingAvatarUrl || uploadingAvatar) return;
+                                            avatarDragRef.current = {
+                                                active: true,
+                                                pointerId: event.pointerId,
+                                                startX: event.clientX,
+                                                startY: event.clientY,
+                                                originX: pendingAvatarOffset.x,
+                                                originY: pendingAvatarOffset.y,
+                                            };
+                                            try {
+                                                event.currentTarget.setPointerCapture(event.pointerId);
+                                            } catch {
+                                                // ignore
+                                            }
+                                        }}
+                                        onPointerMove={(event) => {
+                                            const drag = avatarDragRef.current;
+                                            if (!drag.active) return;
+                                            if (drag.pointerId !== event.pointerId) return;
+                                            const dx = event.clientX - drag.startX;
+                                            const dy = event.clientY - drag.startY;
+                                            setPendingAvatarOffset((prev) => clampPendingAvatarOffset({
+                                                x: drag.originX + dx,
+                                                y: drag.originY + dy,
+                                            }, pendingAvatarZoom));
+                                        }}
+                                        onPointerUp={(event) => {
+                                            const drag = avatarDragRef.current;
+                                            if (drag.pointerId !== event.pointerId) return;
+                                            avatarDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, originX: 0, originY: 0 };
+                                            try {
+                                                event.currentTarget.releasePointerCapture(event.pointerId);
+                                            } catch {
+                                                // ignore
+                                            }
+                                        }}
+                                        onPointerCancel={() => {
+                                            avatarDragRef.current = { active: false, pointerId: null, startX: 0, startY: 0, originX: 0, originY: 0 };
+                                        }}
+                                    >
+                                        {pendingAvatarUrl ? (
+                                            <img
+                                                src={pendingAvatarUrl}
+                                                alt="Avatar preview"
+                                                className="absolute left-1/2 top-1/2 select-none"
+                                                draggable={false}
+                                                style={{
+                                                    transform: `translate(calc(-50% + ${pendingAvatarOffset.x}px), calc(-50% + ${pendingAvatarOffset.y}px)) scale(${getPendingAvatarScale(pendingAvatarZoom)})`,
+                                                    transformOrigin: 'center',
+                                                    willChange: 'transform',
                                                 }}
-                                                className="mt-3 w-full accent-indigo-600"
-                                                disabled={uploadingAvatar}
+                                                onLoad={(event) => {
+                                                    const img = event.currentTarget;
+                                                    const width = Number(img.naturalWidth || 0);
+                                                    const height = Number(img.naturalHeight || 0);
+                                                    setPendingAvatarNatural({ width, height });
+                                                    setPendingAvatarOffset((prev) => clampPendingAvatarOffset(prev, pendingAvatarZoom));
+                                                }}
                                             />
-                                            <p className="mt-2 text-xs text-[#6B778B]">Use a tighter crop for portraits and faces centered in the frame.</p>
-                                        </div>
-                                    </div>
-                                </div>
+                                        ) : null}
 
-                                <div className="border-t border-slate-100 bg-[#FCFDFF] p-6 lg:border-l lg:border-t-0">
-                                    <div className="space-y-4">
-                                        <div className="rounded-2xl border border-[#D1E3FB] bg-white p-4 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
-                                            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6B778B]">Selected file</p>
-                                            <p className="mt-2 break-words text-sm font-semibold text-[#052143]">{pendingAvatarDetails?.name || 'Untitled image'}</p>
-                                            <div className="mt-3 flex flex-wrap gap-2 text-xs text-[#6B778B]">
-                                                <span className="rounded-full bg-[#F6F8FF] px-3 py-1">{pendingAvatarDetails?.typeLabel || 'IMAGE'}</span>
-                                                <span className="rounded-full bg-[#F6F8FF] px-3 py-1">{pendingAvatarDetails?.sizeLabel || '-'}</span>
-                                                <span className="rounded-full bg-[#F6F8FF] px-3 py-1">Square crop</span>
+                                        <div className="pointer-events-none absolute inset-0 ring-1 ring-inset ring-white/35" />
+
+                                        {uploadingAvatar ? (
+                                            <div className="absolute inset-0 flex items-center justify-center bg-white/60 text-[#052143] text-sm font-semibold backdrop-blur-[2px]">
+                                                Uploading...
                                             </div>
-                                        </div>
+                                        ) : null}
+                                    </div>
 
-                                        <div className="rounded-2xl border border-[#D1E3FB] bg-[#F6F8FF] p-4">
-                                            <p className="text-sm font-semibold text-[#052143]">Tips</p>
-                                            <ul className="mt-3 space-y-2 text-sm text-[#6B778B]">
-                                                <li>• Use a face-centered photo for the cleanest avatar.</li>
-                                                <li>• Leave some room around the head and shoulders.</li>
-                                                <li>• JPG, PNG, WebP, GIF, and AVIF are supported.</li>
-                                            </ul>
+                                    <div className="w-full max-w-[420px] rounded-2xl border border-[#D1E3FB] bg-[#F6F8FF] px-4 py-4">
+                                        <div className="flex items-center justify-between text-xs font-medium uppercase tracking-[0.16em] text-[#6B778B]">
+                                            <span>Zoom</span>
+                                            <span>{Math.round(pendingAvatarZoom * 100)}%</span>
                                         </div>
+                                        <input
+                                            type="range"
+                                            min={1}
+                                            max={3}
+                                            step={0.01}
+                                            value={pendingAvatarZoom}
+                                            onChange={(event) => {
+                                                const nextZoom = Math.max(1, Math.min(3, Number(event.target.value) || 1));
+                                                setPendingAvatarZoom(nextZoom);
+                                                setPendingAvatarOffset((prev) => clampPendingAvatarOffset(prev, nextZoom));
+                                                try {
+                                                    window.localStorage.setItem(AVATAR_ZOOM_STORAGE_KEY, String(nextZoom));
+                                                } catch {
+                                                    // ignore storage write errors
+                                                }
+                                            }}
+                                            className="mt-3 w-full accent-indigo-600"
+                                            disabled={uploadingAvatar}
+                                        />
+                                    </div>
 
-                                        <div className="flex flex-wrap gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={handleChooseAvatar}
-                                                className="rounded-xl border border-[#D1E3FB] bg-white px-4 py-2 text-sm font-semibold text-[#052143] hover:bg-[#F6F8FF] disabled:opacity-60"
-                                                disabled={uploadingAvatar}
-                                            >
-                                                Choose another photo
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={closeAvatarEditor}
-                                                className="rounded-xl border border-[#D1E3FB] bg-white px-4 py-2 text-sm font-semibold text-[#6B778B] hover:bg-[#F6F8FF]"
-                                                disabled={uploadingAvatar}
-                                            >
-                                                Cancel
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={async () => {
-                                                    if (uploadingAvatar) return;
-                                                    setAvatarMessage('');
-                                                    setUploadingAvatar(true);
-                                                    try {
-                                                        const blob = await renderPendingAvatarBlob();
-                                                        await uploadAvatarBlob(blob);
-                                                        closeAvatarEditor();
-                                                    } catch (uploadErr) {
-                                                        setAvatarMessage(uploadErr?.message || 'Failed to upload avatar');
-                                                    } finally {
-                                                        setUploadingAvatar(false);
-                                                    }
-                                                }}
-                                                className="rounded-xl bg-[#687EFF] px-5 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(104,126,255,0.28)] transition hover:bg-[#5A6DE6] disabled:opacity-70"
-                                                disabled={uploadingAvatar || !pendingAvatarFile}
-                                            >
-                                                Save photo
-                                            </button>
-                                        </div>
+                                    <div className="flex w-full max-w-[420px] justify-end gap-2 pt-1">
+                                        <button
+                                            type="button"
+                                            onClick={closeAvatarEditor}
+                                            className="rounded-xl border border-[#D1E3FB] bg-white px-4 py-2 text-sm font-semibold text-[#6B778B] hover:bg-[#F6F8FF]"
+                                            disabled={uploadingAvatar}
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                if (uploadingAvatar) return;
+                                                setAvatarMessage('');
+                                                setUploadingAvatar(true);
+                                                try {
+                                                    const blob = await renderPendingAvatarBlob();
+                                                    await uploadAvatarBlob(blob);
+                                                    closeAvatarEditor();
+                                                } catch (uploadErr) {
+                                                    setAvatarMessage(uploadErr?.message || 'Failed to upload avatar');
+                                                } finally {
+                                                    setUploadingAvatar(false);
+                                                }
+                                            }}
+                                            className="rounded-xl bg-[#687EFF] px-5 py-2 text-sm font-semibold text-white shadow-[0_16px_32px_rgba(104,126,255,0.28)] transition hover:bg-[#5A6DE6] disabled:opacity-70"
+                                            disabled={uploadingAvatar || !pendingAvatarFile}
+                                        >
+                                            Save photo
+                                        </button>
                                     </div>
                                 </div>
                             </div>

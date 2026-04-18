@@ -45,6 +45,7 @@ function toCsv(rows = []) {
 }
 
 function statusText(status) {
+    if (status === 'ALL') return 'All';
     if (status === 'COMPLETED') return 'Passed';
     if (status === 'LEARNING') return 'Learning';
     if (status === 'SUSPENDED') return 'Failed';

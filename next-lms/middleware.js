@@ -12,6 +12,8 @@ const PUBLIC_API_PATHS = new Set([
     '/api/auth/register',
     '/api/auth/seed',
     '/api/auth/logout',
+    '/api/auth/google/start',
+    '/api/auth/google/callback',
     '/api/auth/forgot-password',
     '/api/auth/reset-password',
     '/api/contact',

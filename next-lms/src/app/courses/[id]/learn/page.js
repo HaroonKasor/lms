@@ -3604,7 +3604,7 @@ export default function LearnPage() {
             activityStatuses,
         });
         const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
-        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
+        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : (hasAssessmentFailureSignals ? 'FAILED' : 'LEARNING');
         const nextProgress = nextStatus === 'COMPLETED'
             ? 100
             : computeTinCanProgress(safeIdx + 1, total, false);
@@ -4605,7 +4605,7 @@ export default function LearnPage() {
                         activityStatuses: nextActivityStatuses,
                     });
                     const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
-                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
+                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : (hasAssessmentFailureSignals ? 'FAILED' : 'LEARNING');
                     const nextProgress = nextStatus === 'COMPLETED'
                         ? 100
                         : computeTinCanProgress(matchedActivityIndex + 1, totalActivities, false);
@@ -4796,7 +4796,7 @@ export default function LearnPage() {
                         activityStatuses: syncedStatuses,
                     });
                     const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
-                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
+                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : (hasAssessmentFailureSignals ? 'FAILED' : 'LEARNING');
                     const nextProgress = computeTinCanProgress(idx + 1, total, nextStatus === 'COMPLETED');
                     const closeScorePayload = extractScorePayloadFromStatus(syncedStatuses[idx]);
                     await syncProgressWithTrackedTime({
@@ -5268,7 +5268,7 @@ export default function LearnPage() {
             activityStatuses: syncedStatuses,
         });
         const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
-        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
+        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : (hasAssessmentFailureSignals ? 'FAILED' : 'LEARNING');
         const nextProgress = computeTinCanProgress(effectivePosition, total, nextStatus === 'COMPLETED');
         const guardActive = Date.now() < Number(resumeGuardUntilRef.current || 0);
         const guardBaseline = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);

@@ -23,6 +23,21 @@ export default function Login() {
         if (params.get('timeout') === '1') {
             setError('Session หมดเวลาเพราะไม่มีการใช้งาน กรุณาเข้าสู่ระบบใหม่');
         }
+        const oauthError = String(params.get('error') || '').trim();
+        if (oauthError) {
+            const messages = {
+                google_not_configured: 'ระบบยังไม่ได้ตั้งค่า Google Login (GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET)',
+                google_missing_code: 'ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (ข้อมูลไม่ครบ) กรุณาลองใหม่อีกครั้ง',
+                google_invalid_state: 'ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (state ไม่ถูกต้อง) กรุณาลองใหม่อีกครั้ง',
+                google_token_exchange_failed: 'ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (แลก token ไม่สำเร็จ) กรุณาลองใหม่อีกครั้ง',
+                google_userinfo_failed: 'ไม่สามารถเข้าสู่ระบบด้วย Google ได้ (ดึงข้อมูลผู้ใช้ไม่สำเร็จ) กรุณาลองใหม่อีกครั้ง',
+                google_email_unverified: 'อีเมล Google ยังไม่ได้ยืนยัน กรุณายืนยันอีเมลก่อนแล้วลองใหม่',
+                google_callback_failed: 'เกิดข้อผิดพลาดระหว่างเข้าสู่ระบบด้วย Google กรุณาลองใหม่อีกครั้ง',
+                oauth_hydrate_failed: 'เข้าสู่ระบบสำเร็จ แต่โหลดข้อมูลผู้ใช้ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง',
+                oauth_callback_failed: 'เกิดข้อผิดพลาดระหว่างเข้าสู่ระบบ กรุณาลองใหม่อีกครั้ง',
+            };
+            setError(messages[oauthError] || 'เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
+        }
         if (params.get('registered') === '1') {
             setSuccess('สมัครสมาชิกสำเร็จแล้ว กรุณาเข้าสู่ระบบด้วยรหัสผ่านของคุณ');
             const registeredUsername = String(params.get('username') || '').trim();
@@ -73,6 +88,17 @@ export default function Login() {
             setError('Connection error');
         }
         setLoading(false);
+    };
+
+    const handleGoogleLogin = () => {
+        if (typeof window === 'undefined') return;
+        setRememberMePreference(rememberMe);
+        const params = new URLSearchParams(window.location.search);
+        const nextPath = params.get('next') || '';
+        const url = new URL('/api/auth/google/start', window.location.origin);
+        if (nextPath) url.searchParams.set('next', nextPath);
+        url.searchParams.set('rm', rememberMe ? '1' : '0');
+        window.location.assign(url.toString());
     };
 
     return (
@@ -185,6 +211,26 @@ export default function Login() {
                             style={{ background: '#F87A53' }}>
                             <span className="relative z-10">{loading ? 'Signing in...' : 'Sign in'}</span>
                             <div className="absolute right-[6px] top-1/2 -translate-y-1/2 w-[44px] h-[44px] bg-white/30 rounded-full"></div>
+                        </button>
+
+                        <div className="flex items-center gap-3 my-5">
+                            <div className="h-px flex-1 bg-[#E6EAFF]" />
+                            <div className="text-[#8A96A8] text-[13px] font-medium">OR</div>
+                            <div className="h-px flex-1 bg-[#E6EAFF]" />
+                        </div>
+
+                        <button
+                            type="button"
+                            onClick={handleGoogleLogin}
+                            className="w-full h-[47px] flex items-center justify-center gap-3 rounded-full bg-white border border-[#E6EAFF] text-[#052143] font-medium text-[16px] leading-[130%] transition-all hover:bg-[#F5F7FF]"
+                        >
+                            <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+                                <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303C33.656 32.658 29.18 36 24 36c-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.047 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z" />
+                                <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 16.108 19.003 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.047 6.053 29.268 4 24 4c-7.682 0-14.35 4.337-17.694 10.691z" />
+                                <path fill="#4CAF50" d="M24 44c5.08 0 9.713-1.948 13.207-5.127l-6.097-5.166C29.094 35.091 26.66 36 24 36c-5.159 0-9.622-3.318-11.279-7.946l-6.52 5.025C9.512 39.556 16.227 44 24 44z" />
+                                <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303a12.04 12.04 0 0 1-4.193 5.707l.002-.001 6.097 5.166C36.77 39.283 44 34 44 24c0-1.341-.138-2.65-.389-3.917z" />
+                            </svg>
+                            Continue with Google
                         </button>
                     </form>
 
