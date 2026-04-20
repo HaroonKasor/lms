@@ -57,22 +57,6 @@ function toIsoOrNull(value) {
     return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-function isLearningProgressRowCompleted(row = null) {
-    if (!row || typeof row !== 'object') return false;
-    const status = String(row?.status || '').trim().toLowerCase();
-    if (status === 'failed') return false;
-    if (row?.success === false || row?.completion === false) return false;
-    if (status === 'completed') return true;
-    if (row?.completion === true) return true;
-    return false;
-}
-
-function toSectionAggregateProgress(row = null) {
-    if (!row || typeof row !== 'object') return 0;
-    if (isLearningProgressRowCompleted(row)) return 100;
-    return Math.min(99, clampPercent(row?.progressPercent, 0));
-}
-
 function serializeProgressRow(row, contentIdOverride = null, userMap = new Map()) {
     const contentId = contentIdOverride || String(row.courseId || '');
     const userId = row?.enrollments?.userId;
@@ -343,6 +327,7 @@ async function upsertLearningProgress({
     const safeScoreScaled = Number.isFinite(Number(scoreScaled)) ? Number(scoreScaled) : (existing?.scoreScaled ?? null);
     const explicitSuccess = typeof success === 'boolean' ? success : null;
     const explicitCompletion = typeof completion === 'boolean' ? completion : null;
+    const resolvedSuccess = explicitSuccess ?? (typeof existing?.success === 'boolean' ? existing.success : null);
 
     const shouldHonorNegativeSignals = incomingStatus !== 'completed';
     const hasExplicitFailureSignal =
@@ -374,13 +359,6 @@ async function upsertLearningProgress({
             : explicitCompletion === true
                 ? true
                 : (typeof existing?.completion === 'boolean' ? existing.completion : null);
-    const resolvedSuccess = nextStatus === 'completed'
-        ? true
-        : explicitSuccess === false
-            ? false
-            : explicitSuccess === true
-                ? true
-                : (typeof existing?.success === 'boolean' ? existing.success : null);
 
     const baseData = {
         enrollmentId: enrollment.id,
@@ -471,66 +449,7 @@ async function upsertLearningProgress({
     enrollmentUpdate.lastActivityAt = now;
 
     const wasEnrollmentCompleted = String(enrollment.status || '').toLowerCase() === 'completed';
-    const requiredSections = await prisma.section.findMany({
-        where: {
-            courseId,
-            isActive: true,
-        },
-        select: { id: true },
-        orderBy: [{ orderNo: 'asc' }, { id: 'asc' }],
-    });
-    const requiredSectionIds = requiredSections.length > 0
-        ? requiredSections.map((item) => Number(item?.id || 0)).filter((id) => Number.isInteger(id) && id > 0)
-        : [Number(resolvedSectionId)].filter((id) => Number.isInteger(id) && id > 0);
-    const hasMultipleRequiredSections = requiredSectionIds.length > 1;
-
-    const courseProgressRows = requiredSectionIds.length > 0
-        ? await prisma.learningProgress.findMany({
-            where: {
-                enrollmentId: enrollment.id,
-                sectionId: { in: requiredSectionIds },
-            },
-            select: {
-                id: true,
-                sectionId: true,
-                status: true,
-                progressPercent: true,
-                success: true,
-                completion: true,
-            },
-            orderBy: { id: 'desc' },
-        })
-        : [];
-    const progressBySectionId = new Map();
-    for (const item of courseProgressRows) {
-        const sectionKey = Number(item?.sectionId || 0);
-        if (!Number.isInteger(sectionKey) || sectionKey <= 0) continue;
-        if (!progressBySectionId.has(sectionKey)) {
-            progressBySectionId.set(sectionKey, item);
-        }
-    }
-    if (Number.isInteger(Number(resolvedSectionId)) && Number(resolvedSectionId) > 0 && !progressBySectionId.has(Number(resolvedSectionId))) {
-        progressBySectionId.set(Number(resolvedSectionId), {
-            status: nextStatus,
-            progressPercent: nextProgress,
-            success: resolvedSuccess,
-            completion: resolvedCompletion,
-        });
-    }
-
-    const sectionSnapshots = requiredSectionIds.map((sectionIdValue) => progressBySectionId.get(sectionIdValue) || null);
-    const hasAllRequiredSectionRows = sectionSnapshots.length > 0 && sectionSnapshots.every(Boolean);
-    const allRequiredSectionsCompleted = hasAllRequiredSectionRows
-        && sectionSnapshots.every((sectionRow) => isLearningProgressRowCompleted(sectionRow));
-    const aggregateCourseProgress = sectionSnapshots.length > 0
-        ? Math.round(
-            sectionSnapshots.reduce((sum, sectionRow) => sum + toSectionAggregateProgress(sectionRow), 0)
-            / sectionSnapshots.length
-        )
-        : nextProgress;
-
-    const shouldPreserveCompleted = wasEnrollmentCompleted && !hasExplicitFailureSignal && !hasMultipleRequiredSections;
-    const shouldBeCompletedAfterUpdate = allRequiredSectionsCompleted || shouldPreserveCompleted;
+    const shouldBeCompletedAfterUpdate = nextStatus === 'completed' || (wasEnrollmentCompleted && !hasExplicitFailureSignal);
     const transitionedToCompleted = !wasEnrollmentCompleted && shouldBeCompletedAfterUpdate;
 
     if (shouldBeCompletedAfterUpdate) {
@@ -538,17 +457,16 @@ async function upsertLearningProgress({
         enrollmentUpdate.progressPercent = 100;
         if (!enrollment.completedAt) enrollmentUpdate.completedAt = now;
     } else {
-        if (wasEnrollmentCompleted) {
+        if (wasEnrollmentCompleted && hasExplicitFailureSignal) {
             enrollmentUpdate.completedAt = null;
+            enrollmentUpdate.progressPercent = Math.min(99, Math.max(0, nextProgress));
         }
-        const baselineProgress = hasMultipleRequiredSections
-            ? aggregateCourseProgress
-            : Math.max(enrollmentProgress, nextProgress);
-        const cappedProgress = Math.min(99, Math.max(0, baselineProgress));
-        if (cappedProgress > 0 || enrollmentProgress > 0) {
-            enrollmentUpdate.progressPercent = cappedProgress;
+        if (nextProgress > 0) {
+            if (enrollmentUpdate.progressPercent === undefined) {
+                enrollmentUpdate.progressPercent = Math.max(enrollmentProgress, nextProgress);
+            }
         }
-        if (cappedProgress > 0 || nextProgress > 0) {
+        if (nextProgress > 0) {
             enrollmentUpdate.status = 'in_progress';
             if (!enrollment.startedAt) {
                 enrollmentUpdate.startedAt = now;
@@ -665,37 +583,18 @@ async function createXapiStatement({
     }
 
     if (contentId) {
-        // iSpring/TinCan can emit several statements nearly at the same time on launch.
-        // Some environments still throw P2002 during upsert under concurrency, so we
-        // use update-then-create with P2002 fallback instead.
-        const normalizedContentId = String(contentId);
-        const updated = await prisma.xapiRegistration.updateMany({
+        const existingRegistration = await prisma.xapiRegistration.findUnique({
             where: { enrollmentId: enrollment.id },
-            data: {
-                content_id: normalizedContentId,
-            },
+            select: { id: true },
         });
-
-        if (Number(updated?.count || 0) === 0) {
-            try {
-                await prisma.xapiRegistration.create({
-                    data: {
-                        enrollmentId: enrollment.id,
-                        registrationUuid: createRegistrationUuid(),
-                        content_id: normalizedContentId,
-                    },
-                });
-            } catch (createErr) {
-                if (createErr?.code !== 'P2002') {
-                    throw createErr;
-                }
-                await prisma.xapiRegistration.updateMany({
-                    where: { enrollmentId: enrollment.id },
-                    data: {
-                        content_id: normalizedContentId,
-                    },
-                });
-            }
+        if (!existingRegistration) {
+            await prisma.xapiRegistration.create({
+                data: {
+                    enrollmentId: enrollment.id,
+                    registrationUuid: createRegistrationUuid(),
+                    content_id: String(contentId),
+                },
+            });
         }
     }
 

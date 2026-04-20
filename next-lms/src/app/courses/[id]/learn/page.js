@@ -293,7 +293,6 @@ export default function LearnPage() {
     const [selectedActivityIndex, setSelectedActivityIndex] = useState(0);
     const [activeSectionId, setActiveSectionId] = useState(null);
     const [cohortModuleEnabled, setCohortModuleEnabled] = useState(false);
-    const [allowLocalResumeFallback, setAllowLocalResumeFallback] = useState(false);
     const [iframeSrc, setIframeSrc] = useState('');
     const [isTinCanFrameReady, setIsTinCanFrameReady] = useState(false);
     const [tinCanActivityStatus, setTinCanActivityStatus] = useState([]);
@@ -339,7 +338,6 @@ export default function LearnPage() {
     const trackedStudyTickAtRef = useRef(0);
     const lastUserInteractionAtRef = useRef(0);
     const iframeInteractionCleanupRef = useRef(null);
-    const tinCanLocalAttemptRef = useRef({ idx: null, at: 0 });
     const iframeDeferredSyncTimeoutRef = useRef(null);
     const innerFrameLoadCleanupRef = useRef(null);
     const playerReflowTimeoutsRef = useRef([]);
@@ -558,22 +556,6 @@ export default function LearnPage() {
         }
         return Array.from(new Set(keys));
     }, [progressContentId, course?.id, routeId, scopedStorageSuffixes]);
-    const tincanStatusStorageKeys = useMemo(() => {
-        const values = [
-            String(progressContentId || '').trim(),
-            String(course?.id || '').trim(),
-            String(routeId || '').trim(),
-        ].filter(Boolean);
-
-        const uniqueValues = Array.from(new Set(values));
-        const keys = [];
-        for (const value of uniqueValues) {
-            for (const suffix of scopedStorageSuffixes) {
-                keys.push(`lms_tincan_status:${value}${suffix}`);
-            }
-        }
-        return Array.from(new Set(keys));
-    }, [progressContentId, course?.id, routeId, scopedStorageSuffixes]);
     const webResumeStorageKeys = useMemo(() => {
         const values = [
             String(progressContentId || '').trim(),
@@ -642,38 +624,6 @@ export default function LearnPage() {
             return null;
         }
     }, [content, tincanResumeStorageKeys]);
-
-    const persistTincanStatusSnapshot = useCallback((statuses) => {
-        if (!content || content.type !== 'tincan') return;
-        if (!Array.isArray(tincanStatusStorageKeys) || tincanStatusStorageKeys.length === 0) return;
-        if (!Array.isArray(statuses)) return;
-        try {
-            const serialized = JSON.stringify(statuses);
-            for (const key of tincanStatusStorageKeys) {
-                localStorage.setItem(key, serialized);
-            }
-        } catch {
-            // ignore storage errors
-        }
-    }, [content, tincanStatusStorageKeys]);
-
-    const readTincanStatusSnapshot = useCallback(() => {
-        if (!content || content.type !== 'tincan') return null;
-        if (!Array.isArray(tincanStatusStorageKeys) || tincanStatusStorageKeys.length === 0) return null;
-        try {
-            for (const key of tincanStatusStorageKeys) {
-                const raw = localStorage.getItem(key);
-                if (!raw) continue;
-                const parsed = JSON.parse(raw);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    return parsed;
-                }
-            }
-            return null;
-        } catch {
-            return null;
-        }
-    }, [content, tincanStatusStorageKeys]);
 
     const normalizeActivityPathKey = useCallback((value = '') => {
         const raw = String(value || '').trim();
@@ -1076,50 +1026,6 @@ export default function LearnPage() {
         return false;
     }, [isAssessmentActivity, isTinCanLessonPassed]);
 
-    const ensureTinCanLocalAttempted = useCallback((rawIndex) => {
-        if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
-        if (!chapterLockEnabled) return;
-        if (!resumeLoaded) return;
-
-        const idx = Math.max(0, Math.min(content.activities.length - 1, Math.floor(Number(rawIndex) || 0)));
-        const activity = content.activities[idx];
-        if (isAssessmentActivity(activity)) return;
-
-        const statuses = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
-        const current = statuses[idx];
-        if (isTinCanLessonClearedForAdvance(current, activity)) return;
-
-        const now = Date.now();
-        const gate = tinCanLocalAttemptRef.current || { idx: null, at: 0 };
-        if (Number(gate.idx) === idx && now - Number(gate.at || 0) < 1500) return;
-        tinCanLocalAttemptRef.current = { idx, at: now };
-
-        const total = Math.max(0, Number(content.activities.length || 0));
-        const next = Array.from({ length: total }, (_, index) => {
-            const item = statuses[index];
-            return item && typeof item === 'object' ? { ...item } : null;
-        });
-        const existing = next[idx] && typeof next[idx] === 'object' ? next[idx] : {};
-        next[idx] = {
-            ...existing,
-            attempted: true,
-            status: String(existing?.status || '').trim() || 'learning',
-        };
-
-        const sig = JSON.stringify(next);
-        tinCanActivityStatusRef.current = next;
-        lastTinCanStatusSigRef.current = sig;
-        setTinCanActivityStatus(next);
-        persistTincanStatusSnapshot(next);
-    }, [
-        content,
-        chapterLockEnabled,
-        resumeLoaded,
-        isAssessmentActivity,
-        isTinCanLessonClearedForAdvance,
-        persistTincanStatusSnapshot,
-    ]);
-
     const hasAssessmentActivities = useMemo(() => {
         if (content?.type !== 'tincan' || !Array.isArray(content?.activities)) return false;
         return content.activities.some((activity) => isAssessmentActivity(activity));
@@ -1198,6 +1104,17 @@ export default function LearnPage() {
             ? Math.max(0, Math.min(Math.max(totalActivities - 1, 0), Math.floor(Number(rawActivityIndex))))
             : -1;
         const isFinalActivity = totalActivities <= 1 || (safeActivityIndex >= 0 && safeActivityIndex >= totalActivities - 1);
+
+        // Do not trust raw progress-only signals for finalization because some runtimes
+        // can report 100% too early (e.g. single-page packages on launch).
+        const completionSignalForMulti =
+            completedByPackage ||
+            completedByActivities ||
+            (completedByVerb && isFinalActivity);
+        const completionSignalForSingle =
+            completedByPackage ||
+            completedByActivities ||
+            completedByVerb;
 
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         const hasActivitySignals = activities.some((_, idx) => {
@@ -1289,17 +1206,6 @@ export default function LearnPage() {
             completionByCondition = allActivitiesCompleted && allActivitiesSuccess;
         }
 
-        // Do not trust raw progress-only signals for finalization because some runtimes
-        // can report completion too early (for example right after launch).
-        const completionSignalForMulti =
-            completedByActivities ||
-            (completedByVerb && isFinalActivity) ||
-            (completedByPackage && isFinalActivity);
-        const completionSignalForSingle =
-            completedByPackage ||
-            completedByActivities ||
-            completedByVerb;
-
         const hasRuntimeCompletionSignal = hasMultipleActivities ? completionSignalForMulti : completionSignalForSingle;
         const hasValidCompletionSignal = completionByCondition || hasRuntimeCompletionSignal;
         const assessmentIndexes = activities.reduce((acc, activity, idx) => {
@@ -1321,29 +1227,12 @@ export default function LearnPage() {
             areAssessmentActivitiesPassedFromStatuses &&
             (completedByActivities || completedByVerb || completedByPackage) &&
             isFinalActivity;
-        // "Final slide" heuristics are only meaningful when the package exposes multiple activities/pages.
-        // Single-activity packages would otherwise be marked complete immediately on launch.
-        const hasFinalSlideCompletionFallback =
-            hasMultipleActivities &&
-            !hasAssessmentInActivities &&
-            isFinalActivity &&
-            safeActivityIndex >= 0 &&
-            statuses.some((item) =>
-                isTruthyFlag(item?.attempted)
-                || isTruthyFlag(item?.completed)
-                || isTruthyFlag(item?.passed)
-                || isTruthyFlag(item?.quizzed)
-            );
 
         // Guard against instant false-positive completion on initial launch.
         const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
-        if (
-            studiedSeconds < 10 &&
-            !hasStrongAssessmentCompletionSignal &&
-            !hasTerminalAssessmentPassSignal
-        ) return false;
+        if (studiedSeconds < 10 && !hasStrongAssessmentCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
 
-        if (!hasValidCompletionSignal && !hasTerminalAssessmentPassSignal && !hasFinalSlideCompletionFallback) return false;
+        if (!hasValidCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
         const requiresSuccessValidation =
             effectiveTinCanCondition !== 'all_completed'
             || requireAssessmentPass;
@@ -1817,13 +1706,7 @@ export default function LearnPage() {
 
                 const applyAssessmentPassFromAlert = (percentValue = null, passedOverride = null) => {
                     const safeCurrentPage = readRuntimeCurrentPage();
-                    const resolveBestRuntimeRowIndex = () => {
-                        const hasRowAt = (idx) => Number.isInteger(idx) && idx >= 0 && Array.isArray(dataIndex) && Boolean(dataIndex[idx]);
-                        if (hasRowAt(safeCurrentPage)) return safeCurrentPage;
-                        if (hasRowAt(safeCurrentPage - 1)) return safeCurrentPage - 1;
-                        return safeCurrentPage;
-                    };
-                    const targetRowIndex = resolveBestRuntimeRowIndex();
+                    const candidates = [safeCurrentPage, safeCurrentPage - 1, safeCurrentPage + 1];
                     const scorePercent = Number.isFinite(Number(percentValue))
                         ? Math.max(0, Math.min(100, Number(percentValue)))
                         : null;
@@ -1832,12 +1715,15 @@ export default function LearnPage() {
                         ? explicitPassed
                         : scorePercent === null ? true : scorePercent >= 80;
 
-                    const treeRow = Array.isArray(treeArray) ? treeArray[targetRowIndex] : null;
-                    const dataRow = Array.isArray(dataIndex) ? dataIndex[targetRowIndex] : null;
-                    ensureRow(treeArray, targetRowIndex, dataRow);
-                    ensureRow(dataIndex, targetRowIndex, treeRow);
-                    const row = dataIndex[targetRowIndex];
-                    if (row && typeof row === 'object') {
+                    for (const idx of candidates) {
+                        if (!Number.isFinite(idx) || idx < 0) continue;
+                        const treeRow = Array.isArray(treeArray) ? treeArray[idx] : null;
+                        const dataRow = Array.isArray(dataIndex) ? dataIndex[idx] : null;
+                        ensureRow(treeArray, idx, dataRow);
+                        ensureRow(dataIndex, idx, treeRow);
+                        const row = dataIndex[idx];
+                        if (!row || typeof row !== 'object') continue;
+
                         row.attempted = true;
                         row.quizzed = true;
                         row.completed = true;
@@ -1857,6 +1743,11 @@ export default function LearnPage() {
                             row.scoreMax = 100;
                             row.maxScore = 100;
                         }
+                    }
+
+                    if (passByPercent) {
+                        currentState.completed = true;
+                        currentState.completion = true;
                     }
                     const safeLastSeen = Number(currentState.lastSeenIndex);
                     if (!Number.isFinite(safeLastSeen) || safeCurrentPage > safeLastSeen) {
@@ -1915,6 +1806,17 @@ export default function LearnPage() {
                 wrapRuntimeFunctionSafely('sendCurrentPagePassedStatement', (args) => {
                     const percentValue = coercePercentFromScoreArgs(args?.[1], args?.[2], args?.[3]);
                     applyAssessmentPassFromAlert(percentValue, args?.[0] === true);
+                });
+                wrapRuntimeFunctionSafely('sendExperiencedStatement', () => {
+                    const pageIndex = readRuntimeCurrentPage();
+                    const row = Array.isArray(dataIndex) ? dataIndex[pageIndex] : null;
+                    const scoreRow = Array.isArray(row?.score) ? row.score[0] : null;
+                    const percentValue = coercePercentFromScoreArgs(
+                        scoreRow?.raw ?? row?.scoreRaw ?? row?.rawScore ?? row?.score,
+                        scoreRow?.total ?? row?.scoreMax ?? row?.maxScore ?? row?.totalScore,
+                        scoreRow?.percent ?? row?.scorePercent ?? row?.scaledScore ?? row?.scoreScaled
+                    );
+                    applyAssessmentPassFromAlert(percentValue, true);
                 });
                 wrapRuntimeFunctionSafely('setCurrentPageStatus');
                 wrapRuntimeFunctionSafely('setCurrentPageAttempted');
@@ -2129,23 +2031,10 @@ export default function LearnPage() {
             }
         }
 
-        // Guard against legacy web packages that report "completed" as soon as
-        // the iframe boots or when a single-page package marks its only page
-        // as attempted on load.
-        const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
-        if (studiedSeconds < 10) {
-            return false;
-        }
-
         return Boolean(
             completedByRuntime
             || completedByDataIndex
-            || (
-                safeTotalPages > 1
-                && reachedLastPage
-                && attemptedAllByDataIndex
-                && hasAnyAttemptByDataIndex
-            )
+            || (reachedLastPage && attemptedAllByDataIndex && hasAnyAttemptByDataIndex)
         );
     }, [getLegacyWebRuntimeWindows]);
 
@@ -2711,13 +2600,11 @@ export default function LearnPage() {
         const frameWindow = iframeRef.current.contentWindow;
         if (!frameWindow) return -1;
         const preferInnerOnly = options?.preferInnerOnly === true;
-        let innerContentWindow = null;
 
         // TinCan wrapper keeps the real activity in its inner iframe (#contentFrame).
         // Prefer this source over currentPage because runtime page counters can be stale during transitions.
         try {
             const contentFrame = frameWindow.document?.getElementById('contentFrame');
-            innerContentWindow = contentFrame?.contentWindow || null;
             const innerSrc = contentFrame?.getAttribute('src') || contentFrame?.src || '';
             const inner = normalizeActivityPathKey(innerSrc);
             if (inner) {
@@ -2751,37 +2638,24 @@ export default function LearnPage() {
         // Fallback: runtime counters. Keep this last because wrappers can report selected page
         // before the actual activity iframe has navigated.
         try {
-            const toActivityIndexFromRuntimeCounter = (rawValue) => {
-                const numeric = Number(rawValue);
-                if (!Number.isFinite(numeric) || numeric < 0) return -1;
-                const whole = Math.floor(numeric);
-                const mapped = mapRuntimePageToActivityIndex(whole);
+            const runtimeRows = getTinCanRuntimeRows();
+            const runtimeDataReady = runtimeRows.length > 0;
+            const directIndex = Number(frameWindow.currentPage);
+            if (Number.isFinite(directIndex) && directIndex >= 0) {
+                const mapped = mapRuntimePageToActivityIndex(directIndex);
                 if (mapped >= 0) return mapped;
-
-                // Some iSpring packages keep runtime counters valid but expose
-                // inconsistent path keys in tree/data maps. Use a safe in-range fallback.
-                if (whole >= 0 && whole < content.activities.length) {
-                    return whole;
+                // Fallback for packages that expose currentPage before runtime map is ready.
+                if (!runtimeDataReady && directIndex < content.activities.length) {
+                    return Math.floor(directIndex);
                 }
-                const oneBased = whole - 1;
-                if (oneBased >= 0 && oneBased < content.activities.length) {
-                    return oneBased;
-                }
-                return -1;
-            };
+            }
 
-            const runtimeWindows = [frameWindow, innerContentWindow].filter(Boolean);
-            for (const runtimeWin of runtimeWindows) {
-                const directIndex = Number(runtimeWin?.currentPage);
-                if (Number.isFinite(directIndex) && directIndex >= 0) {
-                    const mapped = toActivityIndexFromRuntimeCounter(directIndex);
-                    if (mapped >= 0) return mapped;
-                }
-
-                const lastSeenIndex = Number(runtimeWin?.currentState?.lastSeenIndex);
-                if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
-                    const mapped = toActivityIndexFromRuntimeCounter(lastSeenIndex);
-                    if (mapped >= 0) return mapped;
+            const lastSeenIndex = Number(frameWindow.currentState?.lastSeenIndex);
+            if (Number.isFinite(lastSeenIndex) && lastSeenIndex >= 0) {
+                const mapped = mapRuntimePageToActivityIndex(lastSeenIndex);
+                if (mapped >= 0) return mapped;
+                if (!runtimeDataReady && lastSeenIndex < content.activities.length) {
+                    return Math.floor(lastSeenIndex);
                 }
             }
         } catch {
@@ -2891,7 +2765,7 @@ export default function LearnPage() {
                     );
                 const derivedCompletion = (isAssessment ? markedPass : markedComplete)
                     ? true
-                    : (hasFailStatus && isTruthyFlag(row?.attempted) ? false : null);
+                    : (hasFailStatus && hasAttemptSignal ? false : null);
                 return {
                     attempted: isTruthyFlag(row?.attempted),
                     completed: isAssessment ? markedPass : markedComplete,
@@ -3127,14 +3001,14 @@ export default function LearnPage() {
         }, 250);
     }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug, detectActivityIndexFromIframe, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, hardenTinCanRuntimeWindow, resolveActivityUrl, normalizeActivityPathKey]);
 
-    const restoreTincanPositionFromProgress = useCallback((entry, { allowLocalFallback = true } = {}) => {
+    const restoreTincanPositionFromProgress = useCallback((entry) => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
 
         const total = content.activities.length;
         let idx = 0;
         let resolvedFromProgress = false;
 
-        const savedPathKey = allowLocalFallback ? readTincanResumePath() : '';
+        const savedPathKey = readTincanResumePath();
         const idxFromSavedPath = savedPathKey
             ? content.activities.findIndex((activity) => {
                 const candidateKeys = getActivityCandidatePathKeys(activity);
@@ -3165,47 +3039,27 @@ export default function LearnPage() {
         }
 
         // Source 2: local resume chapter saved from iframe navigation.
-        const savedIdx = allowLocalFallback ? readTincanResumeIndex() : null;
+        const savedIdx = readTincanResumeIndex();
         const idxFromSaved = Number.isFinite(savedIdx) && savedIdx >= 0 && savedIdx < total
             ? Math.floor(savedIdx)
             : -1;
-        const idxFromHighestSeen = allowLocalFallback && Number.isFinite(Number(highestSeenActivityIndexRef.current))
+        const idxFromHighestSeen = Number.isFinite(Number(highestSeenActivityIndexRef.current))
             ? Math.max(0, Math.min(total - 1, Math.floor(Number(highestSeenActivityIndexRef.current))))
             : -1;
 
         // Merge server/local resume safely:
         // prefer the furthest locally-known lesson to avoid stale server row resetting learner to chapter 1.
         let merged = idxFromCurrent >= 0 ? idxFromCurrent : -1;
-        const bestLocal = allowLocalFallback ? Math.max(
+        const bestLocal = Math.max(
             Number.isFinite(idxFromSaved) ? idxFromSaved : -1,
             Number.isFinite(idxFromSavedPath) ? idxFromSavedPath : -1,
             Number.isFinite(idxFromHighestSeen) ? idxFromHighestSeen : -1
-        ) : -1;
+        );
         if (bestLocal >= 0) {
             merged = Math.max(merged, bestLocal);
         }
 
         idx = Math.max(0, merged);
-
-        // Don't auto-resume into an assessment that hasn't been started.
-        // If localStorage/server saved an assessment position but the user never attempted it,
-        // fall back to the last content lesson to avoid skipping all lessons.
-        if (isAssessmentActivity(content.activities[idx])) {
-            const statuses = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
-            const st = statuses[idx];
-            const assessmentStarted = st && (
-                isTruthyFlag(st?.attempted) || isTruthyFlag(st?.passed) || isTruthyFlag(st?.completed)
-            );
-            if (!assessmentStarted) {
-                let lastContentIdx = 0;
-                for (let i = 0; i < content.activities.length; i++) {
-                    if (!isAssessmentActivity(content.activities[i])) lastContentIdx = i;
-                    else break;
-                }
-                idx = lastContentIdx;
-            }
-        }
-
         highestSeenActivityIndexRef.current = Math.max(Number(highestSeenActivityIndexRef.current || 0), idx);
 
         setSelectedActivityIndex(idx);
@@ -3224,7 +3078,7 @@ export default function LearnPage() {
         }
         // Keep TinCan wrapper loaded (shows TOC/sidebar), then jump chapter via goToPage.
         setIframeSrc(resolvePlayerSrc(content.entryPoint));
-    }, [content, readTincanResumePath, getActivityCandidatePathKeys, readTincanResumeIndex, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, resolvePlayerSrc, isAssessmentActivity]);
+    }, [content, readTincanResumePath, getActivityCandidatePathKeys, readTincanResumeIndex, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, resolvePlayerSrc]);
 
     useEffect(() => {
         if (!content) return;
@@ -3246,8 +3100,7 @@ export default function LearnPage() {
         completionLockRef.current = false;
         resumeGuardUntilRef.current = 0;
         manualSelectionRef.current = { target: null, until: 0 };
-        tinCanLocalAttemptRef.current = { idx: null, at: 0 };
-        const persistedResumeIndex = allowLocalResumeFallback && content.type === 'tincan'
+        const persistedResumeIndex = content.type === 'tincan'
             ? readTincanResumeIndex()
             : null;
         const safePersistedResumeIndex = Number.isFinite(Number(persistedResumeIndex)) && Number(persistedResumeIndex) >= 0
@@ -3257,20 +3110,7 @@ export default function LearnPage() {
         trackedStudySecondsRef.current = 0;
         trackedStudyTickAtRef.current = 0;
         lastUserInteractionAtRef.current = Date.now();
-        if (allowLocalResumeFallback && content.type === 'tincan' && content.activities?.length > 0) {
-            const storedStatuses = readTincanStatusSnapshot();
-            if (Array.isArray(storedStatuses) && storedStatuses.length > 0) {
-                const total = Math.max(0, Number(content.activities.length || 0));
-                const normalized = Array.from({ length: total }, (_, index) => {
-                    const item = storedStatuses[index];
-                    return item && typeof item === 'object' ? { ...item } : null;
-                });
-                const sig = JSON.stringify(normalized);
-                tinCanActivityStatusRef.current = normalized;
-                lastTinCanStatusSigRef.current = sig;
-                setTinCanActivityStatus(normalized);
-            }
-
+        if (content.type === 'tincan' && content.activities?.length > 0) {
             const maxIndex = Math.max(0, content.activities.length - 1);
             const initialResumeIndex = Math.max(0, Math.min(maxIndex, safePersistedResumeIndex));
             setSelectedActivityIndex(initialResumeIndex);
@@ -3280,18 +3120,13 @@ export default function LearnPage() {
             return;
         }
         setIframeSrc(resolvePlayerSrc(content.entryPoint));
-    }, [content, allowLocalResumeFallback, resolvePlayerSrc, clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync, readTincanResumeIndex, readTincanStatusSnapshot]);
+    }, [content, resolvePlayerSrc, clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync, readTincanResumeIndex]);
 
     useEffect(() => {
         if (!content || content.type !== 'tincan' || !resumeLoaded) return;
+        if (!resumeLoaded) return;
         applyTincanResumeToIframe();
     }, [content, selectedActivityIndex, resumeLoaded, applyTincanResumeToIframe]);
-
-    useEffect(() => {
-        if (!isLaunchMode || !content || content.type !== 'tincan') return;
-        if (!resumeLoaded) return;
-        ensureTinCanLocalAttempted(selectedActivityIndex);
-    }, [isLaunchMode, content, resumeLoaded, selectedActivityIndex, ensureTinCanLocalAttempted]);
 
     useEffect(() => {
         if (!content || content.type !== 'web' || !resumeLoaded) return;
@@ -3618,7 +3453,7 @@ export default function LearnPage() {
             activityStatuses,
         });
         const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
-        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : (hasAssessmentFailureSignals ? 'FAILED' : 'LEARNING');
+        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
         const nextProgress = nextStatus === 'COMPLETED'
             ? 100
             : computeTinCanProgress(safeIdx + 1, total, false);
@@ -3664,7 +3499,6 @@ export default function LearnPage() {
                 setError('');
                 setActiveSectionId(null);
                 setCohortModuleEnabled(false);
-                setAllowLocalResumeFallback(false);
                 setEnrollmentId(null);
                 progressWriteBlockRef.current = { disabled: false, reason: '' };
 
@@ -3719,13 +3553,6 @@ export default function LearnPage() {
                     setError('Enrollment not found');
                     return;
                 }
-
-                const selectedEnrollmentStatus = String(selectedEnrollment?.status || '').toUpperCase();
-                const selectedEnrollmentProgress = Number(selectedEnrollment?.progress || 0);
-                const hasServerResumeSignals =
-                    selectedEnrollmentStatus === 'COMPLETED'
-                    || (Number.isFinite(selectedEnrollmentProgress) && selectedEnrollmentProgress > 0);
-                setAllowLocalResumeFallback(hasServerResumeSignals);
 
                 const courseAccess = evaluateCourseLearnAccess(selectedEnrollment?.course);
                 if (!courseAccess.allowed) {
@@ -3979,9 +3806,7 @@ export default function LearnPage() {
                         selectedTrackedStudySeconds
                     );
                 }
-                const savedWebIdx = (allowLocalResumeFallback && content?.type === 'web')
-                    ? readWebResumeIndex()
-                    : null;
+                const savedWebIdx = content?.type === 'web' ? readWebResumeIndex() : null;
                 const mergedCurrent = content?.type === 'web'
                     ? Math.max(
                         selectedCurrent,
@@ -4008,7 +3833,7 @@ export default function LearnPage() {
                 completionLockRef.current = restoredStatus === 'COMPLETED';
                 setCurrentTime(mergedCurrent || 0);
                 setDuration(mergedDuration || 0);
-                restoreTincanPositionFromProgress(selectedEntry, { allowLocalFallback: allowLocalResumeFallback });
+                restoreTincanPositionFromProgress(selectedEntry);
                 if (content?.type === 'web' && Number.isFinite(savedWebIdx) && savedWebIdx >= 0) {
                     persistWebResumeIndex(savedWebIdx);
                 }
@@ -4031,7 +3856,7 @@ export default function LearnPage() {
                 }
             }
 
-            if (!selectedEntry && allowLocalResumeFallback && content?.type === 'tincan') {
+            if (!selectedEntry && content?.type === 'tincan') {
                 const savedIdx = readTincanResumeIndex();
                 if (Number.isFinite(savedIdx) && savedIdx >= 0) {
                     const total = Math.max(1, Number(content?.activities?.length || 0));
@@ -4042,7 +3867,7 @@ export default function LearnPage() {
                     setStatus('LEARNING');
                 }
             }
-            if (!selectedEntry && allowLocalResumeFallback && content?.type === 'web') {
+            if (!selectedEntry && content?.type === 'web') {
                 const savedIdx = readWebResumeIndex();
                 if (Number.isFinite(savedIdx) && savedIdx >= 0) {
                     const safeIdx = Math.max(0, Math.floor(savedIdx));
@@ -4060,7 +3885,7 @@ export default function LearnPage() {
         if (content && progressContentId && progressUserCandidates.length > 0) {
             loadProgress();
         }
-    }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, effectiveSectionId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass, allowLocalResumeFallback]);
+    }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, effectiveSectionId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass]);
 
     // Load xAPI statements for this content
     useEffect(() => {
@@ -4629,7 +4454,7 @@ export default function LearnPage() {
                         activityStatuses: nextActivityStatuses,
                     });
                     const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
-                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : (hasAssessmentFailureSignals ? 'FAILED' : 'LEARNING');
+                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
                     const nextProgress = nextStatus === 'COMPLETED'
                         ? 100
                         : computeTinCanProgress(matchedActivityIndex + 1, totalActivities, false);
@@ -4820,7 +4645,7 @@ export default function LearnPage() {
                         activityStatuses: syncedStatuses,
                     });
                     const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
-                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : (hasAssessmentFailureSignals ? 'FAILED' : 'LEARNING');
+                    const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
                     const nextProgress = computeTinCanProgress(idx + 1, total, nextStatus === 'COMPLETED');
                     const closeScorePayload = extractScorePayloadFromStatus(syncedStatuses[idx]);
                     await syncProgressWithTrackedTime({
@@ -5292,7 +5117,7 @@ export default function LearnPage() {
             activityStatuses: syncedStatuses,
         });
         const lockedCompleted = completionLockRef.current && !hasAssessmentFailureSignals;
-        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : (hasAssessmentFailureSignals ? 'FAILED' : 'LEARNING');
+        const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
         const nextProgress = computeTinCanProgress(effectivePosition, total, nextStatus === 'COMPLETED');
         const guardActive = Date.now() < Number(resumeGuardUntilRef.current || 0);
         const guardBaseline = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);
@@ -5448,15 +5273,8 @@ export default function LearnPage() {
                     : 0
             )
         );
-        // Content lessons (non-assessment) unlock the next lesson automatically once the user is on them.
-        // Assessments still require passing before unlocking the next activity.
-        const isCurrentAssessment = isAssessmentActivity(activities[selectedSafe]);
-        const contentStepAhead = !isCurrentAssessment
-            ? Math.min(activities.length - 1, selectedSafe + 1)
-            : selectedSafe;
-
-        return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected, contentStepAhead);
-    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity]);
+        return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
+    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
@@ -5815,13 +5633,14 @@ export default function LearnPage() {
         const maxUnlockedLessonIndex = isTinCanContent
             ? Math.max(0, Math.min(lessonItems.length - 1, getMaxUnlockedActivityIndex()))
             : Math.max(0, Math.min(lessonItems.length - 1, getMaxUnlockedWebPageIndex()));
-        const tinCanAllLessonsCompleted = isTinCanContent
-            && lessonItems.length > 0
-            && lessonItems.every((lesson, index) => isTinCanLessonPassed(tinCanActivityStatus[index], lesson));
+        const tinCanHasCompletionEvidence = isTinCanContent && (
+            (Array.isArray(tinCanActivityStatus) && tinCanActivityStatus.some((st) => Boolean(st?.completed || st?.passed)))
+            || (resumePositionIndex >= 0 && resumePositionIndex >= lessonItems.length - 1)
+        );
         const inferredCompletedThrough = isTinCanContent
-            ? (normalizedStatus === 'COMPLETED' && tinCanAllLessonsCompleted
+            ? (normalizedStatus === 'COMPLETED' && tinCanHasCompletionEvidence
                 ? lessonItems.length - 1
-                : -1)
+                : Math.max(-1, Math.min(lessonItems.length - 1, Math.max(resumePositionIndex, selectedLessonIndex - 1))))
             : (normalizedStatus === 'COMPLETED'
                 ? lessonItems.length - 1
                 : Math.max(-1, Math.min(lessonItems.length - 1, selectedLessonIndex - 1)));
@@ -5830,16 +5649,12 @@ export default function LearnPage() {
             : [];
         const completedFlags = lessonItems.map((lesson, index) => {
             if (isTinCanContent) {
-                if (normalizedStatus === 'COMPLETED' && tinCanAllLessonsCompleted) return true;
                 const st = tinCanActivityStatus[index];
                 const explicitCompleted = Boolean(st?.passed || st?.completed);
                 if (explicitCompleted) return true;
-                const clearedByLinearProgress =
-                    chapterLockEnabled &&
-                    !isAssessmentActivity(lesson) &&
-                    index < selectedLessonIndex &&
-                    index < maxUnlockedLessonIndex;
-                if (clearedByLinearProgress) return true;
+                if (!isAssessmentActivity(lesson) && index <= inferredCompletedThrough) {
+                    return true;
+                }
                 return false;
             }
             const st = webStatusSnapshot[index];
@@ -5869,13 +5684,6 @@ export default function LearnPage() {
             return 'ยังไม่เริ่ม';
         };
         const activeLessonTitle = lessonItems[selectedLessonIndex]?.name || lessonItems[selectedLessonIndex]?.title || content.title;
-        const assistantCourseTitle = String(course?.title || '').trim();
-        const assistantSectionTitle = String(content?.title || '').trim();
-        const assistantLessonOutline = lessonItems.map((lesson, index) => ({
-            index: index + 1,
-            title: String(lesson?.name || lesson?.title || `Lesson ${index + 1}`),
-            status: String(lessonStatuses[index] || ''),
-        }));
         const lessonModules = [
             {
                 id: 1,
@@ -6009,16 +5817,7 @@ export default function LearnPage() {
                     }`}
                 >
                     <div className="h-full w-[88vw] max-w-[320px] lg:w-[320px]">
-                        <LearningAiAssistant
-                            onClose={handleCloseLearningAi}
-                            courseTitle={assistantCourseTitle}
-                            sectionTitle={assistantSectionTitle}
-                            lessonTitle={activeLessonTitle}
-                            activeLessonIndex={selectedLessonIndex + 1}
-                            totalLessons={lessonItems.length}
-                            lessonOutline={assistantLessonOutline}
-                            lessonSrc={resolvePlayerSrc(content.entryPoint)}
-                        />
+                        <LearningAiAssistant onClose={handleCloseLearningAi} />
                     </div>
                 </div>
             </div>
