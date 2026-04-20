@@ -19,6 +19,7 @@ const ACTION_OPTIONS = [
     { value: 'LEARNING', label: 'Learning', color: '#2563EB', bg: '#EFF6FF', border: '#BFDBFE' },
     { value: 'COMPLETED', label: 'Completed', color: '#059669', bg: '#ECFDF5', border: '#A7F3D0' },
     { value: 'FAILED', label: 'Failed', color: '#E11D48', bg: '#FFF1F2', border: '#FECDD3' },
+    { value: 'CANCELLED', label: 'Cancel Enrollment', color: '#64748B', bg: '#F8FAFC', border: '#E2E8F0' },
 ];
 
 function toSafeString(value) { return String(value || '').trim(); }
@@ -183,6 +184,14 @@ export default function LearnerStatusManagePage() {
     const updateStatus = async (row, nextStatus) => {
         const enrollmentId = Number(row?.id || 0);
         if (!enrollmentId) return;
+        if (String(nextStatus || '').toUpperCase() === 'CANCELLED') {
+            const learnerName = toSafeString(row?.learner?.username || row?.learner?.email) || 'this learner';
+            const courseName = toSafeString(row?.course?.name || row?.course?.title) || 'this course';
+            const confirmed = window.confirm(
+                `Cancel enrollment for ${learnerName} in "${courseName}"?\n\nThe learner will no longer be able to continue this course until re-approved.`
+            );
+            if (!confirmed) return;
+        }
         try {
             setUpdatingId(String(enrollmentId)); setError(''); setSuccess('');
             const payload = { id: enrollmentId, status: nextStatus };
@@ -198,7 +207,9 @@ export default function LearnerStatusManagePage() {
                 ? { ...item, status: nextStatus, progress: nextStatus === 'COMPLETED' ? 100 : Number(item?.progress || 0), completedAt: nextStatus === 'COMPLETED' ? new Date().toISOString() : item?.completedAt, startedAt: nextStatus === 'LEARNING' ? (item?.startedAt || new Date().toISOString()) : item?.startedAt }
                 : item
             ));
-            setSuccess('Status updated successfully!');
+            setSuccess(nextStatus === 'CANCELLED'
+                ? 'Enrollment cancelled successfully!'
+                : 'Status updated successfully!');
         } catch (err) { setError(err?.message || 'Update status failed'); }
         finally { setUpdatingId(''); }
     };
