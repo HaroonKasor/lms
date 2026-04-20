@@ -106,31 +106,6 @@ function pickScoreProgressRow(progressRows = []) {
     return progressRows.find((row) => toScorePercentFromProgress(row) !== null) || null;
 }
 
-function toScorePercentFromQuizAttempt(attempt = null) {
-    const raw = toOptionalScoreNumber(attempt?.score);
-    if (raw === null) return null;
-    const normalized = raw <= 1 ? raw * 100 : raw;
-    return Math.max(0, Math.min(100, normalized));
-}
-
-function isProgressRowCompleted(row = null) {
-    if (!row || typeof row !== 'object') return false;
-    const status = String(row?.status || '').trim().toLowerCase();
-    if (status === 'failed') return false;
-    if (row?.success === false || row?.completion === false) return false;
-    if (status === 'completed') return true;
-    if (row?.completion === true) return true;
-    return false;
-}
-
-function toProgressAggregateValue(row = null) {
-    if (!row || typeof row !== 'object') return 0;
-    if (isProgressRowCompleted(row)) return 100;
-    const n = Number(row?.progressPercent || 0);
-    if (!Number.isFinite(n)) return 0;
-    return Math.max(0, Math.min(99, n));
-}
-
 function normalizeThumbnail(thumbnail) {
     const value = String(thumbnail || '').trim();
     if (!value) return '/course.png';
@@ -290,8 +265,7 @@ function normalizeEnrollmentCourse(
     compatMaps = {},
     contentById = new Map(),
     reviewSummaryByCourseId = {},
-    sectionSettingsBySectionId = {},
-    quizScoreByEnrollmentId = new Map()
+    sectionSettingsBySectionId = {}
 ) {
     if (!enrollment?.courses) return enrollment;
     const courseKey = String(enrollment.courses.id);
@@ -310,7 +284,6 @@ function normalizeEnrollmentCourse(
         explicitSectionId: enrollment?.sectionId,
         learningProgressRows,
         availableSections,
-        preferProgressRows: true,
     });
     const selectedSection = selectedSectionId
         ? availableSections.find((item) => Number(item?.id || 0) === Number(selectedSectionId))
@@ -353,81 +326,22 @@ function normalizeEnrollmentCourse(
         ? learningProgressRows.filter((row) => Number(row?.sectionId || 0) === Number(selectedSectionId))
         : learningProgressRows;
     const latestProgressRow = (sectionProgressRows[0] || learningProgressRows[0] || null);
-    const progressBySectionId = new Map();
-    for (const row of learningProgressRows) {
-        const sectionId = Number(row?.sectionId || 0);
-        if (!Number.isInteger(sectionId) || sectionId <= 0) continue;
-        if (!progressBySectionId.has(sectionId)) {
-            progressBySectionId.set(sectionId, row);
-        }
-    }
-    const requiredSectionIds = (Array.isArray(availableSections) ? availableSections : [])
-        .filter((item) => item?.isActive !== false)
-        .map((item) => Number(item?.id || 0))
-        .filter((id) => Number.isInteger(id) && id > 0);
-    const fallbackRequiredSectionIds = requiredSectionIds.length > 0
-        ? requiredSectionIds
-        : Array.from(progressBySectionId.keys());
-    const hasMultipleRequiredSections = fallbackRequiredSectionIds.length > 1;
-    const allRequiredSectionsCompleted = hasMultipleRequiredSections
-        && fallbackRequiredSectionIds.every((sectionId) => isProgressRowCompleted(progressBySectionId.get(sectionId)));
-    const aggregateSectionProgress = fallbackRequiredSectionIds.length > 0
-        ? Math.round(
-            fallbackRequiredSectionIds.reduce(
-                (sum, sectionId) => sum + toProgressAggregateValue(progressBySectionId.get(sectionId)),
-                0
-            ) / fallbackRequiredSectionIds.length
-        )
-        : null;
     const scoreProgressRow = pickScoreProgressRow(sectionProgressRows) || pickScoreProgressRow(learningProgressRows);
-    const scorePercentFromProgress = toScorePercentFromProgress(scoreProgressRow);
-    const scorePercentFromQuiz = toOptionalScoreNumber(
-        quizScoreByEnrollmentId instanceof Map
-            ? quizScoreByEnrollmentId.get(Number(enrollment?.id || 0))
-            : null
-    );
-    const scorePercent = scorePercentFromProgress !== null
-        ? scorePercentFromProgress
-        : (scorePercentFromQuiz !== null ? Math.max(0, Math.min(100, scorePercentFromQuiz)) : null);
+    const scorePercent = toScorePercentFromProgress(scoreProgressRow);
     const progressStatus = String(latestProgressRow?.status || '').toLowerCase();
     const progressPercent = Number(latestProgressRow?.progressPercent || 0);
-    const hasAssessmentEvidence = scorePercent !== null;
-    const hasExplicitFailureSignal =
-        progressStatus === 'failed'
-        || latestProgressRow?.completion === false
-        || (
-            latestProgressRow?.success === false
-            && (hasAssessmentEvidence || progressStatus === 'failed')
-        );
     const progressSaysFailed =
-        hasExplicitFailureSignal;
+        progressStatus === 'failed' ||
+        latestProgressRow?.success === false ||
+        latestProgressRow?.completion === false;
     const progressSaysCompleted =
         !progressSaysFailed &&
+        progressStatus === 'completed' &&
         (
-            hasMultipleRequiredSections
-                ? allRequiredSectionsCompleted
-                : (
-                    progressStatus === 'completed' &&
-                    (
-                        latestProgressRow?.success === true ||
-                        latestProgressRow?.completion === true ||
-                        (Number.isFinite(progressPercent) && progressPercent >= 100)
-                    )
-                )
+            latestProgressRow?.success === true ||
+            latestProgressRow?.completion === true ||
+            (Number.isFinite(progressPercent) && progressPercent >= 100)
         );
-    const enrollmentMarkedCompleted = String(enrollment?.status || '').trim().toLowerCase() === 'completed' || Boolean(enrollment?.completedAt);
-    const shouldDowngradeStaleCompletion =
-        hasMultipleRequiredSections &&
-        enrollmentMarkedCompleted &&
-        !allRequiredSectionsCompleted;
-    const normalizedInProgressPercent = Math.min(
-        99,
-        Math.max(
-            Number(aggregateSectionProgress ?? 0),
-            Number(enrollment.progressPercent || 0),
-            Number(latestProgressRow?.progressPercent || 0)
-        )
-    );
 
     const effectiveEnrollment = progressSaysCompleted
         ? {
@@ -436,13 +350,6 @@ function normalizeEnrollmentCourse(
             progressPercent: 100,
             completedAt: enrollment?.completedAt || enrollment?.lastActivityAt || new Date().toISOString(),
         }
-        : shouldDowngradeStaleCompletion
-            ? {
-                ...enrollment,
-                status: 'in_progress',
-                progressPercent: normalizedInProgressPercent,
-                completedAt: null,
-            }
         : enrollment;
 
     const legacyStatus = resolveLegacyStatus(effectiveEnrollment, compatMaps?.autoApproveByCourseId || {});
@@ -488,13 +395,9 @@ function normalizeEnrollmentCourse(
         progress: toProgressNumber(
             progressSaysCompleted
                 ? 100
-                : Math.min(
-                    99,
-                    Math.max(
-                        Number(aggregateSectionProgress ?? 0),
-                        Number(effectiveEnrollment.progressPercent || 0),
-                        Number(latestProgressRow?.progressPercent || 0)
-                    )
+                : Math.max(
+                    Number(enrollment.progressPercent || 0),
+                    Number(latestProgressRow?.progressPercent || 0)
                 )
         ),
         scoreRaw: scorePercent !== null ? Number(scorePercent.toFixed(2)) : null,
@@ -1202,7 +1105,7 @@ export async function GET(request) {
                             scoreScaled: true,
                         },
                         orderBy: { id: 'desc' },
-                        take: 500,
+                        take: 10,
                     },
                 },
                 orderBy: { enrolledAt: 'desc' },
@@ -1233,51 +1136,18 @@ export async function GET(request) {
         const collapsed = raw === '1' ? normalized : collapseEnrollmentsByCourse(normalized);
 
         const sectionIds = collectSectionIds(collapsed);
-        const enrollmentIds = collapsed
-            .map((enrollment) => Number(enrollment?.id || 0))
-            .filter((id) => Number.isInteger(id) && id > 0);
         const [contentById, reviewSummaryByCourseId, sectionCompatMaps] = await Promise.all([
             buildContentMapForEnrollments(collapsed, compatMaps),
             buildReviewSummaryByCourse(collapsed.map((enrollment) => enrollment?.courses?.id || enrollment?.courseId)),
             getSectionCompatMaps(sectionIds),
         ]);
-        const quizScoreByEnrollmentId = new Map();
-        if (enrollmentIds.length > 0) {
-            const quizAttempts = await prisma.quizAttempt.findMany({
-                where: {
-                    enrollmentId: { in: enrollmentIds },
-                },
-                select: {
-                    id: true,
-                    enrollmentId: true,
-                    attemptNo: true,
-                    submittedAt: true,
-                    score: true,
-                },
-                orderBy: [
-                    { enrollmentId: 'asc' },
-                    { submittedAt: 'desc' },
-                    { attemptNo: 'desc' },
-                    { id: 'desc' },
-                ],
-            });
-            for (const attempt of quizAttempts) {
-                const enrollmentId = Number(attempt?.enrollmentId || 0);
-                if (!Number.isInteger(enrollmentId) || enrollmentId <= 0) continue;
-                if (quizScoreByEnrollmentId.has(enrollmentId)) continue;
-                const scorePercent = toScorePercentFromQuizAttempt(attempt);
-                if (scorePercent === null) continue;
-                quizScoreByEnrollmentId.set(enrollmentId, Number(scorePercent.toFixed(2)));
-            }
-        }
         return NextResponse.json(
             collapsed.map((enrollment) => normalizeEnrollmentCourse(
                 enrollment,
                 compatMaps,
                 contentById,
                 reviewSummaryByCourseId,
-                sectionCompatMaps?.sectionSettingsBySectionId || {},
-                quizScoreByEnrollmentId
+                sectionCompatMaps?.sectionSettingsBySectionId || {}
             ))
         );
     } catch (err) {
@@ -1301,7 +1171,7 @@ export async function PATCH(request) {
 
         const { data: body, response: invalidBodyResponse } = await readJsonBody(request);
         if (invalidBodyResponse) return invalidBodyResponse;
-        const { id, status, progress, resetProgress } = body;
+        const { id, status, progress } = body;
 
         if (!id) return NextResponse.json({ error: 'id required' }, { status: 400 });
 
@@ -1324,7 +1194,7 @@ export async function PATCH(request) {
         if (!session.isAdmin && existingStatus === 'PENDING') {
             return NextResponse.json({ error: 'Awaiting admin approval' }, { status: 403 });
         }
-        let incomingStatus = status ? String(status).toUpperCase() : '';
+        const incomingStatus = status ? String(status).toUpperCase() : '';
         if (!session.isAdmin) {
             const access = await evaluateEnrollmentLearningAccess({ enrollmentId });
             if (!access?.allowed) {
@@ -1341,87 +1211,15 @@ export async function PATCH(request) {
             }
         }
 
-        let requiredSectionIds = [];
-        let allRequiredSectionsCompleted = true;
-        let aggregateSectionProgress = null;
-        if (!session.isAdmin) {
-            const activeSections = await prisma.section.findMany({
-                where: {
-                    courseId: existing.courseId,
-                    isActive: true,
-                },
-                select: { id: true },
-                orderBy: [{ orderNo: 'asc' }, { id: 'asc' }],
-            });
-            requiredSectionIds = activeSections
-                .map((row) => Number(row?.id || 0))
-                .filter((sectionId) => Number.isInteger(sectionId) && sectionId > 0);
-
-            if (requiredSectionIds.length > 1) {
-                const progressRows = await prisma.learningProgress.findMany({
-                    where: {
-                        enrollmentId,
-                        sectionId: { in: requiredSectionIds },
-                    },
-                    select: {
-                        id: true,
-                        sectionId: true,
-                        status: true,
-                        progressPercent: true,
-                        success: true,
-                        completion: true,
-                    },
-                    orderBy: { id: 'desc' },
-                });
-                const latestBySection = new Map();
-                for (const row of progressRows) {
-                    const sectionId = Number(row?.sectionId || 0);
-                    if (!Number.isInteger(sectionId) || sectionId <= 0) continue;
-                    if (!latestBySection.has(sectionId)) {
-                        latestBySection.set(sectionId, row);
-                    }
-                }
-                const sectionSnapshots = requiredSectionIds.map((sectionId) => latestBySection.get(sectionId) || null);
-                allRequiredSectionsCompleted =
-                    sectionSnapshots.length > 0 &&
-                    sectionSnapshots.every((row) => isProgressRowCompleted(row));
-                aggregateSectionProgress = Math.round(
-                    sectionSnapshots.reduce((sum, row) => sum + toProgressAggregateValue(row), 0)
-                    / Math.max(sectionSnapshots.length, 1)
-                );
-            }
-        }
-
         const existingProgress = Number(existing.progressPercent || 0);
         const incomingProgress = progress !== undefined ? Number(progress) : undefined;
-        let safeIncomingProgress = Number.isFinite(incomingProgress)
+        const safeIncomingProgress = Number.isFinite(incomingProgress)
             ? Math.max(0, Math.min(100, incomingProgress))
             : undefined;
-        const hasMultipleRequiredSections = requiredSectionIds.length > 1;
-        const shouldPreventForcedCompletion =
-            !session.isAdmin &&
-            incomingStatus === 'COMPLETED' &&
-            hasMultipleRequiredSections &&
-            !allRequiredSectionsCompleted;
-        if (shouldPreventForcedCompletion) {
-            incomingStatus = 'LEARNING';
-            if (safeIncomingProgress === undefined) {
-                safeIncomingProgress = Number.isFinite(Number(aggregateSectionProgress))
-                    ? Math.max(0, Math.min(99, Number(aggregateSectionProgress)))
-                    : Math.max(0, Math.min(99, existingProgress));
-            }
-        }
-        const isAdminReset = session.isAdmin && isTruthyFlag(resetProgress);
-        const allowsStaleCompletionDowngrade =
-            !session.isAdmin &&
-            hasMultipleRequiredSections &&
-            !allRequiredSectionsCompleted;
         const allowsCompletionDowngrade =
             incomingStatus === 'FAILED'
             || incomingStatus === 'PENDING'
-            || incomingStatus === 'CANCELLED'
-            || isAdminReset
-            || allowsStaleCompletionDowngrade;
+            || incomingStatus === 'CANCELLED';
         const shouldPreserveCompleted =
             existingStatus === 'COMPLETED' &&
             !!incomingStatus &&
@@ -1476,23 +1274,6 @@ export async function PATCH(request) {
                 },
             },
         });
-
-        if (isAdminReset) {
-            await prisma.learning_progress.updateMany({
-                where: { enrollmentId },
-                data: {
-                    status: 'in_progress',
-                    progressPercent: 0,
-                    currentTime: 0,
-                    duration: 0,
-                    scoreRaw: null,
-                    scoreScaled: null,
-                    success: null,
-                    completion: null,
-                    completedAt: null,
-                },
-            });
-        }
 
         if (session.isAdmin && existingStatus === 'PENDING' && incomingStatus === 'APPROVED') {
             await createNotification({

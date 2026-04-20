@@ -328,18 +328,20 @@ async function upsertLearningProgress({
     const explicitSuccess = typeof success === 'boolean' ? success : null;
     const explicitCompletion = typeof completion === 'boolean' ? completion : null;
     const resolvedSuccess = explicitSuccess ?? (typeof existing?.success === 'boolean' ? existing.success : null);
+    const incomingIndicatesInProgress =
+        incomingStatus === 'in_progress'
+        && safeProgress < 100
+        && explicitCompletion !== true;
 
     const shouldHonorNegativeSignals = incomingStatus !== 'completed';
     const hasExplicitFailureSignal =
         incomingStatus === 'failed'
         || (shouldHonorNegativeSignals && explicitSuccess === false)
         || (shouldHonorNegativeSignals && explicitCompletion === false);
-    const hasExplicitCompletionSignal =
-        incomingStatus === 'completed'
-        || explicitCompletion === true;
+    const hasExplicitCompletionSignal = incomingStatus === 'completed';
     const shouldCompleteByInput = !hasExplicitFailureSignal && hasExplicitCompletionSignal;
     const isAlreadyCompleted = prevStatus === 'completed';
-    const shouldKeepCompleted = isAlreadyCompleted && !hasExplicitFailureSignal;
+    const shouldKeepCompleted = isAlreadyCompleted && !hasExplicitFailureSignal && !incomingIndicatesInProgress;
     const nextStatus = shouldKeepCompleted
         ? 'completed'
         : hasExplicitFailureSignal
@@ -356,9 +358,7 @@ async function upsertLearningProgress({
         ? true
         : explicitCompletion === false
             ? false
-            : explicitCompletion === true
-                ? true
-                : (typeof existing?.completion === 'boolean' ? existing.completion : null);
+            : (typeof existing?.completion === 'boolean' ? existing.completion : null);
 
     const baseData = {
         enrollmentId: enrollment.id,
@@ -449,7 +449,11 @@ async function upsertLearningProgress({
     enrollmentUpdate.lastActivityAt = now;
 
     const wasEnrollmentCompleted = String(enrollment.status || '').toLowerCase() === 'completed';
-    const shouldBeCompletedAfterUpdate = nextStatus === 'completed' || (wasEnrollmentCompleted && !hasExplicitFailureSignal);
+    const shouldPreserveEnrollmentCompleted =
+        wasEnrollmentCompleted
+        && !hasExplicitFailureSignal
+        && !incomingIndicatesInProgress;
+    const shouldBeCompletedAfterUpdate = nextStatus === 'completed' || shouldPreserveEnrollmentCompleted;
     const transitionedToCompleted = !wasEnrollmentCompleted && shouldBeCompletedAfterUpdate;
 
     if (shouldBeCompletedAfterUpdate) {
@@ -588,13 +592,19 @@ async function createXapiStatement({
             select: { id: true },
         });
         if (!existingRegistration) {
-            await prisma.xapiRegistration.create({
-                data: {
-                    enrollmentId: enrollment.id,
-                    registrationUuid: createRegistrationUuid(),
-                    content_id: String(contentId),
-                },
-            });
+            try {
+                await prisma.xapiRegistration.create({
+                    data: {
+                        enrollmentId: enrollment.id,
+                        registrationUuid: createRegistrationUuid(),
+                        content_id: String(contentId),
+                    },
+                });
+            } catch (err) {
+                if (err?.code !== 'P2002') {
+                    throw err;
+                }
+            }
         }
     }
 

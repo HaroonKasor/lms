@@ -5,6 +5,7 @@ import AdmZip from 'adm-zip';
 import { deleteContent, listContents, saveContent } from '@/lib/server/compat-db';
 import { requireSession } from '@/lib/server/auth';
 import { readJsonBody } from '@/lib/server/request-validation';
+import { detectNativeActivityFormat } from '@/lib/server/content-native-format';
 
 const ASSESSMENT_NAME_REGEX = /quiz|test|exam|assessment|post[\s-_]?test|pre[\s-_]?test|แบบทดสอบ|ทดสอบ/i;
 const CONTENT_ROOT = path.join(process.cwd(), 'public', 'content');
@@ -286,21 +287,26 @@ function processExtractedContent(contentDir) {
         activities = parseTincanXml(tincanContent).map((act) => {
             const normalizedLaunch = normalizeLaunchPath(act.launch || '', tincanBaseDir);
             if (!normalizedLaunch) {
-                return { ...act, launch: '' };
+                return { ...act, launch: '', activityType: 'legacy' };
             }
 
             const launchPath = resolveLaunchAbsolutePath(tincanBaseDir, normalizedLaunch);
             if (launchPath && fs.existsSync(launchPath)) {
                 const launchRel = path.relative(publicDir, launchPath).replace(/\\/g, '/');
                 const { suffix } = splitLaunchTarget(normalizedLaunch);
-                return { ...act, launch: `${launchRel}${suffix}` };
+                const nativeFormat = detectNativeActivityFormat(launchPath);
+                return {
+                    ...act,
+                    launch: `${launchRel}${suffix}`,
+                    ...nativeFormat,
+                };
             }
 
             if (/^https?:\/\//i.test(normalizedLaunch)) {
-                return { ...act, launch: normalizedLaunch };
+                return { ...act, launch: normalizedLaunch, activityType: 'legacy' };
             }
 
-            return { ...act, launch: '' };
+            return { ...act, launch: '', activityType: 'legacy' };
         });
 
         const activityWithLaunch = activities.find((a) => a.launch);
@@ -807,29 +813,52 @@ function mergeActivitiesWithConfig(activities, configActivities, contentDir = ''
     const rows = Array.isArray(activities) ? activities : [];
     if (!Array.isArray(configActivities) || configActivities.length === 0) return rows;
 
+    const publicDir = path.join(process.cwd(), 'public');
+
+    const ensureNativeFormat = (activity, resolvedLaunch) => {
+        if (activity?.activityType && String(activity.activityType).toLowerCase() !== 'legacy') {
+            return activity;
+        }
+        const { pathPart } = splitLaunchTarget(resolvedLaunch || '');
+        if (!pathPart) return activity;
+        const absLaunch = path.resolve(publicDir, pathPart.replace(/^\/+/, ''));
+        if (!fs.existsSync(absLaunch)) return activity;
+        const nativeFormat = detectNativeActivityFormat(absLaunch);
+        if (!nativeFormat) return activity;
+        return { ...activity, ...nativeFormat };
+    };
+
     return rows.map((activity, index) => {
         const activityLaunch = resolveSafeConfigLaunch(contentDir, activity?.launch || '');
         const matched = findConfigActivityForActivity(activity, configActivities);
         if (!matched) {
-            return {
-                ...activity,
-                launch: activityLaunch,
-            };
+            const finalLaunch = activityLaunch;
+            return ensureNativeFormat(
+                {
+                    ...activity,
+                    launch: finalLaunch,
+                },
+                finalLaunch
+            );
         }
 
-        return {
-            ...activity,
-            launch: activityLaunch || resolveSafeConfigLaunch(contentDir, matched.url) || '',
-            assessment: Boolean(matched.isAssessment),
-            masteryScore: Number.isFinite(matched.masteryScore) ? Number(matched.masteryScore) : null,
-            attemptLimit: Number.isFinite(matched.limitQuizzed) ? Number(matched.limitQuizzed) : null,
-            calculatescore: Boolean(matched.calculateScore),
-            configNodeId: matched.id || `config-${index}`,
-            configNodeText: matched.text || '',
-            configNodeIndex: Number.isFinite(Number(matched.index)) ? Number(matched.index) : index,
-            configNodeUrl: String(matched.url || '').trim(),
-            configNormalizedUrl: String(matched.normalizedUrl || '').trim(),
-        };
+        const finalLaunch = activityLaunch || resolveSafeConfigLaunch(contentDir, matched.url) || '';
+        return ensureNativeFormat(
+            {
+                ...activity,
+                launch: finalLaunch,
+                assessment: Boolean(matched.isAssessment),
+                masteryScore: Number.isFinite(matched.masteryScore) ? Number(matched.masteryScore) : null,
+                attemptLimit: Number.isFinite(matched.limitQuizzed) ? Number(matched.limitQuizzed) : null,
+                calculatescore: Boolean(matched.calculateScore),
+                configNodeId: matched.id || `config-${index}`,
+                configNodeText: matched.text || '',
+                configNodeIndex: Number.isFinite(Number(matched.index)) ? Number(matched.index) : index,
+                configNodeUrl: String(matched.url || '').trim(),
+                configNormalizedUrl: String(matched.normalizedUrl || '').trim(),
+            },
+            finalLaunch
+        );
     });
 }
 
@@ -863,20 +892,36 @@ function hydrateContentWithConfig(content) {
     }
 
     const configMeta = parseTinCanConfig(contentDir);
-    if (!configMeta) {
-        return { content, changed: false };
-    }
 
-    const mergedActivities = mergeActivitiesWithConfig(content.activities, configMeta.activities, contentDir);
-    const completionPolicy = buildCompletionPolicy(configMeta);
-    const packageConfig = {
-        source: configMeta.source || '',
-        isLinear: configMeta.isLinear,
-        isResume: configMeta.isResume,
-        completedWhenDoAllMasteryscore: configMeta.completedWhenDoAllMasteryscore,
-        assessmentCount: Number(configMeta.assessmentCount || 0),
-        scoredAssessmentCount: Number(configMeta.scoredAssessmentCount || 0),
+    const publicDir = path.join(process.cwd(), 'public');
+    const detectActivityNativeFormat = (activity) => {
+        if (activity?.activityType && String(activity.activityType).toLowerCase() !== 'legacy') {
+            return activity;
+        }
+        const { pathPart } = splitLaunchTarget(activity?.launch || '');
+        if (!pathPart) return activity;
+        const absLaunch = path.resolve(publicDir, pathPart.replace(/^\/+/, ''));
+        if (!fs.existsSync(absLaunch)) return activity;
+        const nativeFormat = detectNativeActivityFormat(absLaunch);
+        if (!nativeFormat) return activity;
+        return { ...activity, ...nativeFormat };
     };
+
+    const mergedActivities = configMeta
+        ? mergeActivitiesWithConfig(content.activities, configMeta.activities, contentDir)
+        : (Array.isArray(content.activities) ? content.activities.map(detectActivityNativeFormat) : []);
+
+    const completionPolicy = configMeta ? buildCompletionPolicy(configMeta) : (content.completionPolicy || null);
+    const packageConfig = configMeta
+        ? {
+            source: configMeta.source || '',
+            isLinear: configMeta.isLinear,
+            isResume: configMeta.isResume,
+            completedWhenDoAllMasteryscore: configMeta.completedWhenDoAllMasteryscore,
+            assessmentCount: Number(configMeta.assessmentCount || 0),
+            scoredAssessmentCount: Number(configMeta.scoredAssessmentCount || 0),
+        }
+        : (content.packageConfig || null);
 
     const next = {
         ...content,
@@ -892,3 +937,4 @@ function hydrateContentWithConfig(content) {
 
     return { content: next, changed };
 }
+

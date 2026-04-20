@@ -166,6 +166,24 @@ function shouldSkipProgressSync(statement = {}) {
     return false;
 }
 
+function readActivityIndexFromExtensions(statement = {}) {
+    const contextExtensions = statement?.context?.extensions || {};
+    const resultExtensions = statement?.result?.extensions || {};
+    const sources = [contextExtensions, resultExtensions];
+
+    for (const source of sources) {
+        for (const [key, value] of Object.entries(source || {})) {
+            const normalizedKey = String(key || '').toLowerCase();
+            if (!normalizedKey.endsWith('/activity-index')) continue;
+            const numeric = Number(value);
+            if (Number.isFinite(numeric)) {
+                return Math.floor(numeric);
+            }
+        }
+    }
+    return null;
+}
+
 function parseIsoDurationToSeconds(value) {
     const raw = String(value || '').trim();
     if (!raw) return undefined;
@@ -226,6 +244,10 @@ async function updateProgressFromStatement(statement, contentId) {
     if (!contentId || !userKey) return;
     if (shouldSkipProgressSync(statement)) return;
 
+    const assessmentLikeStatement = isAssessmentStatement(statement);
+    const activityIndex = readActivityIndexFromExtensions(statement);
+    const isActivityScopedStatement = Number.isFinite(Number(activityIndex));
+
     if (verbId.includes('completed')) {
         const durationSeconds = parseIsoDurationToSeconds(statement?.result?.duration);
         const result = statement?.result || {};
@@ -237,7 +259,7 @@ async function updateProgressFromStatement(statement, contentId) {
         });
         const explicitSuccess = typeof snapshot?.success === 'boolean' ? snapshot.success : undefined;
         const explicitCompletion = typeof snapshot?.completion === 'boolean' ? snapshot.completion : undefined;
-        const hasExplicitFailure = explicitSuccess === false || explicitCompletion === false;
+        const hasExplicitFailure = assessmentLikeStatement && (explicitSuccess === false || explicitCompletion === false);
         const scoreRaw = Number(snapshot?.raw);
         const scoreScaled = Number(snapshot?.scaled);
         const scoreMax = Number(snapshot?.max);
@@ -247,11 +269,11 @@ async function updateProgressFromStatement(statement, contentId) {
             || Number.isFinite(scoreRaw)
             || Number.isFinite(scoreScaled)
             || Number.isFinite(scoreMax);
-        const assessmentLikeStatement = isAssessmentStatement(statement);
         const hasCompletionSignal = explicitCompletion === true || verbId.includes('completed');
         const shouldRequirePass = hasAssessmentEvidence || assessmentLikeStatement;
         const shouldMarkCompleted = !hasExplicitFailure
             && hasCompletionSignal
+            && !isActivityScopedStatement
             && (!shouldRequirePass || explicitSuccess === true || hasPassingScore);
         return upsertLearningProgress({
             contentId,
@@ -269,7 +291,7 @@ async function updateProgressFromStatement(statement, contentId) {
 
     if (verbId.includes('progressed') || verbId.includes('play') || verbId.includes('pause') || verbId.includes('seek')) {
         const { progress, currentTime, duration, scoreRaw, scoreScaled, scoreMax, success, completion } = readProgressExtensions(statement?.result);
-        const hasExplicitFailure = success === false || completion === false;
+        const hasExplicitFailure = assessmentLikeStatement && (success === false || completion === false);
         const normalizedProgress = Number.isFinite(Number(progress))
             ? Number(progress)
             : 0;
@@ -283,9 +305,9 @@ async function updateProgressFromStatement(statement, contentId) {
             max: Number.isFinite(scoreMax) ? scoreMax : null,
             percent: null,
         });
-        const assessmentLikeStatement = isAssessmentStatement(statement);
         const hasVerifiedCompletionSignal =
             completion === true &&
+            !isActivityScopedStatement &&
             (!(hasAssessmentEvidence || assessmentLikeStatement) || success === true || hasPassingScore);
         return upsertLearningProgress({
             contentId,

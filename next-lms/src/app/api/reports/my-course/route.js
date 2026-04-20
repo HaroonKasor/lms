@@ -144,15 +144,9 @@ function resolveScoreResultText({ percent = null, success = null, completion = n
     if (normalizedPercent !== null) {
         return normalizedPercent >= DEFAULT_PASSING_PERCENT ? 'Pass' : 'Fail';
     }
-    const normalizedStatus = String(status || '').toLowerCase();
-    const completedLike = completion === true || normalizedStatus === 'completed';
-    const failedLike = completion === false || normalizedStatus === 'failed';
-
     if (success === true) return 'Pass';
-    // Prevent stale success=false from overriding a completed status when no score exists.
-    if (success === false && !completedLike) return 'Fail';
-    if (completedLike) return 'Completed';
-    if (failedLike) return 'Fail';
+    if (success === false) return 'Fail';
+    if (completion === true || String(status || '').toLowerCase() === 'completed') return 'Completed';
     return '-';
 }
 
@@ -527,9 +521,8 @@ function buildScoreRowsFromLearningProgress(progressRows = [], fallbackTitle = '
 
     const rowsWithScore = progressRows.filter((row) => (
         scorePercentFromProgressRow(row) !== null ||
-        row?.success === true ||
-        row?.completion === true ||
-        String(row?.status || '').toLowerCase() === 'completed'
+        typeof row?.success === 'boolean' ||
+        typeof row?.completion === 'boolean'
     ));
 
     return rowsWithScore.map((row, idx) => {

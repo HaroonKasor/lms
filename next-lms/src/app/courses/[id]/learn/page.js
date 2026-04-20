@@ -331,6 +331,10 @@ export default function LearnPage() {
     });
     const progressRefreshStateRef = useRef({ inFlight: false, lastAt: 0 });
     const highestSeenActivityIndexRef = useRef(0);
+    // Captures the previously-selected activity index before it changes.
+    // Used as a last-resort attribution hint when xAPI completion arrives after iframe auto-advance.
+    const previousSelectedActivityIndexRef = useRef(-1);
+    const selectedActivityChangedAtRef = useRef(0);
     const selectedActivitySyncStateRef = useRef({ idx: null, status: '', at: 0 });
     const legacyWebSyncStateRef = useRef({ idx: null, status: '', at: 0 });
     const progressWriteBlockRef = useRef({ disabled: false, reason: '' });
@@ -518,12 +522,19 @@ export default function LearnPage() {
         const sectionKey = Number.isInteger(Number(effectiveSectionId)) && Number(effectiveSectionId) > 0
             ? `:section:${Number(effectiveSectionId)}`
             : '';
-        const stableSuffix = `:user:${userKey}${sectionKey}`;
-        const legacyEnrollmentSuffix = Number.isInteger(Number(enrollmentId)) && Number(enrollmentId) > 0
-            ? `:user:${userKey}:enrollment:${Number(enrollmentId)}${sectionKey}`
-            : '';
-        return Array.from(new Set([stableSuffix, legacyEnrollmentSuffix].filter(Boolean)));
-    }, [canonicalProgressUserId, enrollmentId, effectiveSectionId]);
+        const hasEnrollmentScope = Number.isInteger(Number(enrollmentId)) && Number(enrollmentId) > 0;
+
+        // In launch mode, avoid reading stale user-level resume before enrollment scope is known.
+        if (isLaunchMode && !hasEnrollmentScope) {
+            return [];
+        }
+
+        if (hasEnrollmentScope) {
+            return [`:user:${userKey}:enrollment:${Number(enrollmentId)}${sectionKey}`];
+        }
+
+        return [`:user:${userKey}${sectionKey}`];
+    }, [canonicalProgressUserId, enrollmentId, effectiveSectionId, isLaunchMode]);
     const tincanResumeStorageKeys = useMemo(() => {
         const values = [
             String(progressContentId || '').trim(),
@@ -584,6 +595,22 @@ export default function LearnPage() {
         for (const value of uniqueValues) {
             for (const suffix of scopedStorageSuffixes) {
                 keys.push(`lms_web_status:${value}${suffix}`);
+            }
+        }
+        return Array.from(new Set(keys));
+    }, [progressContentId, course?.id, routeId, scopedStorageSuffixes]);
+    const tincanStatusStorageKeys = useMemo(() => {
+        const values = [
+            String(progressContentId || '').trim(),
+            String(course?.id || '').trim(),
+            String(routeId || '').trim(),
+        ].filter(Boolean);
+
+        const uniqueValues = Array.from(new Set(values));
+        const keys = [];
+        for (const value of uniqueValues) {
+            for (const suffix of scopedStorageSuffixes) {
+                keys.push(`lms_tincan_status:${value}${suffix}`);
             }
         }
         return Array.from(new Set(keys));
@@ -754,6 +781,80 @@ export default function LearnPage() {
         return null;
     }, [content, webStatusStorageKeys]);
 
+    const persistTincanActivityStatus = useCallback((snapshot) => {
+        if (!content || content.type !== 'tincan') return;
+        if (!Array.isArray(tincanStatusStorageKeys) || tincanStatusStorageKeys.length === 0) return;
+        if (!Array.isArray(snapshot) || snapshot.length === 0) return;
+        try {
+            const compact = snapshot.map((row) => ({
+                attempted: row?.attempted === true,
+                completed: row?.completed === true,
+                passed: row?.passed === true,
+                quizzed: row?.quizzed === true,
+                status: typeof row?.status === 'string' ? row.status : '',
+                success: typeof row?.success === 'boolean' ? row.success : null,
+                completion: typeof row?.completion === 'boolean' ? row.completion : null,
+                scoreRaw: Number.isFinite(Number(row?.scoreRaw)) ? Number(row.scoreRaw) : null,
+                scoreScaled: Number.isFinite(Number(row?.scoreScaled)) ? Number(row.scoreScaled) : null,
+                scoreMax: Number.isFinite(Number(row?.scoreMax)) ? Number(row.scoreMax) : null,
+            }));
+            const serialized = JSON.stringify(compact);
+            for (const key of tincanStatusStorageKeys) {
+                localStorage.setItem(key, serialized);
+            }
+        } catch {
+            // ignore storage errors
+        }
+    }, [content, tincanStatusStorageKeys]);
+
+    const readTincanActivityStatus = useCallback(() => {
+        if (!content || content.type !== 'tincan') return null;
+        if (!Array.isArray(tincanStatusStorageKeys) || tincanStatusStorageKeys.length === 0) return null;
+        try {
+            for (const key of tincanStatusStorageKeys) {
+                const raw = localStorage.getItem(key);
+                if (!raw) continue;
+                const parsed = JSON.parse(raw);
+                if (!Array.isArray(parsed) || parsed.length === 0) continue;
+                return parsed.map((row) => ({
+                    attempted: row?.attempted === true,
+                    completed: row?.completed === true,
+                    passed: row?.passed === true,
+                    quizzed: row?.quizzed === true,
+                    status: typeof row?.status === 'string' ? row.status : '',
+                    success: typeof row?.success === 'boolean' ? row.success : null,
+                    completion: typeof row?.completion === 'boolean' ? row.completion : null,
+                    scoreRaw: Number.isFinite(Number(row?.scoreRaw)) ? Number(row.scoreRaw) : null,
+                    scoreScaled: Number.isFinite(Number(row?.scoreScaled)) ? Number(row.scoreScaled) : null,
+                    scoreMax: Number.isFinite(Number(row?.scoreMax)) ? Number(row.scoreMax) : null,
+                }));
+            }
+        } catch {
+            // ignore parse/storage errors
+        }
+        return null;
+    }, [content, tincanStatusStorageKeys]);
+
+    useEffect(() => {
+        if (!content || content.type !== 'tincan') return;
+        if (!Array.isArray(tinCanActivityStatus) || tinCanActivityStatus.length === 0) return;
+        persistTincanActivityStatus(tinCanActivityStatus);
+    }, [content, tinCanActivityStatus, persistTincanActivityStatus]);
+
+    useEffect(() => {
+        const currentIdx = Number.isFinite(Number(selectedActivityIndex))
+            ? Math.floor(Number(selectedActivityIndex))
+            : -1;
+        return () => {
+            // When selectedActivityIndex changes (or component unmounts), save the value
+            // that was "current" during this render as the new "previous".
+            if (currentIdx >= 0) {
+                previousSelectedActivityIndexRef.current = currentIdx;
+                selectedActivityChangedAtRef.current = Date.now();
+            }
+        };
+    }, [selectedActivityIndex]);
+
     const computeTinCanProgress = useCallback((position, total, completed = false) => {
         const totalLessons = Math.max(1, Number(total) || 0);
         const safePos = Math.max(1, Math.min(totalLessons, Number(position) || 1));
@@ -896,7 +997,7 @@ export default function LearnPage() {
         const explicitSuccess = typeof item.success === 'boolean'
             ? item.success
             : (typeof item?.result?.success === 'boolean' ? item.result.success : null);
-        if (!isAssessment && explicitSuccess === true) return true;
+        if (explicitSuccess === true) return true;
 
         const score = asFiniteNumber(
             item.score
@@ -1011,6 +1112,7 @@ export default function LearnPage() {
         // Content/video lessons are considered "cleared for advance" once learner has started.
         if (isTinCanLessonPassed(item, activity)) return true;
         if (item && typeof item === 'object') {
+            if (item?.success === true || item?.completion === true) return true;
             if (isTruthyFlag(item?.attempted) || isTruthyFlag(item?.quizzed)) return true;
             const statusText = normalizeStatusText(
                 item?.status
@@ -1108,9 +1210,8 @@ export default function LearnPage() {
         // Do not trust raw progress-only signals for finalization because some runtimes
         // can report 100% too early (e.g. single-page packages on launch).
         const completionSignalForMulti =
-            completedByPackage ||
             completedByActivities ||
-            (completedByVerb && isFinalActivity);
+            ((completedByPackage || completedByVerb) && isFinalActivity);
         const completionSignalForSingle =
             completedByPackage ||
             completedByActivities ||
@@ -1706,7 +1807,10 @@ export default function LearnPage() {
 
                 const applyAssessmentPassFromAlert = (percentValue = null, passedOverride = null) => {
                     const safeCurrentPage = readRuntimeCurrentPage();
-                    const candidates = [safeCurrentPage, safeCurrentPage - 1, safeCurrentPage + 1];
+                    // Never touch next page here. Some runtimes emit this callback while
+                    // preparing auto-advance, which caused chapter N+1 to be marked passed.
+                    const candidates = [safeCurrentPage, safeCurrentPage - 1]
+                        .filter((idx) => Number.isFinite(idx) && idx >= 0);
                     const scorePercent = Number.isFinite(Number(percentValue))
                         ? Math.max(0, Math.min(100, Number(percentValue)))
                         : null;
@@ -1715,34 +1819,57 @@ export default function LearnPage() {
                         ? explicitPassed
                         : scorePercent === null ? true : scorePercent >= 80;
 
-                    for (const idx of candidates) {
-                        if (!Number.isFinite(idx) || idx < 0) continue;
-                        const treeRow = Array.isArray(treeArray) ? treeArray[idx] : null;
-                        const dataRow = Array.isArray(dataIndex) ? dataIndex[idx] : null;
-                        ensureRow(treeArray, idx, dataRow);
-                        ensureRow(dataIndex, idx, treeRow);
-                        const row = dataIndex[idx];
-                        if (!row || typeof row !== 'object') continue;
+                    const hasPriorEvidence = (row) => {
+                        if (!row || typeof row !== 'object') return false;
+                        const priorScore = asFiniteNumber(
+                            row?.scoreRaw
+                            ?? row?.rawScore
+                            ?? row?.scorePercent
+                            ?? row?.score?.[0]?.raw
+                            ?? row?.score?.[0]?.percent
+                        );
+                        return Boolean(
+                            row?.attempted
+                            || row?.quizzed
+                            || row?.completed
+                            || row?.passed
+                            || typeof row?.success === 'boolean'
+                            || typeof row?.completion === 'boolean'
+                            || priorScore !== null
+                            || String(row?.status || '').trim()
+                        );
+                    };
 
-                        row.attempted = true;
-                        row.quizzed = true;
-                        row.completed = true;
-                        row.completion = true;
-                        row.passed = passByPercent;
-                        row.success = passByPercent;
-                        row.status = passByPercent ? 'passed' : 'failed';
-                        if (scorePercent !== null) {
-                            if (Array.isArray(row.score)) {
-                                row.score[0] = { raw: scorePercent, total: 100, percent: scorePercent };
-                            }
-                            row.scorePercent = scorePercent;
-                            row.rawScore = scorePercent;
-                            row.scoreRaw = scorePercent;
-                            row.scaledScore = scorePercent / 100;
-                            row.scoreScaled = scorePercent / 100;
-                            row.scoreMax = 100;
-                            row.maxScore = 100;
+                    const resolvedIdx =
+                        candidates.find((idx) => hasPriorEvidence(dataIndex?.[idx]) || hasPriorEvidence(treeArray?.[idx]))
+                        ?? candidates[0];
+                    if (!Number.isFinite(resolvedIdx) || resolvedIdx < 0) return;
+
+                    const treeRow = Array.isArray(treeArray) ? treeArray[resolvedIdx] : null;
+                    const dataRow = Array.isArray(dataIndex) ? dataIndex[resolvedIdx] : null;
+                    ensureRow(treeArray, resolvedIdx, dataRow);
+                    ensureRow(dataIndex, resolvedIdx, treeRow);
+                    const row = dataIndex[resolvedIdx];
+                    if (!row || typeof row !== 'object') return;
+
+                    row.attempted = true;
+                    row.quizzed = true;
+                    row.completed = true;
+                    row.completion = true;
+                    row.passed = passByPercent;
+                    row.success = passByPercent;
+                    row.status = passByPercent ? 'passed' : 'failed';
+                    if (scorePercent !== null) {
+                        if (Array.isArray(row.score)) {
+                            row.score[0] = { raw: scorePercent, total: 100, percent: scorePercent };
                         }
+                        row.scorePercent = scorePercent;
+                        row.rawScore = scorePercent;
+                        row.scoreRaw = scorePercent;
+                        row.scaledScore = scorePercent / 100;
+                        row.scoreScaled = scorePercent / 100;
+                        row.scoreMax = 100;
+                        row.maxScore = 100;
                     }
 
                     if (passByPercent) {
@@ -1756,7 +1883,7 @@ export default function LearnPage() {
                     try {
                         const assessmentMessage = {
                             type: 'lms-assessment-result',
-                            runtimePage: safeCurrentPage,
+                            runtimePage: resolvedIdx,
                             percent: scorePercent,
                             passed: passByPercent,
                             completed: true,
@@ -2678,6 +2805,9 @@ export default function LearnPage() {
                 return Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
             }
             const runtimeRows = getTinCanRuntimeRows();
+            const previousStatuses = Array.isArray(tinCanActivityStatusRef.current)
+                ? tinCanActivityStatusRef.current
+                : [];
 
             const next = content.activities.map((_, i) => {
                 const directStatusRow = findTinCanStatusRowForActivity(i);
@@ -2685,7 +2815,28 @@ export default function LearnPage() {
                 const mappedRow = mappedRuntimePage >= 0
                     ? runtimeRows.find((entry) => Number(entry?.runtimePage) === mappedRuntimePage)?.row
                     : null;
-                const row = directStatusRow || mappedRow || {};
+                const iframeRow = directStatusRow || mappedRow || null;
+                // When the iframe has no evidence for this activity, preserve any previously
+                // restored status (from localStorage) so passed lessons don't lose their
+                // green checkmark on re-entry before the iframe has visited them.
+                if (!iframeRow) {
+                    const preserved = previousStatuses?.[i];
+                    if (preserved && (preserved.passed || preserved.completed || preserved.attempted)) {
+                        return {
+                            attempted: Boolean(preserved.attempted),
+                            completed: Boolean(preserved.completed),
+                            passed: Boolean(preserved.passed),
+                            quizzed: Boolean(preserved.quizzed),
+                            status: String(preserved.status || ''),
+                            success: typeof preserved.success === 'boolean' ? preserved.success : null,
+                            completion: typeof preserved.completion === 'boolean' ? preserved.completion : null,
+                            scoreRaw: asFiniteNumber(preserved.scoreRaw),
+                            scoreScaled: asFiniteNumber(preserved.scoreScaled),
+                            scoreMax: asFiniteNumber(preserved.scoreMax),
+                        };
+                    }
+                }
+                const row = iframeRow || {};
                 const activity = content.activities[i];
                 const isAssessment = isAssessmentActivity(activity);
                 const statusText = normalizeStatusText(
@@ -2695,6 +2846,12 @@ export default function LearnPage() {
                     ?? row?.successStatus
                     ?? ''
                 );
+                const rawSuccess = typeof row?.success === 'boolean'
+                    ? row.success
+                    : (typeof row?.result?.success === 'boolean' ? row.result.success : null);
+                const rawCompletion = typeof row?.completion === 'boolean'
+                    ? row.completion
+                    : (typeof row?.result?.completion === 'boolean' ? row.result.completion : null);
                 const hasFailStatus = hasFailureStatusSignal(statusText);
                 const hasPassStatus = hasPassStatusSignal(statusText);
                 const rawScore = asFiniteNumber(
@@ -2743,29 +2900,56 @@ export default function LearnPage() {
                 const hasAssessmentCompletionSignal =
                     isAssessment &&
                     !hasFailStatus &&
-                    (isTruthyFlag(row?.completed) || row?.completion === true || hasCompletionStatusSignal(statusText));
+                    (isTruthyFlag(row?.completed) || row?.completion === true || rawCompletion === true || hasCompletionStatusSignal(statusText));
+                const hasAttemptSignal =
+                    isTruthyFlag(row?.attempted) ||
+                    isTruthyFlag(row?.quizzed) ||
+                    isTruthyFlag(row?.completed) ||
+                    isTruthyFlag(row?.passed) ||
+                    rawSuccess === true ||
+                    rawCompletion === true ||
+                    hasCompletionStatusSignal(statusText) ||
+                    hasPassStatus;
                 const markedPass =
                     !hasFailStatus &&
                     (
                         isTruthyFlag(row?.passed)
+                        || rawSuccess === true
                         || hasPassStatus
                         || hasPassingScore
                         || (hasAssessmentCompletionSignal && !hasAnyScoreEvidence)
-                        || (!isAssessment && row?.success === true)
                     );
+                // Guard against spurious completed=true flags some TinCan packages set on
+                // adjacent pages (e.g., marking the next lesson "complete" when the current
+                // one ends). Require either a richer signal (explicit completion field,
+                // completion status text, score) OR corroborating evidence (attempted /
+                // passed / success flags) before propagating completion from a bare boolean.
+                const completedFlagHasCorroboration =
+                    isTruthyFlag(row?.attempted)
+                    || isTruthyFlag(row?.quizzed)
+                    || isTruthyFlag(row?.passed)
+                    || rawSuccess === true
+                    || hasPassStatus
+                    || hasAnyScoreEvidence
+                    || Boolean(statusText);
                 const markedComplete =
                     !hasFailStatus &&
-                    (isTruthyFlag(row?.completed) || row?.completion === true || hasCompletionStatusSignal(statusText));
+                    (
+                        (isTruthyFlag(row?.completed) && completedFlagHasCorroboration)
+                        || row?.completion === true
+                        || rawCompletion === true
+                        || hasCompletionStatusSignal(statusText)
+                    );
                 const derivedSuccess = markedPass
                     ? true
                     : (
-                        hasFailStatus || (isAssessment && hasAnyScoreEvidence && !hasPassingScore)
+                        rawSuccess === false || hasFailStatus || (isAssessment && hasAnyScoreEvidence && !hasPassingScore)
                             ? false
                             : null
                     );
                 const derivedCompletion = (isAssessment ? markedPass : markedComplete)
                     ? true
-                    : (hasFailStatus && hasAttemptSignal ? false : null);
+                    : (rawCompletion === false || (hasFailStatus && hasAttemptSignal) ? false : null);
                 return {
                     attempted: isTruthyFlag(row?.attempted),
                     completed: isAssessment ? markedPass : markedComplete,
@@ -3062,6 +3246,55 @@ export default function LearnPage() {
         idx = Math.max(0, merged);
         highestSeenActivityIndexRef.current = Math.max(Number(highestSeenActivityIndexRef.current || 0), idx);
 
+        // Seed minimum "passed" status for lessons the learner has already reached past,
+        // so the chapter-lock gate doesn't block re-entry when localStorage is empty.
+        // The iframe may take time to report per-lesson runtime data, and the server only
+        // stores aggregate progress (currentTime=N means learner has reached lesson N).
+        if (idx > 0) {
+            const previousStatuses = Array.isArray(tinCanActivityStatusRef.current)
+                ? tinCanActivityStatusRef.current
+                : [];
+            const needsSeeding = previousStatuses.length < idx
+                || !previousStatuses.slice(0, idx).every((row) => row && (row.passed || row.completed || row.attempted));
+            if (needsSeeding) {
+                const seeded = Array.from({ length: total }, (_, i) => {
+                    const existing = previousStatuses[i];
+                    if (existing && (existing.passed || existing.completed || existing.attempted)) {
+                        return existing;
+                    }
+                    if (i < idx) {
+                        return {
+                            attempted: true,
+                            completed: true,
+                            passed: true,
+                            quizzed: false,
+                            status: 'passed',
+                            success: true,
+                            completion: true,
+                            scoreRaw: null,
+                            scoreScaled: null,
+                            scoreMax: null,
+                        };
+                    }
+                    return existing || {
+                        attempted: false,
+                        completed: false,
+                        passed: false,
+                        quizzed: false,
+                        status: '',
+                        success: null,
+                        completion: null,
+                        scoreRaw: null,
+                        scoreScaled: null,
+                        scoreMax: null,
+                    };
+                });
+                tinCanActivityStatusRef.current = seeded;
+                lastTinCanStatusSigRef.current = JSON.stringify(seeded);
+                setTinCanActivityStatus(seeded);
+            }
+        }
+
         setSelectedActivityIndex(idx);
         if (idx > 0) {
             // Guard a short window to avoid early "chapter 1" sync overriding resume target.
@@ -3091,8 +3324,12 @@ export default function LearnPage() {
         setCurrentTime(0);
         setDuration(0);
         setStatus('NOT_STARTED');
-        setTinCanActivityStatus([]);
-        tinCanActivityStatusRef.current = [];
+        const restoredTincanStatuses = content.type === 'tincan' ? readTincanActivityStatus() : null;
+        const initialTincanStatuses = Array.isArray(restoredTincanStatuses) && restoredTincanStatuses.length > 0
+            ? restoredTincanStatuses
+            : [];
+        setTinCanActivityStatus(initialTincanStatuses);
+        tinCanActivityStatusRef.current = initialTincanStatuses;
         lastTinCanStatusSigRef.current = '';
         lastTincanSyncRef.current = { position: null, status: null, progress: null, at: 0 };
         selectedActivitySyncStateRef.current = { idx: null, status: '', at: 0 };
@@ -3120,7 +3357,7 @@ export default function LearnPage() {
             return;
         }
         setIframeSrc(resolvePlayerSrc(content.entryPoint));
-    }, [content, resolvePlayerSrc, clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync, readTincanResumeIndex]);
+    }, [content, resolvePlayerSrc, clearIframeInteractionTracking, clearInnerFrameLoadBinding, clearIframeDeferredSync, readTincanResumeIndex, readTincanActivityStatus]);
 
     useEffect(() => {
         if (!content || content.type !== 'tincan' || !resumeLoaded) return;
@@ -3178,6 +3415,27 @@ export default function LearnPage() {
         ) {
             return;
         }
+        if (normalizedStatus === 'COMPLETED' && String(content?.type || '').toLowerCase() === 'tincan') {
+            const activities = Array.isArray(content?.activities) ? content.activities : [];
+            const statuses = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
+            const completedByActivities =
+                activities.length > 0 &&
+                statuses.length > 0 &&
+                statuses.every((item, idx) => isTinCanLessonPassed(item, activities[idx]));
+            const detectedIdx = detectActivityIndexFromIframe();
+            const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
+                ? Math.floor(Number(selectedActivityIndex))
+                : -1;
+            const candidateIdx = detectedIdx >= 0 ? detectedIdx : selectedIdx;
+            const canCompleteNow = canFinalizeTinCanCompletion({
+                completedByActivities,
+                activityIndex: candidateIdx,
+                activityStatuses: statuses,
+            });
+            if (!canCompleteNow) {
+                return;
+            }
+        }
 
         if (now < Number(gate.blockedUntil || 0)) return;
         if (gate.inFlight) return;
@@ -3233,7 +3491,17 @@ export default function LearnPage() {
         } finally {
             gate.inFlight = false;
         }
-    }, [course?.id, enrollmentId, hasAssessmentFailureSignals]);
+    }, [
+        course?.id,
+        enrollmentId,
+        hasAssessmentFailureSignals,
+        content?.type,
+        content?.activities,
+        isTinCanLessonPassed,
+        canFinalizeTinCanCompletion,
+        detectActivityIndexFromIframe,
+        selectedActivityIndex,
+    ]);
 
     const bindIframeInteractionTracking = useCallback(() => {
         clearIframeInteractionTracking();
@@ -3311,11 +3579,76 @@ export default function LearnPage() {
             : payload;
         const normalizedStatus = String(normalizedPayloadBase?.status || '').toUpperCase();
         const normalizedPayload = { ...normalizedPayloadBase };
-        if (normalizedStatus === 'COMPLETED') {
+        const normalizedPayloadUser = String(normalizedPayload?.userId || '').trim().toLowerCase();
+        const normalizedCanonicalUser = String(canonicalProgressUserId || '').trim().toLowerCase();
+        const shouldBlockAnonymousWrite =
+            userResolved &&
+            normalizedCanonicalUser &&
+            normalizedCanonicalUser !== 'anonymous' &&
+            (!normalizedPayloadUser || normalizedPayloadUser === 'anonymous');
+        if (shouldBlockAnonymousWrite) {
+            return {
+                success: false,
+                reason: 'USER_CONTEXT_NOT_READY',
+                skipped: true,
+            };
+        }
+        if (normalizedStatus === 'COMPLETED' && String(content?.type || '').toLowerCase() === 'tincan') {
+            const activities = Array.isArray(content?.activities) ? content.activities : [];
+            const statuses = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
+            const totalActivities = Math.max(activities.length, 1);
+            const payloadCurrent = Number(normalizedPayload?.currentTime);
+            const payloadActivityIdx =
+                Number.isFinite(payloadCurrent) && payloadCurrent > 0
+                    ? Math.floor(payloadCurrent - 1)
+                    : -1;
+            const detectedIdx = detectActivityIndexFromIframe();
+            const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
+                ? Math.floor(Number(selectedActivityIndex))
+                : -1;
+            const candidateIdx = payloadActivityIdx >= 0
+                ? payloadActivityIdx
+                : (detectedIdx >= 0 ? detectedIdx : selectedIdx);
+            const completedByActivities =
+                activities.length > 0 &&
+                statuses.length > 0 &&
+                statuses.every((item, idx) => isTinCanLessonPassed(item, activities[idx]));
+            const canCompleteNow = canFinalizeTinCanCompletion({
+                completedByActivities,
+                activityIndex: candidateIdx,
+                activityStatuses: statuses,
+            });
+            if (!canCompleteNow) {
+                const fallbackProgress = computeTinCanProgress(
+                    candidateIdx >= 0 ? (candidateIdx + 1) : 1,
+                    totalActivities,
+                    false
+                );
+                normalizedPayload.status = 'LEARNING';
+                normalizedPayload.progress = Math.min(
+                    99,
+                    Math.max(Number(normalizedPayload?.progress || 0), Number(fallbackProgress || 0))
+                );
+                if (normalizedPayload.completion === true) {
+                    delete normalizedPayload.completion;
+                }
+                if (normalizedPayload.success === true) {
+                    delete normalizedPayload.success;
+                }
+            }
+        }
+        const finalStatus = String(normalizedPayload?.status || '').toUpperCase();
+        if (finalStatus === 'COMPLETED') {
             // Never let stale false flags downgrade a valid completion write on server.
             normalizedPayload.completion = true;
             if (normalizedPayload.success === false) {
                 delete normalizedPayload.success;
+            }
+        } else {
+            // Guard against stale runtime flags: LEARNING updates must not carry completion=true,
+            // otherwise backend may accidentally promote enrollment to COMPLETED.
+            if (normalizedPayload.completion === true) {
+                delete normalizedPayload.completion;
             }
         }
         const normalizedSectionId = Number(normalizedPayload?.sectionId);
@@ -3354,7 +3687,20 @@ export default function LearnPage() {
             completionLockRef.current = false;
         }
         return result;
-    }, [getTrackedStudySeconds, hasAssessmentFailureSignals, effectiveSectionId]);
+    }, [
+        getTrackedStudySeconds,
+        hasAssessmentFailureSignals,
+        effectiveSectionId,
+        canonicalProgressUserId,
+        userResolved,
+        content?.type,
+        content?.activities,
+        detectActivityIndexFromIframe,
+        selectedActivityIndex,
+        isTinCanLessonPassed,
+        canFinalizeTinCanCompletion,
+        computeTinCanProgress,
+    ]);
 
     useEffect(() => {
         progressWriteBlockRef.current = { disabled: false, reason: '' };
@@ -3715,11 +4061,25 @@ export default function LearnPage() {
 
             const uniqueCandidates = Array.from(new Set(progressUserCandidates));
             const rowsByCandidate = new Map();
+            const desiredEnrollmentId = Number(enrollmentId);
             for (const candidate of uniqueCandidates) {
                 const progressData = await getProgress(progressContentId, candidate, effectiveSectionId);
-                if (Array.isArray(progressData) && progressData.length > 0) {
-                    rowsByCandidate.set(candidate, progressData.map((row) => ({ ...row, __candidateUserId: candidate })));
+                if (!Array.isArray(progressData) || progressData.length === 0) continue;
+
+                let scopedRows = progressData;
+                if (Number.isInteger(desiredEnrollmentId) && desiredEnrollmentId > 0) {
+                    const matchedEnrollmentRows = progressData.filter((row) => {
+                        const rowEnrollmentId = Number(row?.enrollmentId ?? row?.enrollment_id ?? 0);
+                        return Number.isInteger(rowEnrollmentId) && rowEnrollmentId === desiredEnrollmentId;
+                    });
+                    scopedRows = matchedEnrollmentRows;
                 }
+
+                if (!Array.isArray(scopedRows) || scopedRows.length === 0) continue;
+                rowsByCandidate.set(
+                    candidate,
+                    scopedRows.map((row) => ({ ...row, __candidateUserId: candidate }))
+                );
             }
 
             const pickLatest = (rows) => {
@@ -3857,26 +4217,18 @@ export default function LearnPage() {
             }
 
             if (!selectedEntry && content?.type === 'tincan') {
-                const savedIdx = readTincanResumeIndex();
-                if (Number.isFinite(savedIdx) && savedIdx >= 0) {
-                    const total = Math.max(1, Number(content?.activities?.length || 0));
-                    const safeIdx = Math.max(0, Math.min(total - 1, Math.floor(savedIdx)));
-                    setSelectedActivityIndex(safeIdx);
-                    setCurrentTime(safeIdx + 1);
-                    setProgress(computeTinCanProgress(safeIdx + 1, total, false));
-                    setStatus('LEARNING');
-                }
+                // Fresh/no-server-progress entry: start from lesson 1.
+                setSelectedActivityIndex(0);
+                setCurrentTime(1);
+                setProgress(0);
+                setStatus('NOT_STARTED');
             }
             if (!selectedEntry && content?.type === 'web') {
-                const savedIdx = readWebResumeIndex();
-                if (Number.isFinite(savedIdx) && savedIdx >= 0) {
-                    const safeIdx = Math.max(0, Math.floor(savedIdx));
-                    const total = Math.max(1, safeIdx + 1);
-                    setCurrentTime(safeIdx + 1);
-                    setDuration(total);
-                    setProgress(computeTinCanProgress(safeIdx + 1, total, false));
-                    setStatus('LEARNING');
-                }
+                // Fresh/no-server-progress entry: start from page 1.
+                setCurrentTime(1);
+                setDuration(1);
+                setProgress(0);
+                setStatus('NOT_STARTED');
             }
 
             setProgressUserId(selectedUserId);
@@ -3885,7 +4237,7 @@ export default function LearnPage() {
         if (content && progressContentId && progressUserCandidates.length > 0) {
             loadProgress();
         }
-    }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, effectiveSectionId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass]);
+    }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, effectiveSectionId, enrollmentId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass]);
 
     // Load xAPI statements for this content
     useEffect(() => {
@@ -4051,6 +4403,8 @@ export default function LearnPage() {
 
         const onMessage = async (event) => {
             if (event.origin !== window.location.origin) return;
+            if (!resumeLoaded) return;
+            if (!progressUserId || String(progressUserId).trim().toLowerCase() === 'anonymous') return;
 
             let payload = event?.data;
             if (!payload) return;
@@ -4134,20 +4488,38 @@ export default function LearnPage() {
                 }
 
                 resumeGuardUntilRef.current = 0;
-                completionLockRef.current = true;
                 highestSeenActivityIndexRef.current = Math.max(Number(highestSeenActivityIndexRef.current || 0), safeIndex);
                 setSelectedActivityIndex(safeIndex);
                 setCurrentTime(safeIndex + 1);
                 setDuration(activities.length);
-                setStatus('COMPLETED');
-                setProgress(100);
                 persistTincanResumeIndex(safeIndex);
                 const activityPath = getPrimaryActivityResumePath(activity);
                 persistTincanResumePath(activityPath || activity?.activityId || activity?.id || '');
 
                 if (!isTerminalAssessmentResult) {
+                    completionLockRef.current = false;
+                    const inProgress = computeTinCanProgress(safeIndex + 1, activities.length, false);
+                    setStatus('LEARNING');
+                    setProgress(inProgress);
+                    await syncProgressWithTrackedTime({
+                        contentId: progressContentId,
+                        userId: progressUserId,
+                        sectionId: activeSectionId,
+                        status: 'LEARNING',
+                        progress: inProgress,
+                        currentTime: safeIndex + 1,
+                        duration: activities.length,
+                        scoreRaw: percent ?? undefined,
+                        scoreScaled: percent !== null ? percent / 100 : undefined,
+                        success: true,
+                    });
+                    await syncEnrollmentStatus('LEARNING', inProgress);
                     return;
                 }
+
+                completionLockRef.current = true;
+                setStatus('COMPLETED');
+                setProgress(100);
 
                 await syncProgressWithTrackedTime({
                     contentId: progressContentId,
@@ -4200,9 +4572,21 @@ export default function LearnPage() {
                 return '';
             };
 
-            // Prefer the iframe's real current lesson before trusting package-emitted IDs.
-            let matchedActivityIndex = detectActivityIndexFromIframe();
+            // Prefer statement's own object.id over iframe state: completion events often
+            // arrive after the iframe has auto-advanced to the next lesson, so trusting the
+            // iframe would mis-attribute lesson N's completion to lesson N+1.
+            const incomingObjectId = String(incoming.object?.id || '').trim();
+            const incomingObjectKey = normalizeActivityPathKey(incomingObjectId);
             const incomingTaggedActivityIndex = readIncomingExtensionBySuffix('/activity-index');
+            const incomingIsCompletionSignal =
+                isCompletedVerb(incoming?.verb) || incomingResultSnapshot?.completion === true;
+            let matchedActivityIndex = -1;
+            if (incomingObjectKey && Array.isArray(content.activities)) {
+                matchedActivityIndex = findUniqueActivityIndexByPathKey(incomingObjectKey, { allowLoose: false });
+                if (matchedActivityIndex < 0) {
+                    matchedActivityIndex = findUniqueActivityIndexByPathKey(incomingObjectKey, { allowLoose: true });
+                }
+            }
             if (matchedActivityIndex < 0) {
                 const parsedIncomingIndex = Number(incomingTaggedActivityIndex);
                 if (Number.isFinite(parsedIncomingIndex)) {
@@ -4218,12 +4602,60 @@ export default function LearnPage() {
                     }
                 }
             }
-            const incomingObjectId = String(incoming.object?.id || '').trim();
-            const incomingObjectKey = normalizeActivityPathKey(incomingObjectId);
-            if (matchedActivityIndex < 0 && incomingObjectKey && Array.isArray(content.activities)) {
-                matchedActivityIndex = findUniqueActivityIndexByPathKey(incomingObjectKey, { allowLoose: false });
-                if (matchedActivityIndex < 0) {
-                    matchedActivityIndex = findUniqueActivityIndexByPathKey(incomingObjectKey, { allowLoose: true });
+            if (matchedActivityIndex < 0) {
+                const iframeDetectedIndex = detectActivityIndexFromIframe();
+                matchedActivityIndex = iframeDetectedIndex;
+                // Auto-advance guard: when iframe auto-flips to the next lesson just before
+                // emitting the completion statement, the raw iframe reading would mis-attribute
+                // the completion to lesson N+1. If the detected lesson has no prior attempt
+                // state AND the previous lesson was already attempted (but not yet completed),
+                // the completion almost certainly belongs to that previous lesson instead.
+                if (
+                    incomingIsCompletionSignal
+                    && Number.isFinite(iframeDetectedIndex)
+                    && iframeDetectedIndex > 0
+                    && Array.isArray(tinCanActivityStatusRef.current)
+                ) {
+                    const statuses = tinCanActivityStatusRef.current;
+                    const detectedRow = statuses[iframeDetectedIndex] || null;
+                    const detectedIsFresh = !detectedRow
+                        || (!detectedRow.attempted && !detectedRow.completed && !detectedRow.passed);
+                    if (detectedIsFresh) {
+                        let fallbackIndex = -1;
+                        for (let i = iframeDetectedIndex - 1; i >= 0; i--) {
+                            const row = statuses[i] || null;
+                            if (row && row.attempted && !row.completed && !row.passed) {
+                                fallbackIndex = i;
+                                break;
+                            }
+                        }
+                        // Also consider selectedActivityIndex as a hint of the lesson the user
+                        // is actually viewing — React state can lag behind iframe DOM advance.
+                        const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
+                            ? Math.floor(Number(selectedActivityIndex))
+                            : -1;
+                        if (fallbackIndex < 0 && selectedIdx >= 0 && selectedIdx < iframeDetectedIndex) {
+                            fallbackIndex = selectedIdx;
+                        }
+                        // Last resort: the previously-selected lesson, ONLY when the index
+                        // change looks like a recent auto-advance (within 1.5s). A manual
+                        // click followed by watching a full video would exceed this window,
+                        // so this won't cause false redirects of a legitimate completion.
+                        const prevSelectedIdx = Number.isFinite(Number(previousSelectedActivityIndexRef.current))
+                            ? Math.floor(Number(previousSelectedActivityIndexRef.current))
+                            : -1;
+                        const prevChangeAge = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
+                        const looksLikeAutoAdvance =
+                            prevSelectedIdx >= 0
+                            && prevSelectedIdx === iframeDetectedIndex - 1
+                            && prevChangeAge <= 1500;
+                        if (fallbackIndex < 0 && looksLikeAutoAdvance) {
+                            fallbackIndex = prevSelectedIdx;
+                        }
+                        if (fallbackIndex >= 0) {
+                            matchedActivityIndex = fallbackIndex;
+                        }
+                    }
                 }
             }
             const matchedActivity =
@@ -5260,6 +5692,14 @@ export default function LearnPage() {
                 forwardFromSelected = i + 1;
                 continue;
             }
+            // Treat the currently-selected non-assessment lesson as "cleared" so the
+            // learner can advance to the next lesson after watching. xAPI completion
+            // statements can lag behind the iframe's video-ended event; without this,
+            // learners get blocked right after finishing a lesson.
+            if (i === selectedSafe && !isAssessmentActivity(activities[i])) {
+                forwardFromSelected = i + 1;
+                continue;
+            }
             break;
         }
         forwardFromSelected = Math.max(0, Math.min(activities.length - 1, forwardFromSelected));
@@ -5274,7 +5714,7 @@ export default function LearnPage() {
             )
         );
         return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
-    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity]);
+    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
@@ -5640,7 +6080,13 @@ export default function LearnPage() {
         const inferredCompletedThrough = isTinCanContent
             ? (normalizedStatus === 'COMPLETED' && tinCanHasCompletionEvidence
                 ? lessonItems.length - 1
-                : Math.max(-1, Math.min(lessonItems.length - 1, Math.max(resumePositionIndex, selectedLessonIndex - 1))))
+                : Math.max(
+                    -1,
+                    Math.min(
+                        lessonItems.length - 1,
+                        Math.max(selectedLessonIndex, resumePositionIndex) - 1
+                    )
+                ))
             : (normalizedStatus === 'COMPLETED'
                 ? lessonItems.length - 1
                 : Math.max(-1, Math.min(lessonItems.length - 1, selectedLessonIndex - 1)));
