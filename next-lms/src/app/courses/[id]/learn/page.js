@@ -335,6 +335,11 @@ export default function LearnPage() {
     // Used as a last-resort attribution hint when xAPI completion arrives after iframe auto-advance.
     const previousSelectedActivityIndexRef = useRef(-1);
     const selectedActivityChangedAtRef = useRef(0);
+    // Tracks activity indexes where an xAPI "completed" verb (or equivalent completion
+    // signal) was received while that index was the learner's currently-selected lesson.
+    // Used as concrete "video ended" evidence for chapter-advance gating when the
+    // package doesn't reliably write completed=true into its own dataIndex.
+    const completionVerbSeenForActivityRef = useRef(new Set());
     const selectedActivitySyncStateRef = useRef({ idx: null, status: '', at: 0 });
     const legacyWebSyncStateRef = useRef({ idx: null, status: '', at: 0 });
     const progressWriteBlockRef = useRef({ disabled: false, reason: '' });
@@ -855,6 +860,34 @@ export default function LearnPage() {
         };
     }, [selectedActivityIndex]);
 
+    // Listen for YouTube player state-change messages. YouTube's embed API (when the
+    // iframe URL includes enablejsapi=1) posts JSON messages to the parent window on
+    // state changes. We treat state=0 ("ended") as concrete "video finished" evidence
+    // for the learner's currently-selected lesson, used as a chapter-advance fallback
+    // when the TinCan wrapper doesn't emit its own xAPI completion statement.
+    useEffect(() => {
+        const onMessage = (event) => {
+            const raw = event?.data;
+            let payload = null;
+            if (typeof raw === 'string') {
+                if (!raw.startsWith('{')) return;
+                try { payload = JSON.parse(raw); } catch { return; }
+            } else if (raw && typeof raw === 'object') {
+                payload = raw;
+            }
+            if (!payload || payload.event !== 'onStateChange') return;
+            // YouTube reports info=0 when the video reaches its end.
+            if (Number(payload.info) !== 0) return;
+            const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
+                ? Math.floor(Number(selectedActivityIndex))
+                : -1;
+            if (selectedIdx < 0) return;
+            completionVerbSeenForActivityRef.current.add(selectedIdx);
+        };
+        window.addEventListener('message', onMessage);
+        return () => window.removeEventListener('message', onMessage);
+    }, [selectedActivityIndex]);
+
     const computeTinCanProgress = useCallback((position, total, completed = false) => {
         const totalLessons = Math.max(1, Number(total) || 0);
         const safePos = Math.max(1, Math.min(totalLessons, Number(position) || 1));
@@ -1109,11 +1142,12 @@ export default function LearnPage() {
         if (assessment) {
             return isTinCanLessonPassed(item, activity);
         }
-        // Content/video lessons are considered "cleared for advance" once learner has started.
+        // Content/video lessons require an actual completion signal from the package —
+        // "attempted" or "learning"/"in progress" just means the learner opened/started
+        // the lesson, which is not enough to unlock the next chapter.
         if (isTinCanLessonPassed(item, activity)) return true;
         if (item && typeof item === 'object') {
             if (item?.success === true || item?.completion === true) return true;
-            if (isTruthyFlag(item?.attempted) || isTruthyFlag(item?.quizzed)) return true;
             const statusText = normalizeStatusText(
                 item?.status
                 ?? item?.result
@@ -1121,7 +1155,7 @@ export default function LearnPage() {
                 ?? item?.successStatus
                 ?? ''
             );
-            if (statusText.includes('progress') || statusText.includes('in progress') || statusText.includes('learning')) {
+            if (hasCompletionStatusSignal(statusText) || hasPassStatusSignal(statusText)) {
                 return true;
             }
         }
@@ -1334,9 +1368,13 @@ export default function LearnPage() {
         if (studiedSeconds < 10 && !hasStrongAssessmentCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
 
         if (!hasValidCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
+        // If the course has any assessment activity, always enforce pass validation —
+        // a course with a quiz must not be marked COMPLETED while the quiz is unpassed,
+        // regardless of the package's completion condition flag.
         const requiresSuccessValidation =
             effectiveTinCanCondition !== 'all_completed'
-            || requireAssessmentPass;
+            || requireAssessmentPass
+            || hasAssessmentInActivities;
         if (requiresSuccessValidation && hasAssessmentFailureSignalsFromStatuses) return false;
         if (requiresSuccessValidation && !areAssessmentActivitiesPassedFromStatuses) return false;
         return true;
@@ -2910,7 +2948,7 @@ export default function LearnPage() {
                     rawCompletion === true ||
                     hasCompletionStatusSignal(statusText) ||
                     hasPassStatus;
-                const markedPass =
+                const markedPassFromRow =
                     !hasFailStatus &&
                     (
                         isTruthyFlag(row?.passed)
@@ -2919,6 +2957,12 @@ export default function LearnPage() {
                         || hasPassingScore
                         || (hasAssessmentCompletionSignal && !hasAnyScoreEvidence)
                     );
+                // Anti-regression for "passed": once passed, stay passed unless there's
+                // an explicit failure signal on this sync.
+                const previouslyMarkedPass =
+                    isTruthyFlag(previousStatuses?.[i]?.passed)
+                    || previousStatuses?.[i]?.success === true;
+                const markedPass = markedPassFromRow || (previouslyMarkedPass && !hasFailStatus);
                 // Guard against spurious completed=true flags some TinCan packages set on
                 // adjacent pages (e.g., marking the next lesson "complete" when the current
                 // one ends). Require either a richer signal (explicit completion field,
@@ -2932,7 +2976,7 @@ export default function LearnPage() {
                     || hasPassStatus
                     || hasAnyScoreEvidence
                     || Boolean(statusText);
-                const markedComplete =
+                const markedCompleteFromRow =
                     !hasFailStatus &&
                     (
                         (isTruthyFlag(row?.completed) && completedFlagHasCorroboration)
@@ -2940,6 +2984,17 @@ export default function LearnPage() {
                         || rawCompletion === true
                         || hasCompletionStatusSignal(statusText)
                     );
+                // Anti-regression: once a lesson has been recognized as completed or passed
+                // on a previous sync, keep it completed unless we see an explicit failure
+                // signal. Some TinCan packages briefly clear their completion flags during
+                // internal navigation (which would otherwise cause the sidebar to drop from
+                // "2 done" back to "1 done" mid-session).
+                const previouslyMarkedComplete =
+                    isTruthyFlag(previousStatuses?.[i]?.completed)
+                    || isTruthyFlag(previousStatuses?.[i]?.passed)
+                    || previousStatuses?.[i]?.completion === true
+                    || previousStatuses?.[i]?.success === true;
+                const markedComplete = markedCompleteFromRow || (previouslyMarkedComplete && !hasFailStatus);
                 const derivedSuccess = markedPass
                     ? true
                     : (
@@ -2950,12 +3005,18 @@ export default function LearnPage() {
                 const derivedCompletion = (isAssessment ? markedPass : markedComplete)
                     ? true
                     : (rawCompletion === false || (hasFailStatus && hasAttemptSignal) ? false : null);
+                // Keep "attempted" sticky too — learners who once entered a lesson stay
+                // "attempted" even if the package drops the flag on internal navigation.
+                const stickyAttempted =
+                    isTruthyFlag(row?.attempted)
+                    || isTruthyFlag(previousStatuses?.[i]?.attempted)
+                    || (previouslyMarkedComplete && !hasFailStatus);
                 return {
-                    attempted: isTruthyFlag(row?.attempted),
+                    attempted: stickyAttempted,
                     completed: isAssessment ? markedPass : markedComplete,
                     passed: markedPass,
-                    quizzed: isTruthyFlag(row?.quizzed),
-                    status: String(statusText || ''),
+                    quizzed: isTruthyFlag(row?.quizzed) || isTruthyFlag(previousStatuses?.[i]?.quizzed),
+                    status: String(statusText || previousStatuses?.[i]?.status || ''),
                     success: derivedSuccess,
                     completion: derivedCompletion,
                     scoreRaw: rawScore,
@@ -4580,6 +4641,21 @@ export default function LearnPage() {
             const incomingTaggedActivityIndex = readIncomingExtensionBySuffix('/activity-index');
             const incomingIsCompletionSignal =
                 isCompletedVerb(incoming?.verb) || incomingResultSnapshot?.completion === true;
+            // Record completion events against the learner's currently-selected lesson
+            // as "video ended" evidence for chapter-advance gating — useful when the
+            // package fails to write completed=true into its dataIndex. Guarded by a
+            // dwell-time check so a late-arriving completion for the previous lesson
+            // (which often lags 0.5–1.5s after auto-advance) doesn't get mis-recorded
+            // against the newly-selected lesson.
+            if (incomingIsCompletionSignal) {
+                const selectedIdxAtReception = Number.isFinite(Number(selectedActivityIndex))
+                    ? Math.floor(Number(selectedActivityIndex))
+                    : -1;
+                const selectedChangeAge = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
+                if (selectedIdxAtReception >= 0 && selectedChangeAge >= 3000) {
+                    completionVerbSeenForActivityRef.current.add(selectedIdxAtReception);
+                }
+            }
             let matchedActivityIndex = -1;
             if (incomingObjectKey && Array.isArray(content.activities)) {
                 matchedActivityIndex = findUniqueActivityIndexByPathKey(incomingObjectKey, { allowLoose: false });
@@ -5653,6 +5729,46 @@ export default function LearnPage() {
         }
     }, [clearInnerFrameLoadBinding, runIframeRuntimeSync, scheduleDeferredIframeRuntimeSync]);
 
+    // Walks through the nested TinCan iframes to find any HTML5 <video> elements
+    // and reports whether one of them has played to the end. Used as concrete
+    // "video finished" evidence for the currently-selected lesson, independent of
+    // whether the TinCan package itself bothers to write completed=true into its
+    // dataIndex. Returns false silently on cross-origin access errors.
+    const hasIframeVideoReachedEnd = useCallback(() => {
+        try {
+            const visited = new Set();
+            const walk = (win) => {
+                if (!win || visited.has(win)) return false;
+                visited.add(win);
+                let doc = null;
+                try { doc = win.document; } catch { return false; }
+                if (!doc) return false;
+                const videos = doc.querySelectorAll ? doc.querySelectorAll('video') : [];
+                for (const video of videos) {
+                    if (!video) continue;
+                    if (video.ended === true) return true;
+                    const ct = Number(video.currentTime);
+                    const dur = Number(video.duration);
+                    if (Number.isFinite(ct) && Number.isFinite(dur) && dur > 1 && ct >= dur - 1.5) {
+                        return true;
+                    }
+                }
+                const frames = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
+                for (const frame of frames) {
+                    try {
+                        if (walk(frame.contentWindow)) return true;
+                    } catch {
+                        // cross-origin iframe — skip
+                    }
+                }
+                return false;
+            };
+            return walk(iframeRef.current?.contentWindow);
+        } catch {
+            return false;
+        }
+    }, []);
+
     const getMaxUnlockedActivityIndex = useCallback(() => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         if (activities.length === 0) return 0;
@@ -5692,11 +5808,18 @@ export default function LearnPage() {
                 forwardFromSelected = i + 1;
                 continue;
             }
-            // Treat the currently-selected non-assessment lesson as "cleared" so the
-            // learner can advance to the next lesson after watching. xAPI completion
-            // statements can lag behind the iframe's video-ended event; without this,
-            // learners get blocked right after finishing a lesson.
-            if (i === selectedSafe && !isAssessmentActivity(activities[i])) {
+            // Fallback for the currently-selected content lesson: treat as cleared when
+            // we have concrete evidence the content actually finished, even if the
+            // package never wrote completed=true into its dataIndex. Evidence:
+            //   (a) a nested HTML5 <video> has played to its end, OR
+            //   (b) an xAPI "completed" verb was received while this lesson was selected.
+            // Assessments still require a real pass — this fallback only applies to
+            // non-assessment (video/content) lessons.
+            if (
+                i === selectedSafe
+                && !isAssessmentActivity(activities[i])
+                && (hasIframeVideoReachedEnd() || completionVerbSeenForActivityRef.current.has(i))
+            ) {
                 forwardFromSelected = i + 1;
                 continue;
             }
@@ -5714,7 +5837,7 @@ export default function LearnPage() {
             )
         );
         return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
-    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity]);
+    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity, hasIframeVideoReachedEnd]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
