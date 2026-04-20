@@ -1105,28 +1105,13 @@ export default function LearnPage() {
 
     const isTinCanLessonClearedForAdvance = useCallback((item, activity = null) => {
         const assessment = isAssessmentActivity(activity);
-        // Assessment/test activities must still be passed before moving forward.
+        // Assessment/test activities must be passed before moving forward.
         if (assessment) {
             return isTinCanLessonPassed(item, activity);
         }
-        // Content/video lessons are considered "cleared for advance" once learner has started.
-        if (isTinCanLessonPassed(item, activity)) return true;
-        if (item && typeof item === 'object') {
-            if (item?.success === true || item?.completion === true) return true;
-            if (isTruthyFlag(item?.attempted) || isTruthyFlag(item?.quizzed)) return true;
-            const statusText = normalizeStatusText(
-                item?.status
-                ?? item?.result
-                ?? item?.completionStatus
-                ?? item?.successStatus
-                ?? ''
-            );
-            if (statusText.includes('progress') || statusText.includes('in progress') || statusText.includes('learning')) {
-                return true;
-            }
-        }
-        return false;
-    }, [isAssessmentActivity, isTinCanLessonPassed]);
+        // Content/video lessons must be completed (or explicitly passed) before next lesson unlocks.
+        return isTinCanLessonPassed(item, activity) || isTinCanLessonCompleted(item);
+    }, [isAssessmentActivity, isTinCanLessonPassed, isTinCanLessonCompleted]);
 
     const hasAssessmentActivities = useMemo(() => {
         if (content?.type !== 'tincan' || !Array.isArray(content?.activities)) return false;
@@ -5526,6 +5511,28 @@ export default function LearnPage() {
         const effectivePosition = position;
         const effectiveIndex = Math.max(0, Math.min(total - 1, effectivePosition - 1));
 
+        if (chapterLockEnabled) {
+            let maxAllowedIndex = 0;
+            for (let i = 0; i < total; i++) {
+                if (isTinCanLessonClearedForAdvance(syncedStatuses[i], content.activities[i])) {
+                    maxAllowedIndex = i + 1;
+                    continue;
+                }
+                break;
+            }
+            maxAllowedIndex = Math.max(0, Math.min(total - 1, maxAllowedIndex));
+            if (effectiveIndex > maxAllowedIndex) {
+                manualSelectionRef.current = { target: maxAllowedIndex, until: Date.now() + 5000 };
+                setSelectedActivityIndex(maxAllowedIndex);
+                applyTincanResumeToIframe();
+                toast.warning(
+                    'กรุณาเรียนบทก่อนหน้าให้ครบก่อน จึงจะไปบทถัดไปได้',
+                    { ...LEARNER_TOAST, toastId: 'learner-tincan-lock-warning' }
+                );
+                return;
+            }
+        }
+
         // Ignore auto-sync regressions while restoring/opening TinCan.
         if (!forceExactPosition && effectiveIndex < knownFloorIndex) {
             return;
@@ -5599,7 +5606,7 @@ export default function LearnPage() {
         } finally {
             tinCanSyncInFlightRef.current = false;
         }
-    }, [content, getPrimaryActivityResumePath, detectActivityIndexFromIframe, selectedActivityIndex, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals, logLessonMapDebug, extractScorePayloadFromStatus]);
+    }, [content, chapterLockEnabled, getPrimaryActivityResumePath, detectActivityIndexFromIframe, selectedActivityIndex, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, isTinCanLessonClearedForAdvance, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals, logLessonMapDebug, extractScorePayloadFromStatus, applyTincanResumeToIframe]);
     const runIframeRuntimeSync = useCallback(() => {
         const frameWindow = iframeRef.current?.contentWindow;
         hardenTinCanRuntimeWindow(frameWindow);
@@ -5685,36 +5692,8 @@ export default function LearnPage() {
         }
         localUnlocked = Math.max(0, Math.min(activities.length - 1, localUnlocked));
 
-        const selectedSafe = Math.max(0, Math.min(activities.length - 1, selectedActivityIndex));
-        let forwardFromSelected = selectedSafe;
-        for (let i = selectedSafe; i < activities.length; i++) {
-            if (isTinCanLessonClearedForAdvance(activityStatuses[i], activities[i])) {
-                forwardFromSelected = i + 1;
-                continue;
-            }
-            // Treat the currently-selected non-assessment lesson as "cleared" so the
-            // learner can advance to the next lesson after watching. xAPI completion
-            // statements can lag behind the iframe's video-ended event; without this,
-            // learners get blocked right after finishing a lesson.
-            if (i === selectedSafe && !isAssessmentActivity(activities[i])) {
-                forwardFromSelected = i + 1;
-                continue;
-            }
-            break;
-        }
-        forwardFromSelected = Math.max(0, Math.min(activities.length - 1, forwardFromSelected));
-
-        const highestSeenSafe = Math.max(
-            0,
-            Math.min(
-                activities.length - 1,
-                Number.isFinite(Number(highestSeenActivityIndexRef.current))
-                    ? Math.floor(Number(highestSeenActivityIndexRef.current))
-                    : 0
-            )
-        );
-        return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
-    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity]);
+        return Math.max(runtimeUnlocked, localUnlocked);
+    }, [content, chapterLockEnabled, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
