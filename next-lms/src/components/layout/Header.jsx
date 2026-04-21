@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -24,12 +24,12 @@ export default function Header() {
 
     return (
         <header className="sticky top-0 z-40 w-full border-b border-dashed border-[#CDD0CE] bg-white/90 backdrop-blur-sm">
-            <div className="mx-auto flex h-[72px] w-full max-w-[1290px] items-center justify-between px-4 sm:h-[80px] sm:px-6">
+            <div className="mx-auto flex h-[72px] w-full max-w-[1290px] items-center justify-between app-shell-x sm:h-[80px]">
                 <Link href="/" className="shrink-0">
                     <img src="/skillup_logo.png" alt="SkillUp" className="h-[44px] w-[44px] object-contain sm:h-[48px] sm:w-[48px]" />
                 </Link>
 
-                <nav className="hidden items-center gap-6 lg:flex">
+                <nav className="hidden items-center gap-6 xl:flex">
                     {navLinks.map((item) => (
                         <Link
                             key={item.href}
@@ -48,8 +48,8 @@ export default function Header() {
                     ))}
                 </nav>
 
-                <div className="hidden items-center gap-5 lg:flex">
-                    <div className="flex h-[48px] w-[305px] items-center rounded-full border-[3px] border-[#D1E3FB] bg-white py-[6px] pl-5 pr-[6px]">
+                <div className="hidden items-center gap-5 xl:flex">
+                    <div className="flex h-[48px] w-[280px] items-center rounded-full border-[3px] border-[#D1E3FB] bg-white py-[6px] pl-5 pr-[6px] 2xl:w-[305px]">
                         <input
                             type="text"
                             placeholder="LMS"
@@ -77,10 +77,10 @@ export default function Header() {
                     </div>
                 </div>
 
-                <div className="flex items-center gap-2 lg:hidden">
+                <div className="flex items-center gap-2 xl:hidden">
                     <Link
                         href="/login"
-                        className="rounded-full border border-[#D1E3FB] px-3 py-2 text-[13px] font-medium text-[#052143] hover:border-[#687EFF] hover:text-[#687EFF]"
+                        className="rounded-full border border-[#D1E3FB] px-2.5 py-2 text-[12px] font-medium text-[#052143] hover:border-[#687EFF] hover:text-[#687EFF] sm:px-3 sm:text-[13px]"
                     >
                         Sign in
                     </Link>
@@ -100,7 +100,7 @@ export default function Header() {
             </div>
 
             {mobileOpen ? (
-                <div className="border-t border-[#E8EEFF] bg-white px-4 pb-4 pt-3 lg:hidden">
+                <div className="border-t border-[#E8EEFF] bg-white app-shell-x pb-4 pt-3 xl:hidden">
                     <div className="mb-3 flex items-center gap-2 rounded-full border-[2px] border-[#D1E3FB] bg-white px-3 py-2">
                         <input
                             type="text"

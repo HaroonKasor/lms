@@ -44,6 +44,7 @@ function resolveQuickActionsByPath(pathname) {
     const isLearningPage = /^\/courses\/[^/]+\/learn(?:\/|$)/i.test(path);
     return isLearningPage ? LEARNING_PAGE_QUICK_ACTIONS : DEFAULT_QUICK_ACTIONS;
 }
+const LEARNING_CHAT_CONTEXT_STORAGE_KEY = "lms_learning_context_v1";
 const CHAT_HISTORY_KEY_PREFIX = "lms_ui_chat_history_v1";
 const MAX_HISTORY_MESSAGES = 40;
 const MAX_FEEDBACK_REASON_CHARS = 300;
@@ -97,6 +98,42 @@ function sanitizeMessages(raw) {
         }))
         .filter((item) => item.content.length > 0)
         .slice(-MAX_HISTORY_MESSAGES);
+}
+
+function readLearningContextForPath(pathname = "") {
+    if (typeof window === "undefined") return null;
+    const path = String(pathname || "").trim();
+    if (!/^\/courses\/[^/]+\/learn(?:\/|$)/i.test(path)) return null;
+
+    try {
+        const raw = localStorage.getItem(LEARNING_CHAT_CONTEXT_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return null;
+        const storedPath = String(parsed.pagePath || "").trim();
+        if (storedPath && storedPath !== path) return null;
+
+        const lessonOutline = Array.isArray(parsed.lessonOutline)
+            ? parsed.lessonOutline
+                .slice(0, 50)
+                .map((row, index) => ({
+                    index: Number.isFinite(Number(row?.index)) ? Number(row.index) : index + 1,
+                    title: String(row?.title || `Lesson ${index + 1}`).trim(),
+                    status: String(row?.status || "").trim(),
+                }))
+            : [];
+        return {
+            courseTitle: String(parsed.courseTitle || "").trim(),
+            sectionTitle: String(parsed.sectionTitle || "").trim(),
+            lessonTitle: String(parsed.lessonTitle || "").trim(),
+            activeLessonIndex: Number.isFinite(Number(parsed.activeLessonIndex)) ? Number(parsed.activeLessonIndex) : undefined,
+            totalLessons: Number.isFinite(Number(parsed.totalLessons)) ? Number(parsed.totalLessons) : undefined,
+            lessonSrc: String(parsed.lessonSrc || "").trim(),
+            lessonOutline,
+        };
+    } catch {
+        return null;
+    }
 }
 
 function buildRecentConversationForFeedback(messages, assistantMessageId) {
@@ -422,6 +459,7 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
         try {
             const controller = new AbortController();
             activeRequestRef.current = controller;
+            const runtimeLearningContext = readLearningContextForPath(pathname);
             const res = await fetch("/api/chat", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -430,6 +468,7 @@ export default function ChatPanel({ isOpen, onClose, variant = "sidebar", showQu
                     messages: requestMessages,
                     stream: true,
                     context: {
+                        ...(runtimeLearningContext && typeof runtimeLearningContext === "object" ? runtimeLearningContext : {}),
                         ...(options?.context && typeof options.context === "object" ? options.context : {}),
                         pagePath: typeof window !== "undefined" ? window.location.pathname : "",
                     },

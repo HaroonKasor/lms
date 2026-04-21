@@ -36,10 +36,10 @@ export default function MyCoursesPage() {
     }
 
     return (
-        <div className="min-h-screen font-['Outfit',sans-serif]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
+        <div className="min-h-screen overflow-x-hidden font-['Outfit',sans-serif]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
             <Navbar />
 
-            <main className="max-w-[1200px] mx-auto px-6 pt-8 pb-24">
+            <main className="max-w-[1200px] mx-auto app-shell-x pt-8 pb-24">
                 <FadeIn direction="up">
                     <h1 className="text-3xl font-bold text-[#052143] mb-2">หลักสูตรของฉัน</h1>
                     <p className="text-[#6B778B] mb-8">ติดตามความคืบหน้าและผลการเรียนของคุณ</p>

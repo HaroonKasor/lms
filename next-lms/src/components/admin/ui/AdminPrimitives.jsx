@@ -87,11 +87,11 @@ export function AdminSearchInput({ value, onChange, placeholder, className = '' 
 }
 
 export function AdminTableWrap({ children }) {
-    return <div className="w-full overflow-x-auto rounded-[16px] border border-[#E8EEFF] [scrollbar-gutter:stable_both-edges]">{children}</div>;
+    return <div className="w-full max-w-full min-w-0 overflow-x-auto rounded-[16px] border border-[#E8EEFF] [scrollbar-gutter:stable_both-edges]">{children}</div>;
 }
 
 export function AdminTable({ children, className = '' }) {
-    return <table className={cn('w-full min-w-[680px] md:min-w-[880px] text-left text-[13px]', className)}>{children}</table>;
+    return <table className={cn('w-full min-w-[620px] md:min-w-[820px] text-left text-[13px]', className)}>{children}</table>;
 }
 
 export function AdminTableHead({ children }) {

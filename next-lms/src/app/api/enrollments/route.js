@@ -103,7 +103,13 @@ function toScorePercentFromProgress(row = null) {
 
 function pickScoreProgressRow(progressRows = []) {
     if (!Array.isArray(progressRows) || progressRows.length === 0) return null;
-    return progressRows.find((row) => toScorePercentFromProgress(row) !== null) || null;
+    return progressRows.find((row) => {
+        const percent = toScorePercentFromProgress(row);
+        // Only count real graded attempts. Video-lesson runtimes occasionally
+        // write scoreRaw: 0 from a bootstrap xAPI statement, which would
+        // otherwise drag the enrollment's displayed score down to 0%.
+        return percent !== null && (percent > 0 || row?.success === true);
+    }) || null;
 }
 
 function normalizeThumbnail(thumbnail) {

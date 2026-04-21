@@ -13,18 +13,12 @@ function normalizeLearnerStatus(enrollment) {
     const progress = toSafeNumber(enrollment?.progressPercent, 0);
     const hasStartedAt = Boolean(enrollment?.startedAt);
     const hasCompletedAt = Boolean(enrollment?.completedAt);
-    const progressRows = Array.isArray(enrollment?.learning_progress) ? enrollment.learning_progress : [];
-    const progressSaysCompleted = progressRows.some((row) => {
-        const rowStatus = String(row?.status || '').toLowerCase();
-        const rowProgress = toSafeNumber(row?.progressPercent, 0);
-        return rowStatus === 'completed'
-            || row?.completion === true
-            || (row?.success === true && rowProgress >= 100)
-            || rowProgress >= 100;
-    });
 
     if (dbStatus === 'dropped' || dbStatus === 'cancelled') return 'SUSPENDED';
-    if (dbStatus === 'completed' || hasCompletedAt || progressSaysCompleted) return 'COMPLETED';
+    // Trust only enrollment-level signals for completion. A single
+    // learning_progress row with completion: true represents one section
+    // being done (e.g. one video lesson), not the entire course.
+    if (dbStatus === 'completed' || hasCompletedAt || progress >= 100) return 'COMPLETED';
     if (dbStatus === 'in_progress' || hasStartedAt || progress > 0) return 'LEARNING';
     return 'NOT_STARTED';
 }

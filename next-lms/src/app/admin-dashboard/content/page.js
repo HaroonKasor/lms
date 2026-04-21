@@ -360,7 +360,7 @@ export default function ContentManagementPage() {
     return (
         <AdminShell>
             <AdminToastStack toasts={toasts} onDismiss={dismissToast} />
-            <div className="flex w-full flex-col gap-6 font-['Outfit',sans-serif]">
+            <div className="flex w-full min-w-0 flex-col gap-6 font-['Outfit',sans-serif]">
                 <AdminPageHeader
                     title="Content"
                     description="Manage TinCan/xAPI content packages used in the LMS."
@@ -398,7 +398,7 @@ export default function ContentManagementPage() {
                         />
 
                         <AdminTableWrap>
-                            <AdminTable>
+                            <AdminTable className="min-w-[980px]">
                                 <AdminTableHead>
                                     <tr>
                                         <AdminTh className="w-[72px]">No.</AdminTh>

@@ -519,11 +519,14 @@ function hydrateDurationFromProgress(rows = [], latestProgress = null) {
 function buildScoreRowsFromLearningProgress(progressRows = [], fallbackTitle = 'Assessment Result', fallbackTimestamp = null) {
     if (!Array.isArray(progressRows) || progressRows.length === 0) return [];
 
-    const rowsWithScore = progressRows.filter((row) => (
-        scorePercentFromProgressRow(row) !== null ||
-        typeof row?.success === 'boolean' ||
-        typeof row?.completion === 'boolean'
-    ));
+    const rowsWithScore = progressRows.filter((row) => {
+        const percent = scorePercentFromProgressRow(row);
+        // Only include rows that represent a real graded attempt. Video
+        // lessons can emit completion: true or stray scoreRaw: 0 defaults
+        // from their runtime packages — those should not appear as quiz
+        // results. Real quiz attempts come from the quizAttempts table.
+        return (percent !== null && percent > 0) || row?.success === true;
+    });
 
     return rowsWithScore.map((row, idx) => {
         const percent = scorePercentFromProgressRow(row);

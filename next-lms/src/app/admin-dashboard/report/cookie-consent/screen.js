@@ -156,7 +156,7 @@ export default function CookieConsentReportScreen() {
 
     return (
         <AdminShell>
-            <div className="w-full relative z-10 pb-20">
+            <div className="w-full min-w-0 relative z-10 pb-20">
                 <AdminPageHeader
                     title="Report: Cookie Consent"
                     description="Review consent history for Analytics and Marketing cookie preferences."
@@ -167,7 +167,7 @@ export default function CookieConsentReportScreen() {
                     }
                 />
 
-                <AdminCard title="Consent Activity" contentClassName="space-y-6 mt-2">
+                <AdminCard title="Consent Activity" contentClassName="space-y-6 mt-2 min-w-0">
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <select
                             value={choice}
@@ -255,7 +255,7 @@ export default function CookieConsentReportScreen() {
                     />
 
                     <AdminTableWrap>
-                        <AdminTable className="min-w-[1180px]">
+                        <AdminTable className="min-w-[980px]">
                             <AdminTableHead>
                                 <tr>
                                     <AdminTh className="w-[180px]">Date/Time</AdminTh>

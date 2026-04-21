@@ -21,6 +21,7 @@ import { parseXapiResultSnapshot } from '@/lib/xapi-result';
 import { toast } from 'react-toastify';
 
 const LEARNER_TOAST = { containerId: 'global-toast' };
+const LEARNING_CHAT_CONTEXT_STORAGE_KEY = 'lms_learning_context_v1';
 const renderAdminLikeToastContent = (title, message) => (
     <div className="min-w-0 py-0.5">
         {title ? <div className="text-[12px] font-semibold text-[#475569]">{title}</div> : null}
@@ -310,6 +311,35 @@ export default function LearnPage() {
         return false;
     }, [content?.packageConfig?.isLinear]);
     const chapterLockEnabled = cohortModuleEnabled || packageLinearEnabled;
+    const learningChatContext = useMemo(() => {
+        const courseTitle = String(course?.name || course?.title || '').trim() || String(content?.title || '').trim();
+        const sectionTitle = String(content?.title || '').trim();
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        const totalLessons = activities.length > 0 ? activities.length : 1;
+        const activeIndex = activities.length > 0
+            ? Math.max(0, Math.min(activities.length - 1, Number(selectedActivityIndex || 0)))
+            : 0;
+        const activeActivity = activities[activeIndex];
+        const lessonTitle = String(activeActivity?.name || activeActivity?.title || content?.title || '').trim();
+        const lessonOutline = activities.slice(0, 50).map((activity, index) => {
+            const statusRow = Array.isArray(tinCanActivityStatus) ? tinCanActivityStatus[index] : null;
+            const isDone = Boolean(statusRow?.completed || statusRow?.passed);
+            return {
+                index: index + 1,
+                title: String(activity?.name || activity?.title || `Lesson ${index + 1}`).trim(),
+                status: isDone ? 'completed' : (index === activeIndex ? 'in_progress' : 'not_started'),
+            };
+        });
+        return {
+            courseTitle,
+            sectionTitle,
+            lessonTitle,
+            activeLessonIndex: activeIndex + 1,
+            totalLessons,
+            lessonOutline,
+            lessonSrc: String(content?.entryPoint || '').trim(),
+        };
+    }, [course, content, selectedActivityIndex, tinCanActivityStatus]);
 
     const videoRef = useRef(null);
     const iframeRef = useRef(null);
@@ -414,6 +444,23 @@ export default function LearnPage() {
     useEffect(() => {
         setMounted(true);
     }, []);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const hasCourseContext = String(learningChatContext?.courseTitle || '').trim().length > 0;
+            const hasLessonContext = String(learningChatContext?.lessonTitle || '').trim().length > 0;
+            if (!hasCourseContext && !hasLessonContext) return;
+
+            localStorage.setItem(LEARNING_CHAT_CONTEXT_STORAGE_KEY, JSON.stringify({
+                ...learningChatContext,
+                pagePath: window.location.pathname,
+                updatedAt: new Date().toISOString(),
+            }));
+        } catch {
+            // ignore storage errors
+        }
+    }, [learningChatContext]);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -5550,7 +5597,13 @@ export default function LearnPage() {
     }, [forceTinCanReflow]);
 
     const handleToggleLearningSidebar = useCallback(() => {
-        setIsLearningSidebarOpen((prev) => !prev);
+        setIsLearningSidebarOpen((prev) => {
+            const next = !prev;
+            if (next && typeof window !== 'undefined' && window.innerWidth < 1024) {
+                setIsLearningAiOpen(false);
+            }
+            return next;
+        });
         queuePlayerReflow();
     }, [queuePlayerReflow]);
 
@@ -5560,7 +5613,13 @@ export default function LearnPage() {
     }, [queuePlayerReflow]);
 
     const handleToggleLearningAi = useCallback(() => {
-        setIsLearningAiOpen((prev) => !prev);
+        setIsLearningAiOpen((prev) => {
+            const next = !prev;
+            if (next && typeof window !== 'undefined' && window.innerWidth < 1024) {
+                setIsLearningSidebarOpen(false);
+            }
+            return next;
+        });
         queuePlayerReflow();
     }, [queuePlayerReflow]);
 
@@ -6301,6 +6360,13 @@ export default function LearnPage() {
             return 'ยังไม่เริ่ม';
         };
         const activeLessonTitle = lessonItems[selectedLessonIndex]?.name || lessonItems[selectedLessonIndex]?.title || content.title;
+        const assistantCourseTitle = String(course?.name || course?.title || '').trim() || String(content?.title || '').trim();
+        const assistantSectionTitle = String(content?.title || '').trim();
+        const assistantLessonOutline = lessonItems.map((lesson, index) => ({
+            index: index + 1,
+            title: lesson?.name || lesson?.title || `Lesson ${index + 1}`,
+            status: lessonStatuses[index] || 'not_started',
+        }));
         const lessonModules = [
             {
                 id: 1,
@@ -6318,18 +6384,18 @@ export default function LearnPage() {
 
         return (
             <div
-                className="fixed inset-0 bg-white overflow-hidden flex"
+                className="fixed inset-0 bg-white overflow-hidden flex min-w-0"
                 style={{ fontFamily: 'Inter, system-ui, -apple-system, sans-serif' }}
             >
                 {hasStructuredLessons && (
                     <div
                         className={`h-full overflow-hidden transition-[width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                             isLearningSidebarOpen
-                                ? 'fixed inset-y-0 left-0 z-[45] w-[85vw] max-w-[300px] opacity-100 translate-x-0 shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-[300px] lg:max-w-none lg:shadow-none'
+                                ? 'fixed inset-y-0 left-0 z-[45] w-[86vw] max-w-[300px] opacity-100 translate-x-0 shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-[300px] lg:max-w-none lg:shadow-none'
                                 : 'w-0 opacity-0 -translate-x-full pointer-events-none lg:translate-x-0'
                         }`}
                     >
-                        <div className="h-full w-[85vw] max-w-[300px] lg:w-[300px]">
+                        <div className="h-full w-[86vw] max-w-[300px] lg:w-[300px]">
                             <LearningLessonSidebar
                                 lessons={lessonModules}
                                 activeLesson={selectedLessonIndex + 1}
@@ -6434,7 +6500,16 @@ export default function LearnPage() {
                     }`}
                 >
                     <div className="h-full w-[88vw] max-w-[320px] lg:w-[320px]">
-                        <LearningAiAssistant onClose={handleCloseLearningAi} />
+                        <LearningAiAssistant
+                            onClose={handleCloseLearningAi}
+                            courseTitle={assistantCourseTitle}
+                            sectionTitle={assistantSectionTitle}
+                            lessonTitle={activeLessonTitle}
+                            activeLessonIndex={selectedLessonIndex + 1}
+                            totalLessons={lessonItems.length}
+                            lessonOutline={assistantLessonOutline}
+                            lessonSrc={resolvePlayerSrc(content.entryPoint)}
+                        />
                     </div>
                 </div>
             </div>
@@ -6445,14 +6520,14 @@ export default function LearnPage() {
         <div className="min-h-screen bg-[#0f0f1a] font-['Outfit',sans-serif]">
             <Navbar />
 
-            <div className="w-full max-w-[1400px] mx-auto px-4 sm:px-6 pt-5 sm:pt-6 pb-16 sm:pb-20">
+            <div className="w-full max-w-[1400px] mx-auto app-shell-x pt-5 sm:pt-6 pb-16 sm:pb-20">
                 {/* Breadcrumb */}
-                <div className="flex items-center gap-2 text-[14px] text-white/50 mb-6">
+                <div className="flex flex-wrap items-center gap-2 text-[13px] sm:text-[14px] text-white/50 mb-6">
                     <a href={course ? `/courses/${course.id}` : '/courses'} className="hover:text-white transition-colors">
                         {course ? 'Course' : 'Courses'}
                     </a>
                     <span>/</span>
-                    <span className="text-white/80">{content.title}</span>
+                    <span className="text-white/80 min-w-0 text-wrap-anywhere">{content.title}</span>
                 </div>
 
                 <div className="flex flex-col xl:flex-row gap-8">
@@ -6485,7 +6560,7 @@ export default function LearnPage() {
                                         key={iframeRenderKey}
                                         ref={iframeRef}
                                         src={iframeSrc || resolvePlayerSrc(content.entryPoint)}
-                                        className="w-full h-[58vh] min-h-[320px] sm:min-h-[420px] lg:min-h-[520px] border-none transition-opacity duration-150"
+                                        className="w-full h-[52vh] min-h-[280px] sm:min-h-[420px] lg:min-h-[520px] border-none transition-opacity duration-150"
                                         style={{
                                             opacity: content.type === 'tincan' && !isTinCanFrameReady ? 0 : 1,
                                             transform: 'translateZ(0)',
@@ -6522,10 +6597,10 @@ export default function LearnPage() {
                         </div>
 
                         {/* Title & Status */}
-                        <div className="mt-6 flex items-start justify-between gap-4">
+                        <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                             <div>
-                                <h1 className="text-white text-[24px] font-semibold">{content.title}</h1>
-                                <div className="flex items-center gap-4 mt-2 text-[14px] text-white/50">
+                                <h1 className="text-white text-[20px] sm:text-[24px] leading-tight font-semibold text-wrap-anywhere">{content.title}</h1>
+                                <div className="flex flex-wrap items-center gap-2 sm:gap-4 mt-2 text-[13px] sm:text-[14px] text-white/50">
                                     <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-medium ${content.type === 'tincan' ? 'bg-purple-500/20 text-purple-300' :
                                             content.type === 'video' ? 'bg-blue-500/20 text-blue-300' :
                                                 'bg-gray-500/20 text-gray-300'
@@ -6549,7 +6624,7 @@ export default function LearnPage() {
 
                         {/* Activities List (for TinCan) */}
                         {content.activities?.length > 0 && (
-                            <div className="mt-8 bg-white/5 rounded-xl p-6 border border-white/10">
+                            <div className="mt-8 bg-white/5 rounded-xl p-4 sm:p-6 border border-white/10">
                                 <h3 className="flex items-center gap-2 text-white text-[16px] font-semibold mb-4">
                                     <ListChecks className="w-4 h-4 text-white/70" aria-hidden="true" />
                                     <span>Activities</span>
@@ -6583,7 +6658,7 @@ export default function LearnPage() {
                     {/* Sidebar: Progress & xAPI Log */}
                     <div className="w-full xl:w-[340px] 2xl:w-[360px] shrink-0 flex flex-col gap-6">
                         {/* Progress Card */}
-                        <div className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10">
+                        <div className="bg-white/5 backdrop-blur rounded-2xl p-4 sm:p-6 border border-white/10">
                             <h3 className="flex items-center gap-2 text-white text-[16px] font-semibold mb-4">
                                 <BarChart3 className="w-4 h-4 text-white/70" aria-hidden="true" />
                                 <span>Learning Progress</span>
@@ -6642,13 +6717,13 @@ export default function LearnPage() {
                         </div>
 
                         {/* xAPI Statement Log */}
-                        <div className="bg-white/5 backdrop-blur rounded-2xl p-6 border border-white/10">
+                        <div className="bg-white/5 backdrop-blur rounded-2xl p-4 sm:p-6 border border-white/10">
                             <h3 className="flex items-center gap-2 text-white text-[16px] font-semibold mb-4">
                                 <RadioTower className="w-4 h-4 text-white/70" aria-hidden="true" />
                                 <span>xAPI Statements</span>
                                 <span className="text-white/30 text-[12px] font-normal ml-2">Live</span>
                             </h3>
-                            <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
+                            <div className="flex flex-col gap-2 max-h-[240px] sm:max-h-[300px] overflow-y-auto pr-1">
                                 {statements.length === 0 ? (
                                     <p className="text-white/30 text-[13px] text-center py-4">No statements yet. Start learning to generate xAPI data.</p>
                                 ) : statements.slice(0, 15).map((st, i) => (

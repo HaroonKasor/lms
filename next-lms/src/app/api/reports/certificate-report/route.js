@@ -36,19 +36,14 @@ function normalizeEnrollmentStatus(enrollment) {
     const progress = Number(enrollment?.progressPercent || 0);
     const hasStarted = Boolean(enrollment?.startedAt);
     const hasCompleted = Boolean(enrollment?.completedAt);
-    const progressRows = Array.isArray(enrollment?.learning_progress) ? enrollment.learning_progress : [];
-    const progressSaysCompleted = progressRows.some((row) => {
-        const rowStatus = String(row?.status || '').toLowerCase();
-        const rowProgress = toSafeNumber(row?.progressPercent, 0);
-        return rowStatus === 'completed'
-            || row?.completion === true
-            || (row?.success === true && rowProgress >= 100)
-            || rowProgress >= 100;
-    });
 
     if (raw === 'cancelled') return 'CANCELLED';
     if (raw === 'dropped') return 'FAILED';
-    if (raw === 'completed' || hasCompleted || progressSaysCompleted) return 'COMPLETED';
+    // Trust only enrollment-level signals for completion. A single
+    // learning_progress row with completion: true represents one section
+    // being done (e.g. one video lesson), not the entire course — gating
+    // certificates on a section-level flag would hand out certs too early.
+    if (raw === 'completed' || hasCompleted || progress >= 100) return 'COMPLETED';
     if (raw === 'in_progress' || hasStarted || progress > 0) return 'LEARNING';
     return 'NOT_STARTED';
 }

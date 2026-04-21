@@ -290,7 +290,13 @@ export async function GET(request) {
                 const latestByEnrollment = new Map();
                 for (const progressRow of progressRows) {
                     const key = Number(progressRow.enrollmentId);
-                    if (!latestByEnrollment.has(key) && scorePercentFromLearningProgress(progressRow) !== null) {
+                    if (latestByEnrollment.has(key)) continue;
+                    const percent = scorePercentFromLearningProgress(progressRow);
+                    // Skip rows where the score is a stray default (0 from
+                    // an "initialized" xAPI statement on a video lesson) —
+                    // those are not real graded attempts.
+                    const isRealScore = percent !== null && (percent > 0 || progressRow?.success === true);
+                    if (isRealScore) {
                         latestByEnrollment.set(key, progressRow);
                     }
                 }

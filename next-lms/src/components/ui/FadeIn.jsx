@@ -24,8 +24,9 @@ const FadeIn = ({ children, delay = 0, direction = 'up', className = '' }) => {
     const directionClasses = {
         up: 'translate-y-10',
         down: '-translate-y-10',
-        left: 'translate-x-10',
-        right: '-translate-x-10',
+        // Use vertical offset for horizontal variants to avoid layout overflow on narrow viewports.
+        left: 'translate-y-8',
+        right: 'translate-y-8',
         none: '',
     };
 

@@ -62,7 +62,7 @@ export default function PublicFooter({ className = '' }) {
 
     return (
         <footer className={`w-full bg-[#052143] text-white relative z-20 ${className}`.trim()}>
-            <div className="max-w-[1290px] mx-auto px-6 pt-16 pb-8">
+            <div className="max-w-[1290px] mx-auto app-shell-x pt-16 pb-8">
                 <FadeIn direction="up">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-12 mb-12">
                         <div className="lg:col-span-1">
@@ -120,7 +120,7 @@ export default function PublicFooter({ className = '' }) {
                             <h4 className="text-white font-semibold text-[16px] mb-5">Newsletter</h4>
                             <p className="text-white/60 text-[14px] leading-[170%] mb-4">Subscribe to get updates on new courses and features.</p>
                             <form className="flex flex-col gap-3" onSubmit={handleSubscribe}>
-                                <div className="flex gap-2">
+                                <div className="flex flex-col gap-2">
                                     <input
                                         type="email"
                                         placeholder="Your email"
@@ -131,7 +131,7 @@ export default function PublicFooter({ className = '' }) {
                                     <button
                                         type="submit"
                                         disabled={loading}
-                                        className="h-[42px] px-5 bg-[#F87A53] text-white rounded-full text-[14px] font-medium hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
+                                        className="h-[42px] w-full px-5 bg-[#F87A53] text-white rounded-full text-[14px] font-medium hover:opacity-90 transition-opacity disabled:opacity-60 disabled:cursor-not-allowed"
                                     >
                                         {loading ? 'Sending...' : 'Subscribe'}
                                     </button>

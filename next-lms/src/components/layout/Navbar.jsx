@@ -536,7 +536,7 @@ export default function Navbar() {
 
     return (
         <>
-            <header className="w-full h-[80px] bg-white flex items-center justify-between shrink-0 z-40 relative sticky top-0 font-['Outfit',sans-serif] border-b border-[#eaedf5] px-3 sm:px-4 md:px-6 lg:px-10 xl:px-14 2xl:px-20">
+            <header className="w-full h-[72px] sm:h-[80px] bg-white flex items-center justify-between shrink-0 z-40 relative sticky top-0 font-['Outfit',sans-serif] border-b border-[#eaedf5] app-shell-x">
 
             {/* Left: Logo + Nav */}
             <div className="flex min-w-0 items-center gap-3 sm:gap-6 lg:gap-10 xl:gap-16">
@@ -546,7 +546,7 @@ export default function Navbar() {
                 </Link>
 
                 {/* Nav Links */}
-                <nav className="hidden lg:flex items-center gap-6 xl:gap-8">
+                <nav className="hidden xl:flex items-center gap-6 2xl:gap-8">
                     {isPublicPage ? (
                         <>
                             <Link href="#features" className="text-[#052143] font-normal text-base xl:text-lg hover:text-[#687EFF] transition-colors">
@@ -804,7 +804,7 @@ export default function Navbar() {
 
                             {/* Notification Popover */}
                             {showNotifications && (
-                                <div className="absolute top-full right-0 mt-4 w-80 bg-white border border-[#D1E3FB] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.1)] z-50 overflow-hidden">
+                                <div className="absolute top-full right-0 mt-4 w-[min(360px,calc(100vw-1rem))] sm:w-[min(360px,calc(100vw-1.5rem))] bg-white border border-[#D1E3FB] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.1)] z-50 overflow-hidden">
                                     <div className="p-5 border-b border-dashed border-[#D1E3FB] flex justify-between items-center">
                                         <h3 className="font-semibold text-[#052143] text-lg">Notifications</h3>
                                         <span className="text-xs bg-[#E3E7FF] text-[#687EFF] font-semibold px-2 py-1 rounded-full">
@@ -928,7 +928,7 @@ export default function Navbar() {
                     ref={mobileMenuButtonRef}
                     type="button"
                     onClick={() => setShowMobileNav((value) => !value)}
-                    className="inline-flex lg:hidden h-9 w-9 items-center justify-center rounded-full border border-[#D1E3FB] text-[#052143] hover:border-[#687EFF] hover:text-[#687EFF] transition-colors"
+                    className="inline-flex xl:hidden h-9 w-9 items-center justify-center rounded-full border border-[#D1E3FB] text-[#052143] hover:border-[#687EFF] hover:text-[#687EFF] transition-colors"
                     aria-label="Toggle menu"
                     aria-expanded={showMobileNav}
                 >
@@ -942,10 +942,10 @@ export default function Navbar() {
             </header>
 
             {showMobileNav ? (
-                <div className="lg:hidden fixed inset-0 z-[65] bg-black/30 px-3 pt-[84px]">
+                <div className="xl:hidden fixed inset-0 z-[65] bg-black/30 px-3 pt-[78px] sm:pt-[86px]">
                     <div
                         ref={mobileMenuRef}
-                        className="ml-auto w-full max-w-[340px] rounded-2xl border border-[#D1E3FB] bg-white p-3 shadow-[0_24px_60px_rgba(0,0,0,0.18)]"
+                        className="ml-auto w-full max-w-[380px] max-h-[calc(100vh-110px)] overflow-y-auto rounded-2xl border border-[#D1E3FB] bg-white p-3 shadow-[0_24px_60px_rgba(0,0,0,0.18)]"
                     >
                         <nav className="grid gap-1">
                             {(isPublicPage
@@ -1006,7 +1006,7 @@ export default function Navbar() {
             ) : null}
 
             {!isPublicPage && notificationToasts.length > 0 && (
-                <div className="fixed top-24 right-3 sm:right-6 z-[70] flex w-[360px] max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-2rem)] flex-col gap-3 pointer-events-none">
+                <div className="fixed top-20 sm:top-24 right-3 sm:right-6 z-[70] flex w-[360px] max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-2rem)] flex-col gap-3 pointer-events-none">
                     {notificationToasts.slice().reverse().map((toast) => {
                         const tone = getNotificationTone(toast);
                         const toastId = Number(toast?.id || 0);

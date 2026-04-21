@@ -47,6 +47,13 @@ body {
   font-family: var(--font-noto-sans-thai), var(--font-outfit), "Noto Sans", "Segoe UI", Tahoma, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+body > div,
+#__next {
+  width: 100%;
+  min-width: 0;
 }
 
 *,
@@ -190,27 +197,18 @@ article {
     max-width: 100%;
   }
 
-  /* Wide fixed blocks collapse to fluid width */
-  [class*="w-[408px]"],
-  [class*="w-[367px]"],
-  [class*="w-[360px]"],
-  [class*="w-[340px]"],
-  [class*="w-[320px]"],
-  [class*="w-[305px]"],
-  [class*="w-[300px]"],
-  [class*="w-[291px]"],
-  [class*="w-[280px]"],
-  [class*="w-[260px]"] {
-    width: 100% !important;
+  /* Clamp arbitrary fixed widths so cards/forms don't overflow tablet screens */
+  [class*="w-["] {
     max-width: 100% !important;
   }
 
-  [class*="min-w-[1180px]"],
-  [class*="min-w-[960px]"],
-  [class*="min-w-[860px]"],
-  [class*="min-w-[760px]"],
-  [class*="min-w-[700px]"],
-  [class*="min-w-[680px]"] {
+  /* Keep explicit table widths scrollable, but avoid forcing non-table blocks */
+  table[class*="min-w-[1180px]"],
+  table[class*="min-w-[960px]"],
+  table[class*="min-w-[860px]"],
+  table[class*="min-w-[760px]"],
+  table[class*="min-w-[700px]"],
+  table[class*="min-w-[680px]"] {
     min-width: 700px !important;
   }
 
@@ -262,5 +260,12 @@ article {
     max-width: min(92vw, 360px) !important;
     right: 12px !important;
     left: auto !important;
+  }
+
+  [class*="fixed"][class*="inset-y-0"][class*="max-w-[340px]"],
+  [class*="fixed"][class*="inset-y-0"][class*="max-w-[320px]"],
+  [class*="fixed"][class*="inset-y-0"][class*="max-w-[300px]"] {
+    width: min(90vw, 340px) !important;
+    max-width: min(90vw, 340px) !important;
   }
 }
