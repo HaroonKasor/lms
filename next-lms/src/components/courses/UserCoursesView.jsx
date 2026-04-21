@@ -373,8 +373,8 @@ export default function UserCoursesView() {
         <div className="min-h-screen font-['Outfit',sans-serif] text-[#052143] flex flex-col" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
             <Navbar />
 
-            <main className="flex-1 w-full max-w-[1780px] mx-auto px-4 sm:px-6 py-8 sm:py-12 flex flex-col lg:flex-row gap-8 lg:gap-12 relative z-10">
-                <aside className="w-full lg:w-[408px] shrink-0 flex flex-col gap-12">
+            <main className="flex-1 w-full max-w-[1780px] mx-auto px-4 sm:px-6 py-8 sm:py-12 flex flex-col xl:flex-row gap-8 xl:gap-12 relative z-10">
+                <aside className="w-full xl:w-[408px] shrink-0 flex flex-col gap-12">
                     <div className={`entry-fade ${animateIn ? 'is-visible' : ''}`} style={{ '--entry-delay': '40ms' }}>
                         <h3 className="font-medium text-[#052143] text-[20px] mb-2 leading-[130%]">Search Now</h3>
                         <div className="w-[60px] h-[4px] bg-[#FFC224] rounded-full mb-6 relative bottom-1"></div>
@@ -491,7 +491,7 @@ export default function UserCoursesView() {
                     ) : pagedCourses.length === 0 ? (
                         <div className="bg-white border border-[#D1E3FB] rounded-xl p-10 text-center text-[#6B778B]">No courses found</div>
                     ) : (
-                        <div className={`w-full ${viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-x-[24px] gap-y-[48px]' : 'flex flex-col gap-6'}`}>
+                        <div className={`w-full ${viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 gap-x-[24px] gap-y-[48px]' : 'flex flex-col gap-6'}`}>
                             {pagedCourses.map((item, index) => {
                                 const course = item.course;
                                 const enrolled = item.enrolled;
@@ -646,8 +646,8 @@ export default function UserCoursesView() {
                         </div>
                     )}
 
-                    <div className="flex flex-col sm:flex-row items-center justify-center lg:justify-between w-full mt-10 gap-6 sm:gap-8 min-h-[47px]">
-                        <div className="hidden lg:block flex-1"></div>
+                    <div className="flex flex-col sm:flex-row items-center justify-center xl:justify-between w-full mt-10 gap-6 sm:gap-8 min-h-[47px]">
+                        <div className="hidden xl:block flex-1"></div>
 
                         <div className="flex items-center gap-3 shrink-0">
                             <button

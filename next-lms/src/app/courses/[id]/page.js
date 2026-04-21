@@ -509,7 +509,7 @@ export default function CourseDetailPage() {
                         </div>
                     </div>
 
-                    <div className="flex flex-col lg:flex-row gap-[40px] items-start">
+                    <div className="flex flex-col xl:flex-row gap-[40px] items-start">
                         {/* LEFT COLUMN: Main Content */}
                         <div className="flex-1 max-w-[852px] flex flex-col gap-10">
 
@@ -713,7 +713,7 @@ export default function CourseDetailPage() {
                         </div>
 
                         {/* RIGHT COLUMN: Sidebar Form */}
-                        <div className="w-full lg:w-[340px] shrink-0 sticky top-[100px]">
+                        <div className="w-full xl:w-[340px] shrink-0 xl:sticky xl:top-[100px]">
                             <div className="bg-white border border-[#D1E3FB] rounded-[20px] shadow-[0_0_20px_rgba(0,0,0,0.04)] p-[24px] flex flex-col items-start gap-3">
                                 {/* Video Placeholder */}
                                 <div className="w-full h-[180px] bg-[#D9D9D9] rounded-[16px] relative flex items-center justify-center overflow-hidden">

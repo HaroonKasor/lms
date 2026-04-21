@@ -6391,11 +6391,11 @@ export default function LearnPage() {
                     <div
                         className={`h-full overflow-hidden transition-[width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                             isLearningSidebarOpen
-                                ? 'fixed inset-y-0 left-0 z-[45] w-[86vw] max-w-[300px] opacity-100 translate-x-0 shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-[300px] lg:max-w-none lg:shadow-none'
-                                : 'w-0 opacity-0 -translate-x-full pointer-events-none lg:translate-x-0'
+                                ? 'fixed inset-y-0 left-0 z-[45] w-[86vw] max-w-[300px] opacity-100 translate-x-0 shadow-2xl xl:relative xl:inset-auto xl:z-auto xl:w-[300px] xl:max-w-none xl:shadow-none'
+                                : 'w-0 opacity-0 -translate-x-full pointer-events-none xl:translate-x-0'
                         }`}
                     >
-                        <div className="h-full w-[86vw] max-w-[300px] lg:w-[300px]">
+                        <div className="h-full w-[86vw] max-w-[300px] xl:w-[300px]">
                             <LearningLessonSidebar
                                 lessons={lessonModules}
                                 activeLesson={selectedLessonIndex + 1}
@@ -6423,7 +6423,7 @@ export default function LearnPage() {
                             handleCloseLearningSidebar();
                             handleCloseLearningAi();
                         }}
-                        className="fixed inset-0 z-[38] bg-black/45 backdrop-blur-[1px] lg:hidden"
+                        className="fixed inset-0 z-[38] bg-black/45 backdrop-blur-[1px] xl:hidden"
                     />
                 )}
 
@@ -6495,11 +6495,11 @@ export default function LearnPage() {
                 <div
                     className={`h-full overflow-hidden transition-[width,opacity,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                         isLearningAiOpen
-                            ? 'fixed inset-y-0 right-0 z-[45] w-[88vw] max-w-[320px] opacity-100 translate-x-0 shadow-2xl lg:relative lg:inset-auto lg:z-auto lg:w-[320px] lg:max-w-none lg:shadow-none'
-                            : 'w-0 opacity-0 translate-x-full pointer-events-none lg:translate-x-0'
+                            ? 'fixed inset-y-0 right-0 z-[45] w-[88vw] max-w-[320px] opacity-100 translate-x-0 shadow-2xl xl:relative xl:inset-auto xl:z-auto xl:w-[320px] xl:max-w-none xl:shadow-none'
+                            : 'w-0 opacity-0 translate-x-full pointer-events-none xl:translate-x-0'
                     }`}
                 >
-                    <div className="h-full w-[88vw] max-w-[320px] lg:w-[320px]">
+                    <div className="h-full w-[88vw] max-w-[320px] xl:w-[320px]">
                         <LearningAiAssistant
                             onClose={handleCloseLearningAi}
                             courseTitle={assistantCourseTitle}
@@ -6560,7 +6560,7 @@ export default function LearnPage() {
                                         key={iframeRenderKey}
                                         ref={iframeRef}
                                         src={iframeSrc || resolvePlayerSrc(content.entryPoint)}
-                                        className="w-full h-[52vh] min-h-[280px] sm:min-h-[420px] lg:min-h-[520px] border-none transition-opacity duration-150"
+                                        className="w-full h-[52vh] min-h-[260px] sm:min-h-[360px] lg:min-h-[420px] xl:min-h-[500px] border-none transition-opacity duration-150"
                                         style={{
                                             opacity: content.type === 'tincan' && !isTinCanFrameReady ? 0 : 1,
                                             transform: 'translateZ(0)',

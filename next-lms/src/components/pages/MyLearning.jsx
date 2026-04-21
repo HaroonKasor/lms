@@ -427,7 +427,7 @@ export default function MyLearning() {
                 <div className="absolute w-[1428px] h-[107px] bg-white/10 -rotate-45 right-[-200px] -top-[60px] pointer-events-none"></div>
                 <div className="absolute w-[369px] h-[369px] rounded-full border border-white/20 right-[200px] -top-[32px] opacity-60 pointer-events-none"></div>
                 <div className="absolute w-[388px] h-[388px] rounded-full border border-white/15 right-[190px] -top-[41px] opacity-60 pointer-events-none"></div>
-                <div className="max-w-[1840px] mx-auto px-4 sm:px-6 lg:px-20 py-8 sm:py-10 relative z-10">
+                <div className="max-w-[1840px] mx-auto px-4 sm:px-6 xl:px-16 2xl:px-20 py-8 sm:py-10 relative z-10">
                     <h1 className="text-white font-semibold text-[30px] sm:text-[40px] leading-[110%] mb-3 sm:mb-4">Good morning, {user?.fullName || user?.username || 'Learner'}!</h1>
                     <p className="text-white font-medium text-[16px] sm:text-xl leading-[120%]">Let&apos;s start learning! Explore our courses and find what inspires you.</p>
                 </div>
@@ -435,8 +435,8 @@ export default function MyLearning() {
 
             <div className="absolute hidden md:block w-[104px] h-[104px] right-16 top-[548px] rounded-full pointer-events-none" style={{ background: 'linear-gradient(134.15deg, rgba(247, 13, 197, 0.099) 15.4%, rgba(247, 13, 197, 0) 73.27%)' }}></div>
 
-            <main className="w-full max-w-[1840px] mx-auto relative z-10 pt-8 pb-24 px-4 sm:px-6 lg:px-20 flex flex-col lg:flex-row gap-8">
-                <FadeIn direction="right" className="w-full lg:w-[408px] shrink-0 h-fit lg:sticky lg:top-24">
+            <main className="w-full max-w-[1840px] mx-auto relative z-10 pt-8 pb-24 px-4 sm:px-6 xl:px-16 2xl:px-20 flex flex-col xl:flex-row gap-8">
+                <FadeIn direction="right" className="w-full xl:w-[408px] shrink-0 h-fit xl:sticky xl:top-24">
                     <div className="bg-white border border-[#D1E3FB] rounded-[20px] p-6 pb-8">
                         <div className="flex items-center gap-2.5 pb-4 mb-6 border-b border-dashed border-[#D1E3FB]">
                             <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none">

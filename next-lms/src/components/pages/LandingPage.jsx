@@ -59,7 +59,7 @@ export default function LandingPage() {
             <Header />
 
             {/* 02. Hero Section */}
-            <section className="relative z-10 w-full overflow-hidden min-h-[620px] lg:min-h-[680px]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
+            <section className="relative z-10 w-full overflow-hidden min-h-[560px] sm:min-h-[620px] xl:min-h-[660px]" style={{ background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8FF 18%, #F6F8FF 100%)' }}>
                 {/* Decorative background elements */}
                 <div className="absolute left-0 top-0 w-full h-full pointer-events-none">
                     {/* Pink/purple gradient blobs */}
@@ -70,18 +70,18 @@ export default function LandingPage() {
                     <div className="absolute bottom-0 left-[-100px] right-[-100px] hidden h-[132px] border-y-2 border-[rgba(248,83,212,0.26)] bg-[rgba(248,83,212,0.07)] sm:block"></div>
                 </div>
 
-                <div className="relative z-10 mx-auto flex w-full max-w-[1290px] flex-col items-center px-4 pb-0 pt-10 sm:px-6 lg:flex-row lg:items-end lg:pt-16">
+                <div className="relative z-10 mx-auto flex w-full max-w-[1290px] flex-col items-center px-4 pb-0 pt-10 sm:px-6 xl:flex-row xl:items-end xl:pt-16">
 
                     {/* Left Content */}
-                    <div className="flex flex-1 flex-col items-center pb-8 text-center lg:items-start lg:pb-24 lg:text-left">
+                    <div className="flex flex-1 flex-col items-center pb-8 text-center xl:items-start xl:pb-24 xl:text-left">
                         {/* Light bulb icon */}
-                        <FadeIn direction="right" delay={80} className="mb-6 mix-blend-multiply lg:mb-8">
+                        <FadeIn direction="right" delay={80} className="mb-6 mix-blend-multiply xl:mb-8">
                             <img src="/images/idea-icon.png" alt="idea" className="h-[64px] w-[64px] object-contain mix-blend-multiply sm:h-[80px] sm:w-[80px]" />
                         </FadeIn>
 
-                        <FadeIn direction="right" className="flex flex-col items-center lg:items-start">
+                        <FadeIn direction="right" className="flex flex-col items-center xl:items-start">
                             {/* Headline */}
-                            <h1 className="mb-5 text-[40px] font-bold italic leading-[112%] text-[#052143] sm:text-[48px] lg:mb-6 lg:text-[68px]" style={{ fontFamily: "'Outfit', sans-serif" }}>
+                            <h1 className="mb-5 text-[40px] font-bold italic leading-[112%] text-[#052143] sm:text-[48px] xl:mb-6 xl:text-[62px] 2xl:text-[68px]" style={{ fontFamily: "'Outfit', sans-serif" }}>
                                 All-In-One<br />
                                 Platform For<br />
                                 <span className="relative inline-block">
@@ -100,7 +100,7 @@ export default function LandingPage() {
                             </p>
 
                             {/* Buttons */}
-                            <div className="flex flex-wrap items-center justify-center gap-3 not-italic lg:justify-start lg:gap-4">
+                            <div className="flex flex-wrap items-center justify-center gap-3 not-italic xl:justify-start xl:gap-4">
                                 <Link href="/register" className="relative flex min-w-[180px] items-center justify-center gap-2 overflow-hidden rounded-full bg-[#F87A53] px-6 py-3.5 text-[15px] font-medium text-white shadow-[0_4px_15px_rgba(248,122,83,0.3)] transition-opacity hover:opacity-90 sm:min-w-0 sm:px-7 sm:text-[16px]">
                                     <span className="relative z-10 text-lg">»</span>
                                     <span className="relative z-10">Get Started</span>
@@ -120,7 +120,7 @@ export default function LandingPage() {
                         </FadeIn>
                     </div>
 
-                    <FadeIn direction="up" delay={220} className="relative mb-8 w-full max-w-[420px] lg:hidden">
+                    <FadeIn direction="up" delay={220} className="relative mb-8 w-full max-w-[420px] xl:hidden">
                         <img
                             src="/images/hero-student.png"
                             alt="Student"
@@ -133,7 +133,7 @@ export default function LandingPage() {
                     </FadeIn>
 
                     {/* Right Image & Decorations */}
-                    <div className="flex-1 relative w-full min-h-[550px] lg:min-h-[620px] hidden lg:flex items-end justify-center">
+                    <div className="flex-1 relative w-full min-h-[500px] xl:min-h-[620px] hidden xl:flex items-end justify-center">
                         <FadeIn direction="left" delay={200} className="absolute inset-0 z-0 pointer-events-none">
                             {/* Concentric circles - larger and more visible */}
                             <div className="absolute top-[50%] left-[50%] -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full border border-[rgba(109,13,212,0.08)]"></div>
@@ -193,11 +193,11 @@ export default function LandingPage() {
             <section className="w-full relative z-20 bg-[#F6F8FF] py-14 sm:py-20">
                 <div className="mx-auto max-w-[1290px] px-4 sm:px-6">
                     <FadeIn direction="up">
-                        <div className="flex flex-col lg:flex-row items-center gap-16">
+                        <div className="flex flex-col xl:flex-row items-center gap-16">
                             {/* Left Content */}
                             <div className="flex-1">
                                 <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">About us</span>
-                                <h2 className="mb-8 text-[30px] font-bold italic leading-[130%] text-[#052143] sm:mb-10 sm:text-[36px] lg:text-[42px]">
+                                <h2 className="mb-8 text-[30px] font-bold italic leading-[130%] text-[#052143] sm:mb-10 sm:text-[36px] xl:text-[42px]">
                                     Discover the Platform That<br />
                                     Redefines <span className="text-[#F87A53] relative inline-block">Learning
                                         <svg className="absolute -bottom-2 left-0 w-full" height="6" viewBox="0 0 200 6" fill="none" preserveAspectRatio="none"><path d="M1 4C40 1 80 1 100 3C140 5 180 4 199 2" stroke="#3C59FC" strokeWidth="2" strokeLinecap="round" /></svg>
@@ -239,7 +239,7 @@ export default function LandingPage() {
             <section className="w-full relative z-20 bg-white py-14 sm:py-20">
                 <div className="mx-auto max-w-[1290px] px-4 sm:px-6">
                     <FadeIn direction="up">
-                        <div className="flex flex-col lg:flex-row items-center gap-16">
+                        <div className="flex flex-col xl:flex-row items-center gap-16">
                             {/* Left - Image with Stats */}
                             <div className="relative flex-1">
                                 <div className="h-[320px] w-full max-w-[340px] overflow-hidden rounded-[20px] sm:h-[400px]">
@@ -259,7 +259,7 @@ export default function LandingPage() {
                             {/* Right Content */}
                             <div className="flex-1">
                                 <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">Our Story</span>
-                                <h2 className="mb-6 text-[30px] font-bold italic leading-[130%] text-[#052143] sm:text-[36px] lg:text-[42px]">
+                                <h2 className="mb-6 text-[30px] font-bold italic leading-[130%] text-[#052143] sm:text-[36px] xl:text-[42px]">
                                     Our Story: Built On Values,<br />
                                     Driven By <span className="text-[#F87A53] relative inline-block">Innovation
                                         <svg className="absolute -bottom-2 left-0 w-full" height="6" viewBox="0 0 200 6" fill="none" preserveAspectRatio="none"><path d="M1 4C40 1 80 1 100 3C140 5 180 4 199 2" stroke="#3C59FC" strokeWidth="2" strokeLinecap="round" /></svg>
@@ -299,7 +299,7 @@ export default function LandingPage() {
                     <FadeIn direction="up">
                         <div className="text-center mb-14">
                             <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">Our Courses</span>
-                            <h2 className="text-[#052143] font-bold italic text-[36px] lg:text-[42px] leading-[130%]">
+                            <h2 className="text-[#052143] font-bold italic text-[36px] xl:text-[42px] leading-[130%]">
                                 SkillUp's Courses<br />
                                 Grow Faster, Learn <span className="text-[#F87A53] relative inline-block">Better
                                     <svg className="absolute -bottom-2 left-0 w-full" height="6" viewBox="0 0 120 6" fill="none" preserveAspectRatio="none"><path d="M1 4C30 1 60 1 80 3C100 5 110 4 119 2" stroke="#3C59FC" strokeWidth="2" strokeLinecap="round" /></svg>
@@ -308,7 +308,7 @@ export default function LandingPage() {
                         </div>
                     </FadeIn>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
                         {[
                             { title: 'Full Stack Development BKD', img: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=400&h=240&fit=crop', category: 'Development', price: '฿2,500' },
                             { title: 'Complete UI / UX Design Masterclass', img: 'https://images.unsplash.com/photo-1561070791-2526d30994b5?w=400&h=240&fit=crop', category: 'Design', price: '฿1,800' },
@@ -358,7 +358,7 @@ export default function LandingPage() {
                     <FadeIn direction="up">
                         <div className="text-center mb-14">
                             <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">Our Clients</span>
-                            <h2 className="text-[#052143] font-bold italic text-[36px] lg:text-[42px] leading-[130%]">
+                            <h2 className="text-[#052143] font-bold italic text-[36px] xl:text-[42px] leading-[130%]">
                                 Trusted By Leading <span className="text-[#F87A53]">Organizations</span>
                             </h2>
                         </div>
@@ -407,7 +407,7 @@ export default function LandingPage() {
                         <div className="mb-10 flex flex-col items-start justify-between gap-4 sm:mb-14 md:flex-row md:items-end">
                             <div>
                                 <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">Featured</span>
-                                <h2 className="text-[30px] font-bold italic leading-[130%] text-[#052143] sm:text-[36px] lg:text-[42px]">
+                                <h2 className="text-[30px] font-bold italic leading-[130%] text-[#052143] sm:text-[36px] xl:text-[42px]">
                                     Pick A Course To Get Started
                                 </h2>
                             </div>
@@ -418,7 +418,7 @@ export default function LandingPage() {
                         </div>
                     </FadeIn>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
                         {[
                             { title: 'Top Python & Machine Learning Link', img: 'https://images.unsplash.com/photo-1526379095098-d400fd0bf935?w=400&h=200&fit=crop', price: '฿4,900', tag: 'Best Seller' },
                             { title: 'Learning Java Programming Foundation', img: 'https://images.unsplash.com/photo-1517694712202-14dd9538aa97?w=400&h=200&fit=crop', price: '฿2,900', tag: 'Popular' },
@@ -477,7 +477,7 @@ export default function LandingPage() {
                     <FadeIn direction="up">
                         <div className="text-center mb-14">
                             <span className="text-[#687EFF] font-medium text-[14px] uppercase tracking-wider mb-3 block">Testimonials</span>
-                            <h2 className="text-[30px] font-bold italic leading-[130%] text-[#052143] sm:text-[36px] lg:text-[42px]">
+                            <h2 className="text-[30px] font-bold italic leading-[130%] text-[#052143] sm:text-[36px] xl:text-[42px]">
                                 What They Say About Us
                             </h2>
                         </div>

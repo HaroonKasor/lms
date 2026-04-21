@@ -93,7 +93,7 @@ export default function ProductsPage() {
                 </FadeIn>
 
                 {/* Cards Grid */}
-                <FadeIn direction="up" delay={120} className="grid grid-cols-1 gap-6 pb-14 md:grid-cols-2 lg:grid-cols-3 lg:gap-8 lg:pb-20">
+                <FadeIn direction="up" delay={120} className="grid grid-cols-1 gap-6 pb-14 md:grid-cols-2 xl:grid-cols-3 xl:gap-8 xl:pb-20">
                     {products.map((p, i) => (
                         <div key={i} className="bg-white rounded-[24px] p-8 shadow-[0_4px_30px_rgba(0,0,0,0.03)] border border-[#eff2f9] hover:shadow-[0_10px_40px_rgba(0,0,0,0.06)] transition-all duration-300 flex flex-col group">
                             {/* Icon */}
@@ -118,7 +118,7 @@ export default function ProductsPage() {
                                         </svg>
                                     </button>
                                 ) : (
-                                    <div className="flex items-center gap-4">
+                                    <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                                         <button className="px-6 py-2.5 rounded-full bg-[#F87A53] text-white font-semibold hover:opacity-90 transition-opacity">
                                             Try it now
                                         </button>

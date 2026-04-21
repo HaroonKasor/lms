@@ -101,7 +101,7 @@ export default function HomeCoursesView() {
             <Header />
 
             {/* Hero Section */}
-            <div className="relative w-full h-[220px] lg:h-[280px] bg-[#fdf5f9] flex items-center overflow-hidden border-b border-[#F2F4FF]">
+            <div className="relative w-full h-[220px] sm:h-[250px] xl:h-[280px] bg-[#fdf5f9] flex items-center overflow-hidden border-b border-[#F2F4FF]">
                 <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#F87A53 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
                 <div className="absolute inset-0 opacity-20" style={{ background: 'linear-gradient(90deg, transparent, rgba(248, 122, 83, 0.2))' }}></div>
 
@@ -113,8 +113,8 @@ export default function HomeCoursesView() {
                     <span className="text-2xl filter blur-[1px]">🌸</span>
                 </div>
 
-                <FadeIn direction="up" className="w-full max-w-[1290px] mx-auto px-6 relative z-10">
-                    <h1 className="text-[#052143] font-bold text-[48px] lg:text-[56px] leading-[1.2] mb-3">Courses</h1>
+                <FadeIn direction="up" className="w-full max-w-[1290px] mx-auto px-4 sm:px-6 relative z-10">
+                    <h1 className="text-[#052143] font-bold text-[40px] sm:text-[48px] xl:text-[56px] leading-[1.2] mb-3">Courses</h1>
                     <div className="flex items-center gap-2 text-[#6B778B] text-[15px]">
                         <Link href="/" className="hover:text-[#687EFF] transition-colors">Home</Link>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
@@ -123,7 +123,7 @@ export default function HomeCoursesView() {
                 </FadeIn>
 
                 {/* Left side vertical text banner */}
-                <div className="absolute left-0 top-0 h-full w-[40px] bg-[#687EFF] flex items-center justify-center">
+                <div className="absolute left-0 top-0 hidden h-full w-[40px] bg-[#687EFF] items-center justify-center xl:flex">
                     <div className="transform -rotate-90 whitespace-nowrap text-white/70 text-[10px] tracking-[4px] font-semibold uppercase">
                         facebook // instagram // linkedin // twitter
                     </div>
@@ -131,10 +131,10 @@ export default function HomeCoursesView() {
             </div>
 
             {/* Main Content */}
-            <main className="flex-1 w-full max-w-[1290px] mx-auto px-6 py-16 flex flex-col lg:flex-row gap-8 lg:gap-12 relative z-10">
+            <main className="flex-1 w-full max-w-[1290px] mx-auto px-4 sm:px-6 py-10 sm:py-14 xl:py-16 flex flex-col xl:flex-row gap-8 xl:gap-12 relative z-10">
 
                 {/* Sidebar Filters */}
-                <FadeIn direction="right" className="w-full lg:w-[280px] shrink-0 flex flex-col gap-8">
+                <FadeIn direction="right" className="w-full xl:w-[280px] shrink-0 flex flex-col gap-8">
                     {/* Search */}
                     <div className="bg-[#fdfdfd] border border-[#eaedf5] rounded-xl p-5 shadow-[0_4px_20px_rgba(0,0,0,0.02)]">
                         <h3 className="font-bold text-[#052143] text-[18px] mb-4 relative pb-2 inline-block">
@@ -262,7 +262,7 @@ export default function HomeCoursesView() {
                     </div>
 
                     {/* Course Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                         {courses.map((course) => (
                             <div key={course.id} className="bg-white rounded-[20px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.03)] border border-[#eaedf5] hover:shadow-[0_12px_32px_rgba(0,0,0,0.08)] transition-all duration-300 group flex flex-col items-center">
 

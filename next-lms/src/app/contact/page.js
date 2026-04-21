@@ -96,7 +96,7 @@ export default function ContactPage() {
             <Header />
 
             {/* Hero Section */}
-            <div className="relative w-full h-[220px] sm:h-[280px] lg:h-[360px] bg-[#f8f6ff] flex flex-col justify-center pb-8 sm:pb-20 lg:pb-28 overflow-hidden border-b border-[#F2F4FF]">
+            <div className="relative w-full h-[220px] sm:h-[280px] xl:h-[360px] bg-[#f8f6ff] flex flex-col justify-center pb-8 sm:pb-20 xl:pb-28 overflow-hidden border-b border-[#F2F4FF]">
                 <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#687EFF 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
                 <div className="absolute inset-0 opacity-20" style={{ background: 'linear-gradient(90deg, transparent, rgba(104, 126, 255, 0.2))' }}></div>
 
@@ -115,7 +115,7 @@ export default function ContactPage() {
                 </div>
 
                 <FadeIn direction="up" className="w-full max-w-[1290px] mx-auto px-4 sm:px-6 relative z-10">
-                    <h1 className="text-[#052143] font-bold text-[34px] sm:text-[44px] lg:text-[56px] leading-[1.2] mb-3">Contact Us</h1>
+                    <h1 className="text-[#052143] font-bold text-[34px] sm:text-[44px] xl:text-[56px] leading-[1.2] mb-3">Contact Us</h1>
                     <div className="flex items-center gap-2 text-[#6B778B] text-[15px]">
                         <Link href="/" className="hover:text-[#687EFF] transition-colors">Home</Link>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
@@ -124,7 +124,7 @@ export default function ContactPage() {
                 </FadeIn>
 
                 {/* Left side vertical text banner */}
-                <div className="absolute left-0 top-0 h-full w-[40px] bg-[#687EFF] items-center justify-center hidden lg:flex">
+                <div className="absolute left-0 top-0 h-full w-[40px] bg-[#687EFF] items-center justify-center hidden xl:flex">
                     <div className="transform -rotate-90 whitespace-nowrap text-white/70 text-[10px] tracking-[4px] font-semibold uppercase">
                         facebook // instagram // linkedin // twitter
                     </div>
@@ -135,7 +135,7 @@ export default function ContactPage() {
             <main className="flex-1 w-full max-w-[1290px] mx-auto px-4 sm:px-6 py-10 sm:py-16 flex flex-col gap-12 sm:gap-16 relative z-10">
 
                 {/* Contact Info Cards Grid */}
-                <FadeIn direction="up" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-2">
+                <FadeIn direction="up" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mt-2">
                     {contactInfo.map((info, idx) => (
                         <div key={idx} className="bg-white rounded-2xl p-8 flex flex-col items-center text-center shadow-[0_10px_40px_rgba(0,0,0,0.04)] border border-[#eaedf5] hover:-translate-y-2 transition-transform duration-300">
                             <div className="w-16 h-16 rounded-full bg-[#fdf8dd] border-4 border-[#fffcef] flex items-center justify-center mb-6 shadow-sm">
@@ -153,7 +153,7 @@ export default function ContactPage() {
 
                 {/* Office Map Section */}
                 <FadeIn direction="up" delay={80}>
-                    <div className="bg-white border border-[#eaedf5] rounded-[24px] p-6 lg:p-8 shadow-[0_10px_40px_rgba(0,0,0,0.04)]">
+                    <div className="bg-white border border-[#eaedf5] rounded-[24px] p-6 xl:p-8 shadow-[0_10px_40px_rgba(0,0,0,0.04)]">
                         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-5">
                             <div>
                                 <span className="text-[#F87A53] font-bold text-[12px] uppercase tracking-[0.18em]">GET IN TOUCH</span>
@@ -176,7 +176,7 @@ export default function ContactPage() {
                             </a>
                         </div>
 
-                        <div className="w-full h-[340px] lg:h-[420px] rounded-2xl overflow-hidden border border-[#D1E3FB]">
+                        <div className="w-full h-[340px] xl:h-[420px] rounded-2xl overflow-hidden border border-[#D1E3FB]">
                             <iframe
                                 src={officeMap.embedUrl}
                                 className="w-full h-full"
@@ -189,10 +189,10 @@ export default function ContactPage() {
                 </FadeIn>
 
                 {/* Form & Image Section */}
-                <FadeIn direction="up" delay={120} className="flex flex-col lg:flex-row gap-12 lg:gap-20 items-stretch bg-transparent pt-8 pb-12">
+                <FadeIn direction="up" delay={120} className="flex flex-col xl:flex-row gap-12 xl:gap-20 items-stretch bg-transparent pt-8 pb-12">
 
                     {/* Left side image */}
-                    <div className="lg:w-1/2 rounded-[24px] overflow-hidden shadow-lg relative min-h-[400px] bg-slate-200">
+                    <div className="xl:w-1/2 rounded-[24px] overflow-hidden shadow-lg relative min-h-[400px] bg-slate-200">
                         {/* Course Image Placeholder */}
                         <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url('/images/hero-student.png')" }}></div>
                         <div className="absolute inset-0 bg-black/10"></div>
@@ -204,7 +204,7 @@ export default function ContactPage() {
                     </div>
 
                     {/* Right side form */}
-                    <div className="lg:w-1/2 flex flex-col justify-center">
+                    <div className="xl:w-1/2 flex flex-col justify-center">
                         <span className="text-[#F87A53] font-bold text-[14px] uppercase tracking-wider mb-4">GET IN TOUCH</span>
                         <h2 className="text-[#052143] text-[40px] font-bold leading-[1.2] mb-8">
                             Our Office
