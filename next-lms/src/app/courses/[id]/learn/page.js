@@ -5845,12 +5845,20 @@ export default function LearnPage() {
             // Assessments still require a real pass — this fallback only applies to
             // non-assessment (video/content) lessons.
             const dwellSinceSelected = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
-            const interactionRecency = Date.now() - Number(lastUserInteractionAtRef.current || 0);
+            // Don't require recent mouse/keyboard interaction — watching a video is
+            // legitimate non-interactive behavior, and cross-origin iframes (YouTube)
+            // swallow mousemove events so interaction tracking would underreport.
+            // Instead, require the tab to currently be visible and the learner to
+            // have had *some* interaction on the page at least once (so we aren't
+            // auto-unlocking idle tabs left open in the background).
+            let tabVisible = true;
+            try { tabVisible = typeof document !== 'undefined' && document.visibilityState === 'visible'; } catch { tabVisible = true; }
+            const hasEverInteracted = Number(lastUserInteractionAtRef.current || 0) > 0;
             const hasDwellEvidence =
                 Number.isFinite(dwellSinceSelected)
                 && dwellSinceSelected >= 60000
-                && Number.isFinite(interactionRecency)
-                && interactionRecency <= 180000;
+                && tabVisible
+                && hasEverInteracted;
             if (
                 i === selectedSafe
                 && !isAssessmentActivity(activities[i])
