@@ -5839,13 +5839,26 @@ export default function LearnPage() {
             // we have concrete evidence the content actually finished, even if the
             // package never wrote completed=true into its dataIndex. Evidence:
             //   (a) a nested HTML5 <video> has played to its end, OR
-            //   (b) an xAPI "completed" verb was received while this lesson was selected.
+            //   (b) an xAPI "completed" verb was received while this lesson was selected, OR
+            //   (c) the learner has dwelled on this lesson long enough with recent
+            //       interaction that a reasonable watch-through is implied.
             // Assessments still require a real pass — this fallback only applies to
             // non-assessment (video/content) lessons.
+            const dwellSinceSelected = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
+            const interactionRecency = Date.now() - Number(lastUserInteractionAtRef.current || 0);
+            const hasDwellEvidence =
+                Number.isFinite(dwellSinceSelected)
+                && dwellSinceSelected >= 60000
+                && Number.isFinite(interactionRecency)
+                && interactionRecency <= 180000;
             if (
                 i === selectedSafe
                 && !isAssessmentActivity(activities[i])
-                && (hasIframeVideoReachedEnd() || completionVerbSeenForActivityRef.current.has(i))
+                && (
+                    hasIframeVideoReachedEnd()
+                    || completionVerbSeenForActivityRef.current.has(i)
+                    || hasDwellEvidence
+                )
             ) {
                 forwardFromSelected = i + 1;
                 continue;
