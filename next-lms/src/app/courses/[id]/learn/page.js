@@ -340,6 +340,15 @@ export default function LearnPage() {
     // Used as concrete "video ended" evidence for chapter-advance gating when the
     // package doesn't reliably write completed=true into its own dataIndex.
     const completionVerbSeenForActivityRef = useRef(new Set());
+    // Gate so the initial server-progress load only runs once per session, even though
+    // the enclosing useEffect depends on hooks whose identity can change (e.g.
+    // syncProgressWithTrackedTime's deps include selectedActivityIndex). Without this
+    // gate, any time selectedActivityIndex changes while the page is open, the useEffect
+    // re-fires, calls getProgress() and updateProgress() again, which itself writes
+    // server state that triggers another re-render, producing a request-flood feedback
+    // loop.
+    const resumeLoadSessionKeyRef = useRef('');
+    const resumeLoadInFlightRef = useRef(false);
     const selectedActivitySyncStateRef = useRef({ idx: null, status: '', at: 0 });
     const legacyWebSyncStateRef = useRef({ idx: null, status: '', at: 0 });
     const progressWriteBlockRef = useRef({ disabled: false, reason: '' });
@@ -1853,9 +1862,13 @@ export default function LearnPage() {
                         ? Math.max(0, Math.min(100, Number(percentValue)))
                         : null;
                     const explicitPassed = typeof passedOverride === 'boolean' ? passedOverride : null;
-                    const passByPercent = explicitPassed !== null
-                        ? explicitPassed
-                        : scorePercent === null ? true : scorePercent >= 80;
+                    // When a numeric score is available, the percent threshold is
+                    // authoritative — some packages call sendCurrentPagePassedStatement(true)
+                    // or sendExperiencedStatement unconditionally when the quiz is
+                    // submitted, which must not override a genuinely failing score.
+                    const passByPercent = scorePercent !== null
+                        ? scorePercent >= 80
+                        : (explicitPassed !== null ? explicitPassed : true);
 
                     const hasPriorEvidence = (row) => {
                         if (!row || typeof row !== 'object') return false;
@@ -4296,7 +4309,14 @@ export default function LearnPage() {
             setResumeLoaded(true);
         };
         if (content && progressContentId && progressUserCandidates.length > 0) {
-            loadProgress();
+            const sessionKey = `${String(progressContentId)}::${Number(enrollmentId || 0)}::${Number(effectiveSectionId || 0)}::${String(canonicalProgressUserId || '')}`;
+            if (resumeLoadSessionKeyRef.current === sessionKey) return;
+            if (resumeLoadInFlightRef.current) return;
+            resumeLoadInFlightRef.current = true;
+            resumeLoadSessionKeyRef.current = sessionKey;
+            loadProgress().finally(() => {
+                resumeLoadInFlightRef.current = false;
+            });
         }
     }, [content, progressContentId, progressUserCandidates, restoreTincanPositionFromProgress, canonicalProgressUserId, computeTinCanProgress, readTincanResumeIndex, readWebResumeIndex, persistWebResumeIndex, effectiveSectionId, enrollmentId, syncProgressWithTrackedTime, syncEnrollmentStatus, requireAssessmentPass]);
 
@@ -4504,7 +4524,14 @@ export default function LearnPage() {
                 const activity = activities[safeIndex];
                 const percent = asFiniteNumber(payload?.percent);
                 const passScore = getAssessmentPassingScore(activity);
-                const passed = payload?.passed === true || (percent !== null && percent >= passScore);
+                // When the package reports a numeric percent, trust the percent threshold
+                // over the package's own passed flag. Some content packages set
+                // passed=true whenever a quiz is submitted, regardless of score — that
+                // is not acceptable for a course with a real mastery score requirement.
+                // Only fall back to payload.passed when no percent is available.
+                const passed = percent !== null
+                    ? percent >= passScore
+                    : payload?.passed === true;
                 if (!passed) return;
                 const isTerminalAssessmentResult =
                     lastAssessmentIndex >= 0
