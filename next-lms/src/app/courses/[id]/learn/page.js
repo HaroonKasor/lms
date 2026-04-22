@@ -4013,7 +4013,13 @@ export default function LearnPage() {
         } else {
             syncEnrollmentStatus('LEARNING', nextProgress);
         }
-    }, [isLaunchMode, content, resumeLoaded, progressContentId, progressUserId, activeSectionId, selectedActivityIndex, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, hasAssessmentFailureSignals, detectActivityIndexFromIframe, extractScorePayloadFromStatus, fallbackSyncTick, isAssessmentActivity, hasIframeVideoReachedEnd]);
+    // NOTE: hasIframeVideoReachedEnd is intentionally omitted from deps — it is
+    // declared later in this component (TDZ hazard if referenced during render
+    // of this effect's dep array). The callback is stable (useCallback with []
+    // deps) so omitting it is safe; the effect still calls it inside the body
+    // where the binding is already initialized by the time the effect runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isLaunchMode, content, resumeLoaded, progressContentId, progressUserId, activeSectionId, selectedActivityIndex, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, hasAssessmentFailureSignals, detectActivityIndexFromIframe, extractScorePayloadFromStatus, fallbackSyncTick, isAssessmentActivity]);
 
     // Load content only from user's own enrollment (prevent bypass by direct URL).
     useEffect(() => {
