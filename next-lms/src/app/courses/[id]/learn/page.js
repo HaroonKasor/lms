@@ -297,6 +297,10 @@ export default function LearnPage() {
     const [iframeSrc, setIframeSrc] = useState('');
     const [isTinCanFrameReady, setIsTinCanFrameReady] = useState(false);
     const [tinCanActivityStatus, setTinCanActivityStatus] = useState([]);
+    // Heartbeat tick that drives re-evaluation of completion even when no xAPI
+    // events arrive (e.g. cross-origin YouTube iframes where we can never read
+    // video state and the package never writes completed=true).
+    const [fallbackSyncTick, setFallbackSyncTick] = useState(0);
     const [progressUserId, setProgressUserId] = useState('anonymous');
     const [isLearningSidebarOpen, setIsLearningSidebarOpen] = useState(false);
     const [isLearningAiOpen, setIsLearningAiOpen] = useState(false);
@@ -3832,12 +3836,16 @@ export default function LearnPage() {
             if (document.visibilityState === 'visible') {
                 markLearningInteraction();
                 trackedStudyTickAtRef.current = Date.now();
+                // Force the fallback sync effect to re-evaluate immediately on
+                // return-from-background so mobile users don't wait another 15s.
+                setFallbackSyncTick((n) => (n + 1) % 1_000_000);
             }
         };
 
         const onFocus = () => {
             markLearningInteraction();
             trackedStudyTickAtRef.current = Date.now();
+            setFallbackSyncTick((n) => (n + 1) % 1_000_000);
         };
 
         const onInteraction = () => {
@@ -3875,9 +3883,16 @@ export default function LearnPage() {
 
             if (!last) return;
             if (document.visibilityState !== 'visible') return;
-            if (typeof document.hasFocus === 'function' && !document.hasFocus()) return;
+            // TinCan content lives inside a cross-origin iframe (e.g. YouTube embed).
+            // While the learner is watching, the iframe holds focus and taps happen
+            // inside it — parent `document.hasFocus()` returns false on iOS/Safari
+            // and touch events don't bubble to the parent window. Skip those gates
+            // for iframe-hosted content so study time can actually accumulate on mobile.
+            const isIframeContent = content?.type === 'tincan' || content?.type === 'web';
+            if (!isIframeContent && typeof document.hasFocus === 'function' && !document.hasFocus()) return;
             const idleSeconds = (now - Number(lastUserInteractionAtRef.current || 0)) / 1000;
-            if (!Number.isFinite(idleSeconds) || idleSeconds > 75) return;
+            const idleCutoff = isIframeContent ? 600 : 75;
+            if (!Number.isFinite(idleSeconds) || idleSeconds > idleCutoff) return;
 
             if (content?.type === 'video') {
                 const video = videoRef.current;
@@ -3892,6 +3907,18 @@ export default function LearnPage() {
 
         return () => clearInterval(timer);
     }, [isLaunchMode, content, content?.type, resumeLoaded]);
+
+    // Periodic heartbeat that re-triggers the fallback sync effect even when
+    // no xAPI events arrive. Required for cross-origin YouTube iframes where
+    // tinCanActivityStatus never updates after initial load — without a tick,
+    // the fallback effect would never re-evaluate dwell-based completion.
+    useEffect(() => {
+        if (!isLaunchMode || content?.type !== 'tincan' || !resumeLoaded) return;
+        const timer = setInterval(() => {
+            setFallbackSyncTick((n) => (n + 1) % 1_000_000);
+        }, 7000);
+        return () => clearInterval(timer);
+    }, [isLaunchMode, content?.type, resumeLoaded]);
 
     // Fallback sync: keep chapter/enrollment status moving even when iframe index detection is flaky.
     useEffect(() => {
@@ -3913,9 +3940,39 @@ export default function LearnPage() {
         const completedByActivities =
             activityStatuses.length > 0 &&
             activityStatuses.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
+
+        // Package-level completion evidence for the currently-selected lesson.
+        // Mirrors the unlock logic in getMaxUnlockedActivityIndex: if the learner
+        // is on a non-assessment lesson and we have concrete evidence the content
+        // finished (native video ended, xAPI "completed" verb, or adequate dwell
+        // with visible tab + prior interaction), treat it as a package-level
+        // completion signal. This is the only way single-activity YouTube TinCan
+        // courses can finalize — the cross-origin iframe blocks video inspection
+        // and the wrapper never writes completed=true into the activity status.
+        const activitiesList = Array.isArray(content?.activities) ? content.activities : [];
+        const currentActivity = activitiesList[safeIdx];
+        let packageEvidenceSignal = false;
+        if (currentActivity && !isAssessmentActivity(currentActivity)) {
+            const dwellSinceSelected = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
+            const hasEverInteracted = Number(lastUserInteractionAtRef.current || 0) > 0;
+            // Do NOT require `visibilityState === 'visible'` at check time: on
+            // iOS, full-screen video or briefly switching apps flips the parent
+            // page to hidden. `studiedSeconds >= 10` in canFinalizeTinCanCompletion
+            // and `hasEverInteracted` already guard against idle-tab false positives.
+            const hasDwellEvidence =
+                Number.isFinite(dwellSinceSelected)
+                && dwellSinceSelected >= 60000
+                && hasEverInteracted;
+            packageEvidenceSignal =
+                hasIframeVideoReachedEnd()
+                || completionVerbSeenForActivityRef.current.has(safeIdx)
+                || hasDwellEvidence;
+        }
+
         const shouldComplete = canFinalizeTinCanCompletion({
             completedByProgress: false,
             completedByActivities,
+            completedByPackage: packageEvidenceSignal,
             activityIndex: safeIdx,
             activityStatuses,
         });
@@ -3956,7 +4013,7 @@ export default function LearnPage() {
         } else {
             syncEnrollmentStatus('LEARNING', nextProgress);
         }
-    }, [isLaunchMode, content, resumeLoaded, progressContentId, progressUserId, activeSectionId, selectedActivityIndex, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, hasAssessmentFailureSignals, detectActivityIndexFromIframe, extractScorePayloadFromStatus]);
+    }, [isLaunchMode, content, resumeLoaded, progressContentId, progressUserId, activeSectionId, selectedActivityIndex, computeTinCanProgress, syncEnrollmentStatus, syncProgressWithTrackedTime, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, hasAssessmentFailureSignals, detectActivityIndexFromIframe, extractScorePayloadFromStatus, fallbackSyncTick, isAssessmentActivity, hasIframeVideoReachedEnd]);
 
     // Load content only from user's own enrollment (prevent bypass by direct URL).
     useEffect(() => {

@@ -259,7 +259,15 @@ async function updateProgressFromStatement(statement, contentId) {
         });
         const explicitSuccess = typeof snapshot?.success === 'boolean' ? snapshot.success : undefined;
         const explicitCompletion = typeof snapshot?.completion === 'boolean' ? snapshot.completion : undefined;
-        const hasExplicitFailure = assessmentLikeStatement && (explicitSuccess === false || explicitCompletion === false);
+        // Only mark FAILED when the statement carries a genuine failure signal.
+        // `success:false` alone can be the default heartbeat value from TinCan wrappers
+        // for assessment-like activities that simply haven't been passed yet. Require
+        // success:false to be accompanied by a completion:true (assessment was actually
+        // completed but failed) to count as failure. Never treat completion:false as
+        // failure — that just means "not yet done".
+        const hasExplicitFailure = assessmentLikeStatement
+            && explicitSuccess === false
+            && explicitCompletion === true;
         const scoreRaw = Number(snapshot?.raw);
         const scoreScaled = Number(snapshot?.scaled);
         const scoreMax = Number(snapshot?.max);
@@ -291,7 +299,11 @@ async function updateProgressFromStatement(statement, contentId) {
 
     if (verbId.includes('progressed') || verbId.includes('play') || verbId.includes('pause') || verbId.includes('seek')) {
         const { progress, currentTime, duration, scoreRaw, scoreScaled, scoreMax, success, completion } = readProgressExtensions(statement?.result);
-        const hasExplicitFailure = assessmentLikeStatement && (success === false || completion === false);
+        // In-progress verbs: `success:false`/`completion:false` are the default
+        // heartbeat values from TinCan wrappers (e.g. YouTube embed) that just mean
+        // "not yet succeeded / not yet completed". They are NOT failure signals and
+        // must never flip the row to FAILED during normal playback.
+        const hasExplicitFailure = false;
         const normalizedProgress = Number.isFinite(Number(progress))
             ? Number(progress)
             : 0;
