@@ -11,6 +11,7 @@
     "test:security": "node scripts/security-check.cjs",
     "test:load": "node scripts/load-test.cjs",
     "e2e:click": "node scripts/e2e-click-all.cjs",
+    "e2e:learn": "node scripts/e2e-learner-enroll-learn.cjs",
     "health:check": "node -e \"fetch('http://127.0.0.1:8080/api/health').then(r=>r.text()).then(t=>{console.log(t);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})\"",
     "backup:db": "node scripts/backup-db.cjs",
     "restore:db": "node scripts/restore-db.cjs",

@@ -333,11 +333,12 @@ async function upsertLearningProgress({
         && safeProgress < 100
         && explicitCompletion !== true;
 
-    const shouldHonorNegativeSignals = incomingStatus !== 'completed';
-    const hasExplicitFailureSignal =
-        incomingStatus === 'failed'
-        || (shouldHonorNegativeSignals && explicitSuccess === false)
-        || (shouldHonorNegativeSignals && explicitCompletion === false);
+    // Only an explicit `failed` status counts as failure. Video/TinCan players
+    // send success:false and completion:false as the default heartbeat while
+    // the learner is still watching — those are "not yet succeeded / not yet
+    // completed" signals, not "graded as failed". Treating them as failure
+    // caused progress rows to flip to status='failed' during normal playback.
+    const hasExplicitFailureSignal = incomingStatus === 'failed';
     const hasExplicitCompletionSignal = incomingStatus === 'completed';
     const shouldCompleteByInput = !hasExplicitFailureSignal && hasExplicitCompletionSignal;
     const isAlreadyCompleted = prevStatus === 'completed';
