@@ -948,6 +948,51 @@ export default function LearnPage() {
         return () => window.removeEventListener('message', onMessage);
     }, [selectedActivityIndex]);
 
+    // Actively subscribe to nested YouTube iframes so onStateChange events fire.
+    // YouTube's embed only emits state change messages after the parent posts a
+    // `{event:"listening", id:<playerId>}` handshake. Without this, the listener
+    // above never receives anything. We walk every nested iframe (same-origin
+    // wrappers only) looking for YouTube embeds with enablejsapi=1 and handshake
+    // with each one. Runs on an interval because TinCan wrappers can mount the
+    // YouTube iframe asynchronously after their own initialization.
+    useEffect(() => {
+        if (!isLaunchMode || content?.type !== 'tincan' || !resumeLoaded) return;
+        const subscribed = new WeakSet();
+        const subscribeYoutubeFrames = () => {
+            const root = iframeRef.current?.contentWindow;
+            if (!root) return;
+            const seen = new Set();
+            const walk = (win) => {
+                if (!win || seen.has(win)) return;
+                seen.add(win);
+                let doc = null;
+                try { doc = win.document; } catch { return; }
+                if (!doc) return;
+                const frames = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
+                for (const frame of frames) {
+                    const src = String(frame?.src || '');
+                    const isYoutube = /youtube\.com\/embed\/|youtube-nocookie\.com\/embed\//i.test(src);
+                    if (isYoutube && !subscribed.has(frame) && frame.contentWindow) {
+                        try {
+                            frame.contentWindow.postMessage(
+                                JSON.stringify({ event: 'listening', id: frame.id || 'lms-yt' }),
+                                '*'
+                            );
+                            subscribed.add(frame);
+                        } catch {
+                            // ignore cross-origin post failures — postMessage to '*' should succeed
+                        }
+                    }
+                    try { walk(frame.contentWindow); } catch { /* cross-origin */ }
+                }
+            };
+            try { walk(root); } catch { /* ignore */ }
+        };
+        subscribeYoutubeFrames();
+        const timer = setInterval(subscribeYoutubeFrames, 3000);
+        return () => clearInterval(timer);
+    }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc]);
+
     const computeTinCanProgress = useCallback((position, total, completed = false) => {
         const totalLessons = Math.max(1, Number(total) || 0);
         const safePos = Math.max(1, Math.min(totalLessons, Number(position) || 1));
@@ -1424,8 +1469,26 @@ export default function LearnPage() {
             isFinalActivity;
 
         // Guard against instant false-positive completion on initial launch.
+        // Raised to 30s (from 10s) because YouTube-embedded TinCan wrappers can
+        // replay a stale `completed` verb on load, and the learner should have
+        // observably engaged with the video — not just opened the page — before
+        // the course is marked COMPLETED.
         const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
-        if (studiedSeconds < 10 && !hasStrongAssessmentCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
+        if (studiedSeconds < 30 && !hasStrongAssessmentCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
+
+        // Additional dwell floor for non-assessment runtime signals. If the only
+        // completion evidence we have is a package/activity/verb flag (not a real
+        // assessment pass), the learner must have been on the current lesson for
+        // at least 45 seconds. Blocks "completed in < 10s" false positives caused
+        // by YouTube wrappers emitting completion verbs right after iframe load.
+        const hasOnlyRuntimeSignal =
+            hasRuntimeCompletionSignal
+            && !hasStrongAssessmentCompletionSignal
+            && !hasTerminalAssessmentPassSignal;
+        if (hasOnlyRuntimeSignal) {
+            const dwellOnCurrent = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
+            if (!Number.isFinite(dwellOnCurrent) || dwellOnCurrent < 45000) return false;
+        }
 
         if (!hasValidCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
         // If the course has any assessment activity, always enforce pass validation —
