@@ -1468,27 +1468,11 @@ export default function LearnPage() {
             (completedByActivities || completedByVerb || completedByPackage) &&
             isFinalActivity;
 
-        // Guard against instant false-positive completion on initial launch.
-        // Raised to 30s (from 10s) because YouTube-embedded TinCan wrappers can
-        // replay a stale `completed` verb on load, and the learner should have
-        // observably engaged with the video — not just opened the page — before
-        // the course is marked COMPLETED.
-        const studiedSeconds = Math.max(0, Number(trackedStudySecondsRef.current || 0));
-        if (studiedSeconds < 30 && !hasStrongAssessmentCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
-
-        // Additional dwell floor for non-assessment runtime signals. If the only
-        // completion evidence we have is a package/activity/verb flag (not a real
-        // assessment pass), the learner must have been on the current lesson for
-        // at least 45 seconds. Blocks "completed in < 10s" false positives caused
-        // by YouTube wrappers emitting completion verbs right after iframe load.
-        const hasOnlyRuntimeSignal =
-            hasRuntimeCompletionSignal
-            && !hasStrongAssessmentCompletionSignal
-            && !hasTerminalAssessmentPassSignal;
-        if (hasOnlyRuntimeSignal) {
-            const dwellOnCurrent = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
-            if (!Number.isFinite(dwellOnCurrent) || dwellOnCurrent < 45000) return false;
-        }
+        // No client-side time gates. Completion is driven purely by the signals
+        // emitted by the content package / player (native video ended, YouTube
+        // onStateChange=ended, xAPI completed verb, or per-activity completion
+        // flags). If a course needs a minimum watch duration, the TinCan package
+        // itself can enforce it — that's the package author's responsibility.
 
         if (!hasValidCompletionSignal && !hasTerminalAssessmentPassSignal) return false;
         // If the course has any assessment activity, always enforce pass validation —
@@ -4005,31 +3989,24 @@ export default function LearnPage() {
             activityStatuses.every((item, idx) => isTinCanLessonPassed(item, content?.activities?.[idx]));
 
         // Package-level completion evidence for the currently-selected lesson.
-        // Mirrors the unlock logic in getMaxUnlockedActivityIndex: if the learner
-        // is on a non-assessment lesson and we have concrete evidence the content
-        // finished (native video ended, xAPI "completed" verb, or adequate dwell
-        // with visible tab + prior interaction), treat it as a package-level
-        // completion signal. This is the only way single-activity YouTube TinCan
-        // courses can finalize — the cross-origin iframe blocks video inspection
-        // and the wrapper never writes completed=true into the activity status.
+        // For non-assessment (video) lessons we require CONCRETE evidence that the
+        // video actually finished — no dwell-based shortcut. Accepted signals:
+        //   (a) a nested HTML5 <video> element has reached its end (same-origin
+        //       content / Google Drive-style embeds)
+        //   (b) the YouTube embed posted an onStateChange with info=0 ("ended")
+        //       via the postMessage handshake we set up earlier, OR
+        //   (c) the TinCan wrapper emitted an xAPI "completed" verb while this
+        //       activity was selected
+        // Both (b) and (c) feed completionVerbSeenForActivityRef. Sitting idly on
+        // the page for N seconds is NOT enough to mark the course COMPLETED — the
+        // learner must actually watch the video through to the end.
         const activitiesList = Array.isArray(content?.activities) ? content.activities : [];
         const currentActivity = activitiesList[safeIdx];
         let packageEvidenceSignal = false;
         if (currentActivity && !isAssessmentActivity(currentActivity)) {
-            const dwellSinceSelected = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
-            const hasEverInteracted = Number(lastUserInteractionAtRef.current || 0) > 0;
-            // Do NOT require `visibilityState === 'visible'` at check time: on
-            // iOS, full-screen video or briefly switching apps flips the parent
-            // page to hidden. `studiedSeconds >= 10` in canFinalizeTinCanCompletion
-            // and `hasEverInteracted` already guard against idle-tab false positives.
-            const hasDwellEvidence =
-                Number.isFinite(dwellSinceSelected)
-                && dwellSinceSelected >= 60000
-                && hasEverInteracted;
             packageEvidenceSignal =
                 hasIframeVideoReachedEnd()
-                || completionVerbSeenForActivityRef.current.has(safeIdx)
-                || hasDwellEvidence;
+                || completionVerbSeenForActivityRef.current.has(safeIdx);
         }
 
         const shouldComplete = canFinalizeTinCanCompletion({
