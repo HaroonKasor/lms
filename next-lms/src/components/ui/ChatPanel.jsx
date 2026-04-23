@@ -149,17 +149,17 @@ function buildRecentConversationForFeedback(messages, assistantMessageId) {
 
 function TypingIndicator() {
     return (
-        <div className="flex items-start gap-2">
-            <img
-                src="/chatbothome.png"
-                alt="SkillBot"
-                className="h-6 w-6 shrink-0 object-contain"
-            />
-            <div className="rounded-2xl rounded-bl-md bg-gray-100 px-3 py-2">
-                <div className="flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: "0ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: "120ms" }} />
-                    <span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: "240ms" }} />
+        <div className="flex items-center gap-2">
+            <div className="h-6 w-6 shrink-0 rounded-full bg-[#111827] text-white flex items-center justify-center shadow-sm">
+                <Sparkles size={12} />
+            </div>
+            <div className="rounded-2xl rounded-bl-md bg-gray-100 px-3 py-2.5">
+                <div className="space-y-1.5">
+                    <div className="h-2 w-[165px] rounded-full bg-gradient-to-r from-gray-300 via-gray-200 to-gray-300 animate-pulse" />
+                    <div
+                        className="h-2 w-[125px] rounded-full bg-gradient-to-r from-gray-300 via-gray-200 to-gray-300 animate-pulse"
+                        style={{ animationDelay: "120ms" }}
+                    />
                 </div>
             </div>
         </div>

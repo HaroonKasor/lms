@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(npx eslint *)",
+      "Bash(/d/Ramkhamheng/project/lms/next-lms/node_modules/.bin/next build *)"
     ]
   }
 }
