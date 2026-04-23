@@ -1147,13 +1147,136 @@ export default function LearnPage() {
             try { walk(root); } catch { /* ignore */ }
         };
 
+        // ───────────────────────────────────────────────────────────────────
+        // CRITICAL PATH: monkey-patch YT.Player inside the TinCan wrapper window.
+        // Most TinCan wrappers (Articulate/iSpring/Rise/Storyline) embed YouTube
+        // via the JS IFrame API (loading https://www.youtube.com/iframe_api and
+        // calling `new YT.Player(...)`). When used this way, YouTube dispatches
+        // events through JavaScript CALLBACKS inside the wrapper window — NOT
+        // via postMessage to parent frames. So no amount of postMessage listening
+        // on our side will ever see onStateChange for those players.
+        //
+        // Since the wrapper is same-origin (served from /content/...), we CAN
+        // reach into its window.YT and patch the Player constructor to inject
+        // our own onStateChange handler that fires alongside the wrapper's.
+        // When info=0 (ended) fires, we add the current activity to
+        // completionVerbSeenForActivityRef so the fallback sync effect can
+        // finalize the course.
+        const patchedWindows = new WeakSet();
+        const patchYT = (win) => {
+            if (!win || patchedWindows.has(win)) return false;
+            let YT;
+            try { YT = win.YT; } catch { return false; }
+            if (!YT || !YT.Player) return false;
+            if (YT.__lmsPatched) { patchedWindows.add(win); return true; }
+            const origPlayer = YT.Player;
+            const wrapOnStateChange = (orig) => (e) => {
+                try {
+                    if (e && Number(e.data) === 0) {
+                        const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
+                            ? Math.floor(Number(selectedActivityIndex))
+                            : -1;
+                        if (selectedIdx >= 0) {
+                            completionVerbSeenForActivityRef.current.add(selectedIdx);
+                        }
+                    }
+                } catch { /* ignore */ }
+                if (typeof orig === 'function') {
+                    try { return orig.apply(this, arguments); } catch { /* ignore */ }
+                }
+            };
+            const Patched = function (elementOrId, config) {
+                const safeConfig = Object.assign({}, config || {});
+                safeConfig.events = Object.assign({}, safeConfig.events || {});
+                const origHandler = safeConfig.events.onStateChange;
+                safeConfig.events.onStateChange = wrapOnStateChange(origHandler);
+                // Call original constructor with our enhanced events config.
+                const instance = new origPlayer(elementOrId, safeConfig);
+                // Some wrappers register onStateChange AFTER construction via
+                // player.addEventListener. Wrap that too so late-registered
+                // handlers get our injection.
+                if (instance && typeof instance.addEventListener === 'function') {
+                    const origAdd = instance.addEventListener.bind(instance);
+                    instance.addEventListener = (eventName, handler) => {
+                        if (eventName === 'onStateChange') {
+                            return origAdd(eventName, wrapOnStateChange(handler));
+                        }
+                        return origAdd(eventName, handler);
+                    };
+                }
+                return instance;
+            };
+            // Preserve prototype chain and statics so `instanceof`, static
+            // methods, and any wrapper code inspecting Player keep working.
+            Patched.prototype = origPlayer.prototype;
+            Object.setPrototypeOf(Patched, origPlayer);
+            for (const key of Object.keys(origPlayer)) {
+                try { Patched[key] = origPlayer[key]; } catch { /* ignore */ }
+            }
+            try {
+                YT.Player = Patched;
+                YT.__lmsPatched = true;
+                patchedWindows.add(win);
+                return true;
+            } catch { return false; }
+        };
+
+        // Try to patch YT as early as possible. If it isn't loaded yet, install
+        // a property setter on window.YT so we patch the moment the wrapper
+        // assigns it (typically right after iframe_api.js finishes loading).
+        const installYtPatchHook = (win) => {
+            if (!win || patchedWindows.has(win)) return;
+            try {
+                if (win.YT && win.YT.Player) {
+                    patchYT(win);
+                    return;
+                }
+            } catch { return; }
+            try {
+                let stored;
+                const existingDesc = Object.getOwnPropertyDescriptor(win, 'YT');
+                if (existingDesc && !existingDesc.configurable) return;
+                stored = existingDesc?.value;
+                Object.defineProperty(win, 'YT', {
+                    configurable: true,
+                    get() { return stored; },
+                    set(v) {
+                        stored = v;
+                        // Defer patch to next tick so YT has finished initializing
+                        // its Player property by the time we monkey-patch it.
+                        setTimeout(() => patchYT(win), 0);
+                    },
+                });
+            } catch { /* ignore */ }
+        };
+
+        const patchAllWindows = () => {
+            const seen = new Set();
+            const walk = (win) => {
+                if (!win || seen.has(win)) return;
+                seen.add(win);
+                installYtPatchHook(win);
+                let doc = null;
+                try { doc = win.document; } catch { return; }
+                if (!doc) return;
+                const frames = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
+                for (const frame of frames) {
+                    try { walk(frame.contentWindow); } catch { /* cross-origin */ }
+                }
+            };
+            try { walk(iframeRef.current?.contentWindow); } catch { /* ignore */ }
+        };
+
         walkAndProcess();
-        const walkTimer = setInterval(walkAndProcess, 3000);
+        patchAllWindows();
+        const walkTimer = setInterval(() => {
+            walkAndProcess();
+            patchAllWindows();
+        }, 1500);
         // Active polling: every 2 seconds, ping every YouTube iframe we've
         // handshaked with for its current playback state. YouTube responds with
         // infoDelivery messages which the main listener translates into "ended"
-        // when currentTime >= duration. This is the fallback path when
-        // onStateChange isn't forwarded by the TinCan wrapper's internal player.
+        // when currentTime >= duration. Fallback path for raw-iframe embeds.
         const pollTimer = setInterval(() => {
             for (const frame of pollQueue) {
                 try { pollFrame(frame); } catch { /* ignore */ }
@@ -1168,7 +1291,7 @@ export default function LearnPage() {
             // Best-effort cleanup: can't iterate a WeakSet, but listeners on
             // unloaded iframes are garbage-collected with them anyway.
         };
-    }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc]);
+    }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc, selectedActivityIndex]);
 
     const computeTinCanProgress = useCallback((position, total, completed = false) => {
         const totalLessons = Math.max(1, Number(total) || 0);
