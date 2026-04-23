@@ -1052,6 +1052,37 @@ export default function LearnPage() {
             }
         };
 
+        // Forwarding listener: YouTube's iframe posts onStateChange events only
+        // to its *direct parent frame*, not to our top window. Walking ancestors
+        // and attaching a listener on each same-origin window lets us catch the
+        // event wherever YouTube actually sent it, and re-post it up to window.top
+        // where the main listener (registered in the earlier useEffect) picks it
+        // up and updates completionVerbSeenForActivityRef.
+        const listenedWindows = new WeakSet();
+        const forwardingListener = (event) => {
+            let payload = event?.data;
+            if (typeof payload === 'string') {
+                if (!payload.startsWith('{')) return;
+                try { payload = JSON.parse(payload); } catch { return; }
+            }
+            if (!payload || typeof payload !== 'object') return;
+            if (payload.event !== 'onStateChange') return;
+            if (Number(payload.info) !== 0) return;
+            try {
+                window.postMessage(typeof event.data === 'string' ? event.data : JSON.stringify(payload), '*');
+            } catch { /* ignore */ }
+        };
+        const attachForwardingListener = (win) => {
+            if (!win || listenedWindows.has(win)) return;
+            if (win === window) return; // top window already has the real listener
+            try {
+                win.addEventListener('message', forwardingListener);
+                listenedWindows.add(win);
+            } catch {
+                // cross-origin — skip
+            }
+        };
+
         const walkAndProcess = () => {
             const root = iframeRef.current?.contentWindow;
             if (!root) return;
@@ -1063,6 +1094,7 @@ export default function LearnPage() {
                 try { doc = win.document; } catch { return; }
                 if (!doc) return;
                 attachObserver(doc);
+                attachForwardingListener(win);
                 const frames = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
                 for (const frame of frames) {
                     processFrame(frame);
@@ -1079,6 +1111,8 @@ export default function LearnPage() {
             for (const o of observers) {
                 try { o.disconnect(); } catch { /* ignore */ }
             }
+            // Best-effort cleanup: can't iterate a WeakSet, but listeners on
+            // unloaded iframes are garbage-collected with them anyway.
         };
     }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc]);
 
