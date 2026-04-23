@@ -949,16 +949,110 @@ export default function LearnPage() {
     }, [selectedActivityIndex]);
 
     // Actively subscribe to nested YouTube iframes so onStateChange events fire.
-    // YouTube's embed only emits state change messages after the parent posts a
-    // `{event:"listening", id:<playerId>}` handshake. Without this, the listener
-    // above never receives anything. We walk every nested iframe (same-origin
-    // wrappers only) looking for YouTube embeds with enablejsapi=1 and handshake
-    // with each one. Runs on an interval because TinCan wrappers can mount the
-    // YouTube iframe asynchronously after their own initialization.
+    // YouTube only emits state-change messages after the parent posts a
+    // `{event:"listening", id:<playerId>}` handshake AND the iframe src contains
+    // `enablejsapi=1`. If enablejsapi is missing we rewrite the src to add it
+    // (accepts one-time reload on first detection). A MutationObserver catches
+    // iframes as soon as they're added to the DOM, while an interval retries for
+    // cases where observers don't fire (e.g. srcdoc-based iframes). The `origin`
+    // parameter is also injected so YouTube's postMessage callbacks can reach
+    // our page without the "target origin does not match recipient" error.
     useEffect(() => {
         if (!isLaunchMode || content?.type !== 'tincan' || !resumeLoaded) return;
         const subscribed = new WeakSet();
-        const subscribeYoutubeFrames = () => {
+        const rewritten = new WeakSet();
+        const pageOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+
+        const ensureEnableJsApi = (frame) => {
+            if (!frame || rewritten.has(frame)) return false;
+            const src = String(frame?.src || '');
+            if (!src) return false;
+            let needsRewrite = false;
+            let url;
+            try { url = new URL(src); } catch { return false; }
+            if (url.searchParams.get('enablejsapi') !== '1') {
+                url.searchParams.set('enablejsapi', '1');
+                needsRewrite = true;
+            }
+            if (pageOrigin && url.searchParams.get('origin') !== pageOrigin) {
+                url.searchParams.set('origin', pageOrigin);
+                needsRewrite = true;
+            }
+            rewritten.add(frame);
+            if (needsRewrite) {
+                try { frame.src = url.toString(); } catch { /* readonly — ignore */ }
+                return true;
+            }
+            return false;
+        };
+
+        const handshake = (frame) => {
+            if (!frame || subscribed.has(frame)) return;
+            const win = frame.contentWindow;
+            if (!win) return;
+            try {
+                win.postMessage(
+                    JSON.stringify({ event: 'listening', id: frame.id || 'lms-yt' }),
+                    '*'
+                );
+                subscribed.add(frame);
+            } catch {
+                // ignore cross-origin post failures
+            }
+        };
+
+        const processFrame = (frame) => {
+            const src = String(frame?.src || '');
+            const isYoutube = /youtube\.com\/embed\/|youtube-nocookie\.com\/embed\//i.test(src);
+            if (!isYoutube) return;
+            const reloading = ensureEnableJsApi(frame);
+            // If src was rewritten the iframe is reloading; handshake after it loads.
+            if (reloading) {
+                const onLoad = () => {
+                    frame.removeEventListener('load', onLoad);
+                    handshake(frame);
+                };
+                frame.addEventListener('load', onLoad);
+            } else {
+                handshake(frame);
+            }
+        };
+
+        const observers = [];
+        const attachedDocs = new WeakSet();
+        const attachObserver = (doc) => {
+            if (!doc || attachedDocs.has(doc)) return;
+            attachedDocs.add(doc);
+            try {
+                const observer = new MutationObserver((mutations) => {
+                    for (const m of mutations) {
+                        for (const node of m.addedNodes || []) {
+                            if (node && node.tagName === 'IFRAME') processFrame(node);
+                            // Also check descendants in case a wrapper div was added
+                            if (node && node.querySelectorAll) {
+                                const nested = node.querySelectorAll('iframe');
+                                for (const f of nested) processFrame(f);
+                            }
+                        }
+                        // src attribute changed on an existing iframe
+                        if (m.type === 'attributes' && m.target?.tagName === 'IFRAME') {
+                            processFrame(m.target);
+                        }
+                    }
+                });
+                observer.observe(doc, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['src'],
+                });
+                observers.push(observer);
+            } catch {
+                // ignore observer attach failures on cross-origin docs
+            }
+        };
+
+        const walkAndProcess = () => {
             const root = iframeRef.current?.contentWindow;
             if (!root) return;
             const seen = new Set();
@@ -968,29 +1062,24 @@ export default function LearnPage() {
                 let doc = null;
                 try { doc = win.document; } catch { return; }
                 if (!doc) return;
+                attachObserver(doc);
                 const frames = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
                 for (const frame of frames) {
-                    const src = String(frame?.src || '');
-                    const isYoutube = /youtube\.com\/embed\/|youtube-nocookie\.com\/embed\//i.test(src);
-                    if (isYoutube && !subscribed.has(frame) && frame.contentWindow) {
-                        try {
-                            frame.contentWindow.postMessage(
-                                JSON.stringify({ event: 'listening', id: frame.id || 'lms-yt' }),
-                                '*'
-                            );
-                            subscribed.add(frame);
-                        } catch {
-                            // ignore cross-origin post failures — postMessage to '*' should succeed
-                        }
-                    }
+                    processFrame(frame);
                     try { walk(frame.contentWindow); } catch { /* cross-origin */ }
                 }
             };
             try { walk(root); } catch { /* ignore */ }
         };
-        subscribeYoutubeFrames();
-        const timer = setInterval(subscribeYoutubeFrames, 3000);
-        return () => clearInterval(timer);
+
+        walkAndProcess();
+        const timer = setInterval(walkAndProcess, 3000);
+        return () => {
+            clearInterval(timer);
+            for (const o of observers) {
+                try { o.disconnect(); } catch { /* ignore */ }
+            }
+        };
     }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc]);
 
     const computeTinCanProgress = useCallback((position, total, completed = false) => {
