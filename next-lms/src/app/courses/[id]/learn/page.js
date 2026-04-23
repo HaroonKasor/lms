@@ -920,11 +920,15 @@ export default function LearnPage() {
         };
     }, [selectedActivityIndex]);
 
-    // Listen for YouTube player state-change messages. YouTube's embed API (when the
-    // iframe URL includes enablejsapi=1) posts JSON messages to the parent window on
-    // state changes. We treat state=0 ("ended") as concrete "video finished" evidence
-    // for the learner's currently-selected lesson, used as a chapter-advance fallback
-    // when the TinCan wrapper doesn't emit its own xAPI completion statement.
+    // Listen for YouTube player messages. YouTube's IFrame API posts two kinds of
+    // messages we care about:
+    //   - `onStateChange` with info=0 = video ended (explicit end event)
+    //   - `infoDelivery` with info.currentTime / info.duration = playback heartbeat
+    // We accept either: state=0 is the cleanest, but many setups (TinCan wrappers
+    // that host YouTube via the JS API rather than raw iframe) never forward the
+    // state-change event to us. infoDelivery arrives continuously once the player
+    // is initialized, so we watch currentTime vs duration and mark the video ended
+    // when playback reaches within 1.5s of the total duration.
     useEffect(() => {
         const onMessage = (event) => {
             const raw = event?.data;
@@ -935,14 +939,36 @@ export default function LearnPage() {
             } else if (raw && typeof raw === 'object') {
                 payload = raw;
             }
-            if (!payload || payload.event !== 'onStateChange') return;
-            // YouTube reports info=0 when the video reaches its end.
-            if (Number(payload.info) !== 0) return;
+            if (!payload || typeof payload !== 'object') return;
             const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
                 ? Math.floor(Number(selectedActivityIndex))
                 : -1;
             if (selectedIdx < 0) return;
-            completionVerbSeenForActivityRef.current.add(selectedIdx);
+
+            // Explicit end-of-video signal.
+            if (payload.event === 'onStateChange' && Number(payload.info) === 0) {
+                completionVerbSeenForActivityRef.current.add(selectedIdx);
+                return;
+            }
+            // Playback heartbeat — treat near-end as ended.
+            if (payload.event === 'infoDelivery' && payload.info && typeof payload.info === 'object') {
+                const info = payload.info;
+                // Some infoDelivery payloads carry an explicit playerState field.
+                if (Number(info.playerState) === 0) {
+                    completionVerbSeenForActivityRef.current.add(selectedIdx);
+                    return;
+                }
+                const currentTime = Number(info.currentTime);
+                const duration = Number(info.duration);
+                if (
+                    Number.isFinite(currentTime)
+                    && Number.isFinite(duration)
+                    && duration > 5
+                    && currentTime >= duration - 1.5
+                ) {
+                    completionVerbSeenForActivityRef.current.add(selectedIdx);
+                }
+            }
         };
         window.addEventListener('message', onMessage);
         return () => window.removeEventListener('message', onMessage);
@@ -986,6 +1012,7 @@ export default function LearnPage() {
             return false;
         };
 
+        const pollQueue = new Set();
         const handshake = (frame) => {
             if (!frame || subscribed.has(frame)) return;
             const win = frame.contentWindow;
@@ -996,8 +1023,24 @@ export default function LearnPage() {
                     '*'
                 );
                 subscribed.add(frame);
+                pollQueue.add(frame);
             } catch {
                 // ignore cross-origin post failures
+            }
+        };
+        const pollFrame = (frame) => {
+            const win = frame?.contentWindow;
+            if (!win) return;
+            // Request current playback state. YouTube responds via infoDelivery
+            // which our main message listener (above) catches and translates into
+            // "video ended" evidence when currentTime >= duration.
+            const commands = [
+                { event: 'command', func: 'getPlayerState', args: [], id: frame.id || 'lms-yt' },
+                { event: 'command', func: 'getCurrentTime', args: [], id: frame.id || 'lms-yt' },
+                { event: 'command', func: 'getDuration', args: [], id: frame.id || 'lms-yt' },
+            ];
+            for (const cmd of commands) {
+                try { win.postMessage(JSON.stringify(cmd), '*'); } catch { /* ignore */ }
             }
         };
 
@@ -1052,12 +1095,13 @@ export default function LearnPage() {
             }
         };
 
-        // Forwarding listener: YouTube's iframe posts onStateChange events only
-        // to its *direct parent frame*, not to our top window. Walking ancestors
-        // and attaching a listener on each same-origin window lets us catch the
-        // event wherever YouTube actually sent it, and re-post it up to window.top
-        // where the main listener (registered in the earlier useEffect) picks it
-        // up and updates completionVerbSeenForActivityRef.
+        // Forwarding listener: YouTube's iframe posts events only to its *direct
+        // parent frame*, not to our top window. Walking ancestors and attaching a
+        // listener on each same-origin window lets us catch the event wherever
+        // YouTube actually sent it, and re-post it up to window.top where the main
+        // listener (registered in the earlier useEffect) picks it up.
+        // We forward BOTH onStateChange AND infoDelivery so the main listener can
+        // evaluate either the explicit ended state or near-end currentTime.
         const listenedWindows = new WeakSet();
         const forwardingListener = (event) => {
             let payload = event?.data;
@@ -1066,8 +1110,7 @@ export default function LearnPage() {
                 try { payload = JSON.parse(payload); } catch { return; }
             }
             if (!payload || typeof payload !== 'object') return;
-            if (payload.event !== 'onStateChange') return;
-            if (Number(payload.info) !== 0) return;
+            if (payload.event !== 'onStateChange' && payload.event !== 'infoDelivery') return;
             try {
                 window.postMessage(typeof event.data === 'string' ? event.data : JSON.stringify(payload), '*');
             } catch { /* ignore */ }
@@ -1105,9 +1148,20 @@ export default function LearnPage() {
         };
 
         walkAndProcess();
-        const timer = setInterval(walkAndProcess, 3000);
+        const walkTimer = setInterval(walkAndProcess, 3000);
+        // Active polling: every 2 seconds, ping every YouTube iframe we've
+        // handshaked with for its current playback state. YouTube responds with
+        // infoDelivery messages which the main listener translates into "ended"
+        // when currentTime >= duration. This is the fallback path when
+        // onStateChange isn't forwarded by the TinCan wrapper's internal player.
+        const pollTimer = setInterval(() => {
+            for (const frame of pollQueue) {
+                try { pollFrame(frame); } catch { /* ignore */ }
+            }
+        }, 2000);
         return () => {
-            clearInterval(timer);
+            clearInterval(walkTimer);
+            clearInterval(pollTimer);
             for (const o of observers) {
                 try { o.disconnect(); } catch { /* ignore */ }
             }
