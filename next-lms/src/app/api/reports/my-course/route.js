@@ -71,7 +71,22 @@ function parseIsoDurationToMinutes(value) {
 
 function toOptionalNumber(value) {
     if (value == null || value === '') return null;
-    const n = Number(value);
+    // Prisma returns Decimal fields (e.g. quizAttempt.score, learning_progress
+    // scoreRaw/scoreScaled) as Decimal.js instances, not plain numbers.
+    // `Number(decimalInstance)` returns NaN because decimal.js doesn't
+    // implement [Symbol.toPrimitive] — we have to go through toNumber()
+    // or toString() to get a usable value. Without this, quiz scores
+    // render as "-" on the learner course report even when the row has
+    // a real score.
+    let raw = value;
+    if (raw && typeof raw === 'object') {
+        if (typeof raw.toNumber === 'function') {
+            try { raw = raw.toNumber(); } catch { raw = raw.toString?.() ?? raw; }
+        } else if (typeof raw.toString === 'function') {
+            raw = raw.toString();
+        }
+    }
+    const n = Number(raw);
     return Number.isFinite(n) ? n : null;
 }
 
@@ -521,11 +536,14 @@ function buildScoreRowsFromLearningProgress(progressRows = [], fallbackTitle = '
 
     const rowsWithScore = progressRows.filter((row) => {
         const percent = scorePercentFromProgressRow(row);
-        // Only include rows that represent a real graded attempt. Video
-        // lessons can emit completion: true or stray scoreRaw: 0 defaults
-        // from their runtime packages — those should not appear as quiz
-        // results. Real quiz attempts come from the quizAttempts table.
-        return (percent !== null && percent > 0) || row?.success === true;
+        // Show ANY real graded attempt — including failing scores and 0.
+        // Exclude only rows with no score evidence at all (pure video-progress
+        // tracking rows where the package never sets success/completion/score).
+        return (
+            percent !== null
+            || typeof row?.success === 'boolean'
+            || row?.completion === true
+        );
     });
 
     return rowsWithScore.map((row, idx) => {
@@ -604,7 +622,31 @@ function toGroupedSections(rows = [], lessonCount = 0, fallbackTitle = 'Activity
         bucket.rows.push(row);
     }
 
-    const orderedGroups = Array.from(grouped.values()).sort((a, b) => {
+    // Merge groups that share the same display title. Different data sources
+    // (xAPI sessions, quizAttempts, learning_progress) can produce distinct
+    // activityKeys for the same logical activity (e.g. "แบบทดสอบหลังบท"),
+    // which would otherwise render as multiple visually-duplicate sections.
+    // We collapse them into one group so the learner sees a single section
+    // with all rows (attempts + session time) sorted by time.
+    const mergedByTitle = new Map();
+    for (const group of grouped.values()) {
+        const titleKey = String(group.title || '').trim().toLowerCase();
+        if (!titleKey) continue;
+        const existing = mergedByTitle.get(titleKey);
+        if (!existing) {
+            mergedByTitle.set(titleKey, { ...group });
+            continue;
+        }
+        existing.rows.push(...group.rows);
+        existing.latestTimestampMs = Math.max(existing.latestTimestampMs, group.latestTimestampMs);
+        if (existing.minActivityIndex === null) {
+            existing.minActivityIndex = group.minActivityIndex;
+        } else if (group.minActivityIndex !== null) {
+            existing.minActivityIndex = Math.min(existing.minActivityIndex, group.minActivityIndex);
+        }
+    }
+
+    const orderedGroups = Array.from(mergedByTitle.values()).sort((a, b) => {
         const aIndex = Number.isFinite(Number(a?.minActivityIndex)) ? Number(a.minActivityIndex) : null;
         const bIndex = Number.isFinite(Number(b?.minActivityIndex)) ? Number(b.minActivityIndex) : null;
         if (aIndex !== null && bIndex !== null && aIndex !== bIndex) {
@@ -614,6 +656,12 @@ function toGroupedSections(rows = [], lessonCount = 0, fallbackTitle = 'Activity
         if (aIndex === null && bIndex !== null) return 1;
         return toSafeNumber(b?.latestTimestampMs, 0) - toSafeNumber(a?.latestTimestampMs, 0);
     });
+
+    // Within each group, sort rows newest-first (matches the outer sortedRows
+    // ordering but ensures merged rows remain sorted).
+    for (const group of orderedGroups) {
+        group.rows.sort((a, b) => toSafeNumber(b?.timestampMs, 0) - toSafeNumber(a?.timestampMs, 0));
+    }
 
     return orderedGroups.map((group) => ({
         title: group.title,
@@ -779,18 +827,31 @@ export async function GET(request) {
         let rows = buildSessionRowsFromStatements(statements, String(selectedEnrollment?.courses?.title || 'Activity'));
         rows = hydrateDurationFromProgress(rows, latestProgress);
 
-        const quizRows = quizAttempts.map((attempt) => {
+        const quizRows = quizAttempts.map((attempt, attemptIdx) => {
             const rawScore = toOptionalNumber(attempt.score);
+            // Show the numeric score whenever it exists — including 0 and
+            // failing scores. Only fall back to "-" when the attempt row truly
+            // has no score stored (legacy rows). User complaint: "ไม่ว่าจะได้
+            // คะแนนเท่าไหร่ก็ควรขึ้น" — any score should render, not be hidden
+            // just because it's below the passing threshold.
             const scoreText = rawScore !== null
                 ? `${Number(rawScore).toFixed(0)} / 100 (${Number(rawScore).toFixed(0)}%)`
                 : '-';
             return {
                 activity: String(attempt.quizzes?.title || 'Quiz').trim() || 'Quiz',
+                // Distinct key per attempt so multiple attempts (e.g. fail then
+                // retake-and-pass) each produce their own row. Previously all
+                // attempts of the same quiz collapsed into a single group key
+                // `quiz-${quizId}`, which still rendered one row per attempt
+                // inside the group — but downstream code that dedupes by key
+                // would lose retake history. Appending attemptNo / index keeps
+                // each submission addressable.
                 activityKey: `quiz-${attempt.quizId}`,
                 activityIndex: 9999,
                 dateTime: toDateTimeText(attempt.submittedAt),
                 timestampMs: toSafeTime(attempt.submittedAt),
                 durationMinutes: 0,
+                rowId: Number(attempt.attemptNo || attemptIdx + 1),
                 scoreText,
                 resultText: resolveScoreResultText({
                     percent: rawScore,
@@ -799,8 +860,23 @@ export async function GET(request) {
             };
         });
 
+        // Drop learning_progress score rows for sections that already have
+        // quizAttempts — quizAttempts is authoritative for quiz scores, and
+        // emitting the progress row too made "แบบทดสอบหลังบท" appear twice
+        // on the report (once with no score from progress tracking, once from
+        // the actual attempt). User complaint: report "แบบทดสอบหลังบทถึงมี 2 อัน".
+        const sectionIdsWithQuizAttempts = new Set(
+            quizAttempts
+                .map((attempt) => Number(attempt?.quizzes?.sectionId || 0))
+                .filter((id) => Number.isInteger(id) && id > 0)
+        );
+        const filteredProgressRows = learningProgressRows.filter((row) => {
+            const sid = Number(row?.sectionId || 0);
+            return !(Number.isInteger(sid) && sid > 0 && sectionIdsWithQuizAttempts.has(sid));
+        });
+
         const learningScoreRows = buildScoreRowsFromLearningProgress(
-            learningProgressRows,
+            filteredProgressRows,
             'แบบทดสอบหลังบท',
             selectedEnrollment?.lastActivityAt || selectedEnrollment?.completedAt || selectedEnrollment?.startedAt || selectedEnrollment?.enrolledAt
         );

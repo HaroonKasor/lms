@@ -3,7 +3,8 @@
     "allow": [
       "Bash(git checkout *)",
       "Bash(npx eslint *)",
-      "Bash(/d/Ramkhamheng/project/lms/next-lms/node_modules/.bin/next build *)"
+      "Bash(/d/Ramkhamheng/project/lms/next-lms/node_modules/.bin/next build *)",
+      "Read(//d/d/Ramkhamheng/project/lms/next-lms/src/app/**)"
     ]
   }
 }

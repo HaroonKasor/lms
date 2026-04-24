@@ -397,10 +397,18 @@ export default function LearnPage() {
     const completionLockRef = useRef(false);
     const initializedStatementGateRef = useRef('');
     const lessonEntryStatementGateRef = useRef('');
+    // Always-current view of selectedActivityIndex for use inside stale closures
+    // (e.g. monkey-patched YT.Player handlers whose prototype wrappers were
+    // installed during the first useEffect run and don't re-close over React
+    // state when the effect re-runs on chapter change).
+    const selectedActivityIndexRef = useRef(0);
     const logLessonMapDebug = useCallback(() => {}, []);
     // Near-end tolerance for "video finished" evidence. Keep a small buffer for
     // fractional durations / late metadata so 4:59/5:00 still counts as ended.
     const nearEndSlackSeconds = 2.5;
+    // Keep manual chapter jump intent alive long enough for slow networks /
+    // heavy TinCan runtime initialization to settle.
+    const manualSelectionHoldMs = 25000;
     const isNearVideoEnd = useCallback((currentTimeValue, durationValue) => {
         const ct = Number(currentTimeValue);
         const dur = Number(durationValue);
@@ -414,6 +422,12 @@ export default function LearnPage() {
     useEffect(() => {
         tinCanActivityStatusRef.current = Array.isArray(tinCanActivityStatus) ? tinCanActivityStatus : [];
     }, [tinCanActivityStatus]);
+
+    useEffect(() => {
+        selectedActivityIndexRef.current = Number.isFinite(Number(selectedActivityIndex))
+            ? Math.max(0, Math.floor(Number(selectedActivityIndex)))
+            : 0;
+    }, [selectedActivityIndex]);
 
     const markLearningInteraction = useCallback(() => {
         const now = Date.now();
@@ -952,8 +966,8 @@ export default function LearnPage() {
                 payload = raw;
             }
             if (!payload || typeof payload !== 'object') return;
-            const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
-                ? Math.floor(Number(selectedActivityIndex))
+            const selectedIdx = Number.isFinite(Number(selectedActivityIndexRef.current))
+                ? Math.floor(Number(selectedActivityIndexRef.current))
                 : -1;
             if (selectedIdx < 0) return;
 
@@ -983,7 +997,7 @@ export default function LearnPage() {
         };
         window.addEventListener('message', onMessage);
         return () => window.removeEventListener('message', onMessage);
-    }, [selectedActivityIndex, isNearVideoEnd]);
+    }, [isNearVideoEnd]);
 
     // Actively subscribe to nested YouTube iframes so onStateChange events fire.
     // YouTube only emits state-change messages after the parent posts a
@@ -1196,11 +1210,59 @@ export default function LearnPage() {
             }
             trackedPlayers.push(entry);
         };
+        // Read the currently-selected activity from a ref instead of the closure
+        // over selectedActivityIndex. The prototype-level YT.Player patch below
+        // is guarded by __lmsProtoPatched so it only wraps addEventListener ONCE
+        // per YT window — which means the closure captured during the FIRST
+        // effect run is what stays wired up even after the learner advances to
+        // a new chapter. Before this ref indirection, the wrapper kept marking
+        // the OLD activity index after chapter change, leaving subsequent
+        // chapters unable to unlock because the unlock signal landed on an
+        // already-unlocked index.
         const markCompletionVerb = () => {
-            const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
-                ? Math.floor(Number(selectedActivityIndex))
-                : 0;
-            completionVerbSeenForActivityRef.current.add(Math.max(0, selectedIdx));
+            const refVal = Number(selectedActivityIndexRef.current);
+            if (!Number.isFinite(refVal)) return;
+            const idx = Math.max(0, Math.floor(refVal));
+            completionVerbSeenForActivityRef.current.add(idx);
+
+            // ALSO promote the verb into the per-activity status so the MAIN
+            // unlock loop in getMaxUnlockedActivityIndex (which reads
+            // tinCanActivityStatusRef, not completionVerbSeenForActivityRef)
+            // treats this chapter as cleared — without this, the fallback path
+            // unlocks only the NEXT chapter, and on chapter navigation / effect
+            // re-runs later chapters stop unlocking once the main loop hits an
+            // already-watched activity that never got an explicit package status.
+            const current = Array.isArray(tinCanActivityStatusRef.current)
+                ? tinCanActivityStatusRef.current
+                : [];
+            const totalActivities = Array.isArray(content?.activities)
+                ? content.activities.length
+                : current.length;
+            const target = Math.max(totalActivities, idx + 1);
+            const next = current.slice(0, target);
+            while (next.length < target) next.push(null);
+            const existing = (next[idx] && typeof next[idx] === 'object') ? next[idx] : {};
+            const alreadyCleared = Boolean(
+                existing?.passed
+                || existing?.completed
+                || existing?.completion === true
+                || existing?.success === true
+                || String(existing?.status || '').toLowerCase() === 'passed'
+                || String(existing?.status || '').toLowerCase() === 'completed'
+            );
+            if (alreadyCleared) return;
+            next[idx] = {
+                ...existing,
+                attempted: true,
+                quizzed: Boolean(existing?.quizzed),
+                completed: true,
+                completion: true,
+                passed: true,
+                success: true,
+                status: 'passed',
+            };
+            tinCanActivityStatusRef.current = next;
+            try { setTinCanActivityStatus(next); } catch { /* ignore */ }
         };
         const patchYT = (win) => {
             if (!win) return false;
@@ -1457,7 +1519,7 @@ export default function LearnPage() {
             // Best-effort cleanup: can't iterate a WeakSet, but listeners on
             // unloaded iframes are garbage-collected with them anyway.
         };
-    }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc, selectedActivityIndex, isNearVideoEnd]);
+    }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc, isNearVideoEnd]);
 
     const computeTinCanProgress = useCallback((position, total, completed = false) => {
         const totalLessons = Math.max(1, Number(total) || 0);
@@ -3485,23 +3547,40 @@ export default function LearnPage() {
                     ? runtimeRows.find((entry) => Number(entry?.runtimePage) === mappedRuntimePage)?.row
                     : null;
                 const iframeRow = directStatusRow || mappedRow || null;
+                const activityForLock = content.activities[i];
+                // Completion-verb lock for non-assessment lessons. Once the
+                // learner has played a video through to the end (as detected
+                // by any of our YT.Player signals), we set this lock so the
+                // sync function can't regress the pass flag just because the
+                // wrapper reports its completionStatus as "incomplete" during
+                // internal navigation. Without this, returning to an already-
+                // watched chapter could briefly show it as not-passed, which
+                // then forwarded into getMaxUnlockedActivityIndex and caused
+                // forward chapters to stop unlocking after a few advances.
+                const hasCompletionVerbLock =
+                    !isAssessmentActivity(activityForLock)
+                    && completionVerbSeenForActivityRef.current.has(i);
                 // When the iframe has no evidence for this activity, preserve any previously
                 // restored status (from localStorage) so passed lessons don't lose their
                 // green checkmark on re-entry before the iframe has visited them.
                 if (!iframeRow) {
                     const preserved = previousStatuses?.[i];
-                    if (preserved && (preserved.passed || preserved.completed || preserved.attempted)) {
+                    if (hasCompletionVerbLock || (preserved && (preserved.passed || preserved.completed || preserved.attempted))) {
                         return {
-                            attempted: Boolean(preserved.attempted),
-                            completed: Boolean(preserved.completed),
-                            passed: Boolean(preserved.passed),
-                            quizzed: Boolean(preserved.quizzed),
-                            status: String(preserved.status || ''),
-                            success: typeof preserved.success === 'boolean' ? preserved.success : null,
-                            completion: typeof preserved.completion === 'boolean' ? preserved.completion : null,
-                            scoreRaw: asFiniteNumber(preserved.scoreRaw),
-                            scoreScaled: asFiniteNumber(preserved.scoreScaled),
-                            scoreMax: asFiniteNumber(preserved.scoreMax),
+                            attempted: hasCompletionVerbLock ? true : Boolean(preserved?.attempted),
+                            completed: hasCompletionVerbLock ? true : Boolean(preserved?.completed),
+                            passed: hasCompletionVerbLock ? true : Boolean(preserved?.passed),
+                            quizzed: Boolean(preserved?.quizzed),
+                            status: String(preserved?.status || (hasCompletionVerbLock ? 'passed' : '')),
+                            success: hasCompletionVerbLock
+                                ? true
+                                : (typeof preserved?.success === 'boolean' ? preserved.success : null),
+                            completion: hasCompletionVerbLock
+                                ? true
+                                : (typeof preserved?.completion === 'boolean' ? preserved.completion : null),
+                            scoreRaw: asFiniteNumber(preserved?.scoreRaw),
+                            scoreScaled: asFiniteNumber(preserved?.scoreScaled),
+                            scoreMax: asFiniteNumber(preserved?.scoreMax),
                         };
                     }
                 }
@@ -3589,11 +3668,16 @@ export default function LearnPage() {
                         || (hasAssessmentCompletionSignal && !hasAnyScoreEvidence)
                     );
                 // Anti-regression for "passed": once passed, stay passed unless there's
-                // an explicit failure signal on this sync.
+                // an explicit failure signal on this sync. For non-assessment lessons,
+                // the completion-verb lock additionally overrides hasFailStatus so
+                // transient "incomplete" wrapper status doesn't regress the flag.
                 const previouslyMarkedPass =
                     isTruthyFlag(previousStatuses?.[i]?.passed)
-                    || previousStatuses?.[i]?.success === true;
-                const markedPass = markedPassFromRow || (previouslyMarkedPass && !hasFailStatus);
+                    || previousStatuses?.[i]?.success === true
+                    || hasCompletionVerbLock;
+                const markedPass = markedPassFromRow
+                    || hasCompletionVerbLock
+                    || (previouslyMarkedPass && !hasFailStatus);
                 // Guard against spurious completed=true flags some TinCan packages set on
                 // adjacent pages (e.g., marking the next lesson "complete" when the current
                 // one ends). Require either a richer signal (explicit completion field,
@@ -3620,12 +3704,22 @@ export default function LearnPage() {
                 // signal. Some TinCan packages briefly clear their completion flags during
                 // internal navigation (which would otherwise cause the sidebar to drop from
                 // "2 done" back to "1 done" mid-session).
+                //
+                // The completion-verb lock overrides hasFailStatus for non-assessment
+                // lessons: wrappers for YouTube embeds routinely report the lesson as
+                // "incomplete" (which `hasFailureStatusSignal` flags as failure) while
+                // the learner is still on the page, even after our YT.Player tracker
+                // saw the video end. Without the override, that sync regression
+                // pinged-ponged our markCompletionVerb update away each cycle.
                 const previouslyMarkedComplete =
                     isTruthyFlag(previousStatuses?.[i]?.completed)
                     || isTruthyFlag(previousStatuses?.[i]?.passed)
                     || previousStatuses?.[i]?.completion === true
-                    || previousStatuses?.[i]?.success === true;
-                const markedComplete = markedCompleteFromRow || (previouslyMarkedComplete && !hasFailStatus);
+                    || previousStatuses?.[i]?.success === true
+                    || hasCompletionVerbLock;
+                const markedComplete = markedCompleteFromRow
+                    || hasCompletionVerbLock
+                    || (previouslyMarkedComplete && !hasFailStatus);
                 const derivedSuccess = markedPass
                     ? true
                     : (
@@ -3684,7 +3778,7 @@ export default function LearnPage() {
         const targetIndex = Math.max(
             0,
             Math.min(
-                manualActive ? Math.floor(manualTarget) : Number(selectedActivityIndex),
+                manualActive ? Math.floor(manualTarget) : Number(selectedActivityIndexRef.current),
                 content.activities.length - 1
             )
         );
@@ -3694,6 +3788,26 @@ export default function LearnPage() {
             const preserveManual = options?.preserveManual === true;
             if (!Number.isFinite(Number(resolvedIndex))) return;
             const safeResolvedIndex = Math.max(0, Math.min(content.activities.length - 1, Math.floor(Number(resolvedIndex))));
+            // Guard against stale runtime detections forcing a backward jump
+            // after the learner intentionally moved forward.
+            if (!manualActive) {
+                const savedIdx = readTincanResumeIndex();
+                const savedKnownIndex = Number.isFinite(savedIdx) && savedIdx >= 0 ? Math.floor(savedIdx) : -1;
+                const lastKnownIndex =
+                    Number.isFinite(Number(lastTincanSyncRef.current?.position))
+                        ? Math.max(0, Math.floor(Number(lastTincanSyncRef.current.position) - 1))
+                        : -1;
+                const selectedKnownIndex = Number.isFinite(Number(selectedActivityIndexRef.current))
+                    ? Math.max(0, Math.min(content.activities.length - 1, Math.floor(Number(selectedActivityIndexRef.current))))
+                    : -1;
+                const highestSeenIndex = Number.isFinite(Number(highestSeenActivityIndexRef.current))
+                    ? Math.max(0, Math.min(content.activities.length - 1, Math.floor(Number(highestSeenActivityIndexRef.current))))
+                    : -1;
+                const knownFloorIndex = Math.max(savedKnownIndex, lastKnownIndex, selectedKnownIndex, highestSeenIndex, 0);
+                if (safeResolvedIndex < knownFloorIndex) {
+                    return;
+                }
+            }
             const resolvedActivity = content.activities[safeResolvedIndex];
             const resolvedPath = getPrimaryActivityResumePath(resolvedActivity);
             setSelectedActivityIndex(safeResolvedIndex);
@@ -3707,7 +3821,7 @@ export default function LearnPage() {
             if (manualActive && !preserveManual) {
                 manualSelectionRef.current = { target: null, until: 0 };
             } else if (manualActive && preserveManual) {
-                manualSelectionRef.current = { target: safeResolvedIndex, until: Date.now() + 12000 };
+                manualSelectionRef.current = { target: safeResolvedIndex, until: Date.now() + manualSelectionHoldMs };
             }
         };
         const forceNavigateInnerFrameToTarget = () => {
@@ -3875,7 +3989,7 @@ export default function LearnPage() {
                 clearInterval(timer);
             }
         }, 250);
-    }, [content, selectedActivityIndex, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug, detectActivityIndexFromIframe, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, hardenTinCanRuntimeWindow, resolveActivityUrl, normalizeActivityPathKey]);
+    }, [content, resumeLoaded, mapActivityIndexToRuntimePage, mapRuntimePageToActivityIndex, logLessonMapDebug, detectActivityIndexFromIframe, persistTincanResumeIndex, persistTincanResumePath, getPrimaryActivityResumePath, hardenTinCanRuntimeWindow, resolveActivityUrl, normalizeActivityPathKey, readTincanResumeIndex, manualSelectionHoldMs]);
 
     const restoreTincanPositionFromProgress = useCallback((entry) => {
         if (!content || content.type !== 'tincan' || !Array.isArray(content.activities) || content.activities.length === 0) return;
@@ -4115,8 +4229,8 @@ export default function LearnPage() {
                 statuses.length > 0 &&
                 statuses.every((item, idx) => isTinCanLessonPassed(item, activities[idx]));
             const detectedIdx = detectActivityIndexFromIframe();
-            const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
-                ? Math.floor(Number(selectedActivityIndex))
+            const selectedIdx = Number.isFinite(Number(selectedActivityIndexRef.current))
+                ? Math.floor(Number(selectedActivityIndexRef.current))
                 : -1;
             const candidateIdx = detectedIdx >= 0 ? detectedIdx : selectedIdx;
             // Mirror the evidence the fallback-sync effect passes in. Without
@@ -4204,7 +4318,6 @@ export default function LearnPage() {
         isTinCanLessonPassed,
         canFinalizeTinCanCompletion,
         detectActivityIndexFromIframe,
-        selectedActivityIndex,
     ]);
 
     const bindIframeInteractionTracking = useCallback(() => {
@@ -4307,8 +4420,8 @@ export default function LearnPage() {
                     ? Math.floor(payloadCurrent - 1)
                     : -1;
             const detectedIdx = detectActivityIndexFromIframe();
-            const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
-                ? Math.floor(Number(selectedActivityIndex))
+            const selectedIdx = Number.isFinite(Number(selectedActivityIndexRef.current))
+                ? Math.floor(Number(selectedActivityIndexRef.current))
                 : -1;
             const candidateIdx = payloadActivityIdx >= 0
                 ? payloadActivityIdx
@@ -4411,7 +4524,6 @@ export default function LearnPage() {
         content?.type,
         content?.activities,
         detectActivityIndexFromIframe,
-        selectedActivityIndex,
         isTinCanLessonPassed,
         canFinalizeTinCanCompletion,
         computeTinCanProgress,
@@ -4523,7 +4635,7 @@ export default function LearnPage() {
                 total - 1,
                 Number.isFinite(Number(detectedIdx)) && detectedIdx >= 0
                     ? Math.floor(Number(detectedIdx))
-                    : Math.floor(Number(selectedActivityIndex) || 0)
+                    : Math.floor(Number(selectedActivityIndexRef.current) || 0)
             )
         );
         const activityStatuses = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
@@ -5064,7 +5176,7 @@ export default function LearnPage() {
                 activities.length - 1,
                 Number.isFinite(Number(detectedIdx)) && detectedIdx >= 0
                     ? Math.floor(Number(detectedIdx))
-                    : Number(selectedActivityIndex) || 0
+                    : Number(selectedActivityIndexRef.current) || 0
             )
         );
         const lesson = activities[safeIndex];
@@ -5201,8 +5313,8 @@ export default function LearnPage() {
                     ? mapRuntimePageToActivityIndex(Math.floor(runtimePage))
                     : -1;
                 const detectedIndex = detectActivityIndexFromIframe();
-                const selectedIndex = Number.isFinite(Number(selectedActivityIndex))
-                    ? Math.floor(Number(selectedActivityIndex))
+                const selectedIndex = Number.isFinite(Number(selectedActivityIndexRef.current))
+                    ? Math.floor(Number(selectedActivityIndexRef.current))
                     : -1;
                 const lastAssessmentIndex = activities.reduce((last, activity, idx) => (
                     isAssessmentActivity(activity) ? idx : last
@@ -5368,8 +5480,8 @@ export default function LearnPage() {
             // (which often lags 0.5–1.5s after auto-advance) doesn't get mis-recorded
             // against the newly-selected lesson.
             if (incomingIsCompletionSignal) {
-                const selectedIdxAtReception = Number.isFinite(Number(selectedActivityIndex))
-                    ? Math.floor(Number(selectedActivityIndex))
+                const selectedIdxAtReception = Number.isFinite(Number(selectedActivityIndexRef.current))
+                    ? Math.floor(Number(selectedActivityIndexRef.current))
                     : -1;
                 const selectedChangeAge = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
                 if (selectedIdxAtReception >= 0 && selectedChangeAge >= 3000) {
@@ -5427,8 +5539,8 @@ export default function LearnPage() {
                         }
                         // Also consider selectedActivityIndex as a hint of the lesson the user
                         // is actually viewing — React state can lag behind iframe DOM advance.
-                        const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
-                            ? Math.floor(Number(selectedActivityIndex))
+                        const selectedIdx = Number.isFinite(Number(selectedActivityIndexRef.current))
+                            ? Math.floor(Number(selectedActivityIndexRef.current))
                             : -1;
                         if (fallbackIndex < 0 && selectedIdx >= 0 && selectedIdx < iframeDetectedIndex) {
                             fallbackIndex = selectedIdx;
@@ -5650,7 +5762,10 @@ export default function LearnPage() {
                     const highestSeenIndex = Number.isFinite(Number(highestSeenActivityIndexRef.current))
                         ? Math.max(0, Math.floor(Number(highestSeenActivityIndexRef.current)))
                         : -1;
-                    const knownFloorIndex = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);
+                    const selectedKnownIndex = Number.isFinite(Number(selectedActivityIndexRef.current))
+                        ? Math.max(0, Math.min(total - 1, Math.floor(Number(selectedActivityIndexRef.current))))
+                        : -1;
+                    const knownFloorIndex = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, selectedKnownIndex, 0);
                     // Never auto-regress to an earlier lesson from stale/late statements.
                     // Backward jump is only allowed when user explicitly selected a lesson.
                     if (!manualActive && matchedActivityIndex < knownFloorIndex) {
@@ -5779,7 +5894,7 @@ export default function LearnPage() {
 
         window.addEventListener('message', onMessage);
         return () => window.removeEventListener('message', onMessage);
-    }, [content, actor, resolvedContentId, progressContentId, progressUserId, activeSectionId, progress, status, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, selectedActivityIndex, currentTime, computeTinCanProgress, isCompletedVerb, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, resumeLoaded, syncProgressWithTrackedTime, requireAssessmentPass, getAssessmentPassingScore, detectActivityIndexFromIframe, hasAssessmentFailureSignals, isAssessmentActivity, findUniqueActivityIndexByPathKey, getPrimaryActivityResumePath, normalizeActivityPathKey, extractScorePayloadFromStatus, mapRuntimePageToActivityIndex]);
+    }, [content, actor, resolvedContentId, progressContentId, progressUserId, activeSectionId, progress, status, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, computeTinCanProgress, isCompletedVerb, canFinalizeTinCanCompletion, tinCanActivityStatus, isTinCanLessonPassed, resumeLoaded, syncProgressWithTrackedTime, requireAssessmentPass, getAssessmentPassingScore, detectActivityIndexFromIframe, hasAssessmentFailureSignals, isAssessmentActivity, findUniqueActivityIndexByPathKey, getPrimaryActivityResumePath, normalizeActivityPathKey, extractScorePayloadFromStatus, mapRuntimePageToActivityIndex]);
 
     // Format time
     const formatTime = (seconds) => {
@@ -5837,8 +5952,8 @@ export default function LearnPage() {
                     const highestSeenIdx = Number.isFinite(Number(highestSeenActivityIndexRef.current))
                         ? Math.floor(Number(highestSeenActivityIndexRef.current))
                         : 0;
-                    const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
-                        ? Math.floor(Number(selectedActivityIndex))
+                    const selectedIdx = Number.isFinite(Number(selectedActivityIndexRef.current))
+                        ? Math.floor(Number(selectedActivityIndexRef.current))
                         : 0;
                     const currentIdx = Number.isFinite(Number(currentTime)) && Number(currentTime) > 0
                         ? Math.floor(Number(currentTime) - 1)
@@ -6292,10 +6407,13 @@ export default function LearnPage() {
 
         const idx = detectActivityIndexFromIframe();
         if (idx < 0) return;
-        if (idx !== selectedActivityIndex) {
+        const selectedIndexSnapshot = Number.isFinite(Number(selectedActivityIndexRef.current))
+            ? Math.max(0, Math.min(content.activities.length - 1, Math.floor(Number(selectedActivityIndexRef.current))))
+            : 0;
+        if (idx !== selectedIndexSnapshot) {
             logLessonMapDebug('runtime-position-detected', {
                 detectedActivityIndex: idx,
-                selectedActivityIndex,
+                selectedActivityIndex: selectedIndexSnapshot,
                 currentRuntimePage: Number(iframeRef.current?.contentWindow?.currentPage),
                 detectedActivityTitle: String(content?.activities?.[idx]?.name || content?.activities?.[idx]?.title || ''),
             });
@@ -6329,7 +6447,8 @@ export default function LearnPage() {
         const highestSeenIndex = Number.isFinite(Number(highestSeenActivityIndexRef.current))
             ? Math.max(0, Math.floor(Number(highestSeenActivityIndexRef.current)))
             : -1;
-        const knownFloorIndex = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);
+        const selectedKnownIndex = selectedIndexSnapshot;
+        const knownFloorIndex = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, selectedKnownIndex, 0);
 
         const effectivePosition = position;
         const effectiveIndex = Math.max(0, Math.min(total - 1, effectivePosition - 1));
@@ -6339,7 +6458,7 @@ export default function LearnPage() {
             return;
         }
 
-        if (effectiveIndex !== selectedActivityIndex) {
+        if (effectiveIndex !== selectedIndexSnapshot) {
             setSelectedActivityIndex(effectiveIndex);
         }
         if (effectiveIndex > Number(highestSeenActivityIndexRef.current || 0)) {
@@ -6360,7 +6479,7 @@ export default function LearnPage() {
         const nextStatus = (shouldComplete || lockedCompleted) ? 'COMPLETED' : 'LEARNING';
         const nextProgress = computeTinCanProgress(effectivePosition, total, nextStatus === 'COMPLETED');
         const guardActive = Date.now() < Number(resumeGuardUntilRef.current || 0);
-        const guardBaseline = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, 0);
+        const guardBaseline = Math.max(savedKnownIndex, currentKnownIndex, lastKnownIndex, highestSeenIndex, selectedKnownIndex, 0);
         if (guardActive && guardBaseline > 0 && effectiveIndex < guardBaseline) {
             return;
         }
@@ -6407,7 +6526,7 @@ export default function LearnPage() {
         } finally {
             tinCanSyncInFlightRef.current = false;
         }
-    }, [content, getPrimaryActivityResumePath, detectActivityIndexFromIframe, selectedActivityIndex, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals, logLessonMapDebug, extractScorePayloadFromStatus]);
+    }, [content, getPrimaryActivityResumePath, detectActivityIndexFromIframe, progressContentId, progressUserId, activeSectionId, resumeLoaded, syncEnrollmentStatus, persistTincanResumeIndex, persistTincanResumePath, readTincanResumeIndex, currentTime, syncTinCanActivityStatusFromIframe, computeTinCanProgress, tinCanActivityStatus, status, isTinCanLessonPassed, canFinalizeTinCanCompletion, syncProgressWithTrackedTime, hasAssessmentFailureSignals, logLessonMapDebug, extractScorePayloadFromStatus]);
     const runIframeRuntimeSync = useCallback(() => {
         const frameWindow = iframeRef.current?.contentWindow;
         hardenTinCanRuntimeWindow(frameWindow);
@@ -6505,6 +6624,83 @@ export default function LearnPage() {
         }
     }, [isNearVideoEnd]);
 
+    // Best-effort probe: ask nested YouTube players for current state/time so
+    // infoDelivery/onStateChange events are emitted immediately instead of
+    // waiting for their natural heartbeat cadence.
+    const probeYoutubePlayersForCompletion = useCallback(() => {
+        try {
+            const root = iframeRef.current?.contentWindow;
+            if (!root) return;
+            const visited = new Set();
+            const walk = (win) => {
+                if (!win || visited.has(win)) return;
+                visited.add(win);
+                let doc = null;
+                try { doc = win.document; } catch { return; }
+                if (!doc) return;
+                const frames = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
+                for (const frame of frames) {
+                    try {
+                        const src = String(frame?.src || '');
+                        const child = frame?.contentWindow;
+                        if (child && /youtube(-nocookie)?\.com\/embed\//i.test(src)) {
+                            if (!frame.id) frame.id = `lms-yt-probe-${Math.random().toString(36).slice(2, 8)}`;
+                            const id = frame.id;
+                            const messages = [
+                                { event: 'listening', id },
+                                { event: 'command', func: 'getPlayerState', args: [], id },
+                                { event: 'command', func: 'getCurrentTime', args: [], id },
+                                { event: 'command', func: 'getDuration', args: [], id },
+                            ];
+                            for (const message of messages) {
+                                try { child.postMessage(JSON.stringify(message), '*'); } catch { /* ignore */ }
+                            }
+                        }
+                    } catch {
+                        // ignore frame probe errors
+                    }
+                    try { walk(frame.contentWindow); } catch { /* cross-origin */ }
+                }
+            };
+            walk(root);
+        } catch {
+            // ignore probe failures
+        }
+    }, []);
+
+    // Wait briefly for concrete "video ended / near-end" evidence of a specific
+    // lesson before enforcing chapter lock.
+    const waitForLessonCompletionEvidence = useCallback(async (activityIndex, options = {}) => {
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return false;
+        const safeIndex = Math.max(0, Math.min(activities.length - 1, Math.floor(Number(activityIndex) || 0)));
+        if (completionVerbSeenForActivityRef.current.has(safeIndex)) return true;
+        if (hasIframeVideoReachedEnd()) {
+            completionVerbSeenForActivityRef.current.add(safeIndex);
+            return true;
+        }
+
+        const maxWaitMs = Math.max(300, Number(options?.maxWaitMs) || 1400);
+        const tickMs = Math.max(80, Number(options?.tickMs) || 140);
+        const startedAt = Date.now();
+        let lastProbeAt = 0;
+
+        while (Date.now() - startedAt < maxWaitMs) {
+            const now = Date.now();
+            if (now - lastProbeAt >= 220) {
+                probeYoutubePlayersForCompletion();
+                lastProbeAt = now;
+            }
+            await new Promise((resolve) => setTimeout(resolve, tickMs));
+            if (completionVerbSeenForActivityRef.current.has(safeIndex)) return true;
+            if (hasIframeVideoReachedEnd()) {
+                completionVerbSeenForActivityRef.current.add(safeIndex);
+                return true;
+            }
+        }
+        return completionVerbSeenForActivityRef.current.has(safeIndex);
+    }, [content?.activities, hasIframeVideoReachedEnd, probeYoutubePlayersForCompletion]);
+
     const getMaxUnlockedActivityIndex = useCallback(() => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         if (activities.length === 0) return 0;
@@ -6537,7 +6733,9 @@ export default function LearnPage() {
         }
         localUnlocked = Math.max(0, Math.min(activities.length - 1, localUnlocked));
 
-        const selectedSafe = Math.max(0, Math.min(activities.length - 1, selectedActivityIndex));
+        const selectedSafe = Number.isFinite(Number(selectedActivityIndexRef.current))
+            ? Math.max(0, Math.min(activities.length - 1, Math.floor(Number(selectedActivityIndexRef.current))))
+            : 0;
         let forwardFromSelected = selectedSafe;
         for (let i = selectedSafe; i < activities.length; i++) {
             if (isTinCanLessonClearedForAdvance(activityStatuses[i], activities[i])) {
@@ -6581,22 +6779,36 @@ export default function LearnPage() {
             )
         );
         return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
-    }, [content, chapterLockEnabled, selectedActivityIndex, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity, hasIframeVideoReachedEnd]);
+    }, [content, chapterLockEnabled, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity, hasIframeVideoReachedEnd]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         if (activities.length === 0) return;
 
         const safeIndex = Math.max(0, Math.min(activities.length - 1, Number(idx) || 0));
-        const maxUnlocked = getMaxUnlockedActivityIndex();
+        const selectedSnapshot = Number.isFinite(Number(selectedActivityIndexRef.current))
+            ? Math.max(0, Math.min(activities.length - 1, Math.floor(Number(selectedActivityIndexRef.current))))
+            : 0;
+        let maxUnlocked = getMaxUnlockedActivityIndex();
         logLessonMapDebug('manual-select-click', {
             requestedIndex: Number(idx),
             targetIndex: safeIndex,
             runtimeTargetIndex: mapActivityIndexToRuntimePage(safeIndex),
             detectedActivityIndex: detectActivityIndexFromIframe(),
-            selectedActivityIndex,
+            selectedActivityIndex: selectedSnapshot,
             targetActivityTitle: String(activities?.[safeIndex]?.name || activities?.[safeIndex]?.title || ''),
         });
+        if (chapterLockEnabled && safeIndex > maxUnlocked) {
+            const immediateNext = safeIndex === Math.min(activities.length - 1, selectedSnapshot + 1);
+            const selectedActivity = activities[selectedSnapshot];
+            if (immediateNext && selectedActivity && !isAssessmentActivity(selectedActivity)) {
+                const gotCompletionEvidence = await waitForLessonCompletionEvidence(selectedSnapshot, { maxWaitMs: 1800 });
+                if (gotCompletionEvidence) {
+                    completionVerbSeenForActivityRef.current.add(selectedSnapshot);
+                    maxUnlocked = getMaxUnlockedActivityIndex();
+                }
+            }
+        }
         if (chapterLockEnabled && safeIndex > maxUnlocked) {
             toast.warning(
                 'กรุณาเรียนบทก่อนหน้าให้ครบก่อน จึงจะไปบทถัดไปได้',
@@ -6607,14 +6819,14 @@ export default function LearnPage() {
 
         // Update selected index immediately so sidebar highlights the clicked lesson right away
         setSelectedActivityIndex(safeIndex);
-        manualSelectionRef.current = { target: safeIndex, until: Date.now() + 12000 };
+        manualSelectionRef.current = { target: safeIndex, until: Date.now() + manualSelectionHoldMs };
         highestSeenActivityIndexRef.current = Math.max(
             Number(highestSeenActivityIndexRef.current || 0),
             safeIndex
         );
         resumeGuardUntilRef.current = 0;
         applyTincanResumeToIframe();
-    }, [content, chapterLockEnabled, getMaxUnlockedActivityIndex, applyTincanResumeToIframe, logLessonMapDebug, mapActivityIndexToRuntimePage, detectActivityIndexFromIframe, selectedActivityIndex]);
+    }, [content, chapterLockEnabled, getMaxUnlockedActivityIndex, applyTincanResumeToIframe, logLessonMapDebug, mapActivityIndexToRuntimePage, detectActivityIndexFromIframe, manualSelectionHoldMs, isAssessmentActivity, waitForLessonCompletionEvidence]);
 
     const getMaxUnlockedWebPageIndex = useCallback(() => {
         const knownTotal = Math.max(
@@ -6917,15 +7129,15 @@ export default function LearnPage() {
                 ? Math.max(0, Math.floor(Number(currentTime) - 1))
                 : -1;
         const detectedWebIndex = isLegacyWebContent ? detectLegacyWebPageIndex() : -1;
-        const detectedTinCanIndex = isTinCanContent ? detectActivityIndexFromIframe() : -1;
+        const selectedTinCanStateIndex = Number.isFinite(Number(selectedActivityIndex))
+            ? Math.floor(Number(selectedActivityIndex))
+            : 0;
         const selectedLessonIndex = isTinCanContent
             ? Math.max(
                 0,
                 Math.min(
                     lessonItems.length - 1,
-                    Number.isFinite(Number(detectedTinCanIndex)) && detectedTinCanIndex >= 0
-                        ? Math.floor(Number(detectedTinCanIndex))
-                        : (Number(selectedActivityIndex) || 0)
+                    selectedTinCanStateIndex
                 )
             )
             : Math.max(

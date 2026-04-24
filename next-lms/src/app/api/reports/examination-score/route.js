@@ -44,7 +44,20 @@ function toRangeLabel(score) {
 
 function toOptionalNumber(value) {
     if (value == null || value === '') return null;
-    const n = Number(value);
+    // Prisma Decimal columns (quizAttempt.score, scoreRaw, scoreScaled) come
+    // back as Decimal.js instances — Number(decimal) returns NaN because
+    // decimal.js lacks [Symbol.toPrimitive]. Same coercion used in
+    // my-course/route.js; without it the admin examination-score report
+    // silently rendered every score as null.
+    let raw = value;
+    if (raw && typeof raw === 'object') {
+        if (typeof raw.toNumber === 'function') {
+            try { raw = raw.toNumber(); } catch { raw = raw.toString?.() ?? raw; }
+        } else if (typeof raw.toString === 'function') {
+            raw = raw.toString();
+        }
+    }
+    const n = Number(raw);
     return Number.isFinite(n) ? n : null;
 }
 

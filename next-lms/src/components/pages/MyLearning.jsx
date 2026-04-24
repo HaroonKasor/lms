@@ -68,6 +68,7 @@ const STAR_VALUES = [1, 2, 3, 4, 5];
 const ENROLLMENTS_TIMEOUT_MS = 15000;
 const REVIEWS_TIMEOUT_MS = 10000;
 const COURSES_PER_PAGE = 6;
+const REVIEW_AUTO_PROMPT_STORAGE_PREFIX = 'my-learning:review-auto-prompt-seen:v1';
 
 export default function MyLearning() {
     const [enrollments, setEnrollments] = useState([]);
@@ -86,8 +87,21 @@ export default function MyLearning() {
     const [reviewSubmitting, setReviewSubmitting] = useState(false);
     const [reviewError, setReviewError] = useState('');
     const [dismissedReviewIds, setDismissedReviewIds] = useState([]);
+    const [autoPromptSeenReviewIds, setAutoPromptSeenReviewIds] = useState([]);
+    const [selectedReviewEnrollmentId, setSelectedReviewEnrollmentId] = useState(0);
     const [submittedReview, setSubmittedReview] = useState(null);
     const reviewScrollLockRef = useRef(null);
+    const reviewPromptUserKey = useMemo(() => String(
+        user?.id
+        || user?.userId
+        || user?.username
+        || user?.email
+        || 'anonymous'
+    ).trim().toLowerCase() || 'anonymous', [user?.id, user?.userId, user?.username, user?.email]);
+    const reviewAutoPromptStorageKey = useMemo(
+        () => `${REVIEW_AUTO_PROMPT_STORAGE_PREFIX}:${reviewPromptUserKey}`,
+        [reviewPromptUserKey]
+    );
 
     const lockReviewScroll = useCallback(() => {
         if (typeof document === 'undefined') return;
@@ -175,10 +189,58 @@ export default function MyLearning() {
         }
     }, [fetchWithTimeout]);
 
-    const activePendingReview = useMemo(() => (
-        pendingReviews.find((row) => !dismissedReviewIds.includes(Number(row?.enrollmentId || 0))) || null
-    ), [pendingReviews, dismissedReviewIds]);
-    const activePendingReviewId = Number(activePendingReview?.enrollmentId || 0);
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const raw = window.localStorage.getItem(reviewAutoPromptStorageKey);
+            const parsed = JSON.parse(String(raw || '[]'));
+            if (!Array.isArray(parsed)) {
+                setAutoPromptSeenReviewIds([]);
+                return;
+            }
+            const normalized = Array.from(new Set(
+                parsed
+                    .map((value) => Number(value))
+                    .filter((value) => Number.isFinite(value) && value > 0)
+            ));
+            setAutoPromptSeenReviewIds(normalized);
+        } catch {
+            setAutoPromptSeenReviewIds([]);
+        }
+    }, [reviewAutoPromptStorageKey]);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        try {
+            const normalized = Array.from(new Set(
+                (Array.isArray(autoPromptSeenReviewIds) ? autoPromptSeenReviewIds : [])
+                    .map((value) => Number(value))
+                    .filter((value) => Number.isFinite(value) && value > 0)
+            ));
+            window.localStorage.setItem(reviewAutoPromptStorageKey, JSON.stringify(normalized));
+        } catch {
+            // ignore storage write errors
+        }
+    }, [reviewAutoPromptStorageKey, autoPromptSeenReviewIds]);
+
+    const activePendingReview = useMemo(() => {
+        const selectedId = Number(selectedReviewEnrollmentId || 0);
+        if (selectedId > 0) {
+            const selectedRow = pendingReviews.find((row) => Number(row?.enrollmentId || 0) === selectedId);
+            if (selectedRow) return selectedRow;
+        }
+        return pendingReviews.find((row) => !dismissedReviewIds.includes(Number(row?.enrollmentId || 0))) || null;
+    }, [pendingReviews, dismissedReviewIds, selectedReviewEnrollmentId]);
+    const autoPendingReview = useMemo(() => (
+        pendingReviews.find((row) => {
+            const enrollmentId = Number(row?.enrollmentId || 0);
+            if (enrollmentId <= 0) return false;
+            if (dismissedReviewIds.includes(enrollmentId)) return false;
+            if (autoPromptSeenReviewIds.includes(enrollmentId)) return false;
+            return true;
+        }) || null
+    ), [pendingReviews, dismissedReviewIds, autoPromptSeenReviewIds]);
+    const autoPendingReviewId = Number(autoPendingReview?.enrollmentId || 0);
     const reviewModalReview = reviewModalStage === 'thanks'
         ? submittedReview
         : activePendingReview;
@@ -198,6 +260,7 @@ export default function MyLearning() {
         setHoverRating(0);
         setReviewText('');
         setReviewError('');
+        setSelectedReviewEnrollmentId(0);
         setSubmittedReview(null);
         unlockReviewScroll(true);
     }, [activePendingReview, unlockReviewScroll]);
@@ -284,17 +347,38 @@ export default function MyLearning() {
         };
     }, [loadEnrollments, loadPendingReviews]);
 
-    useEffect(() => {
-        if (!activePendingReviewId) return;
-        if (reviewModalOpen) return;
+    const openReviewModalForEnrollment = useCallback((enrollmentId, options = {}) => {
+        const targetId = Number(enrollmentId || 0);
+        if (!targetId) return false;
+        const targetReview = pendingReviews.find((row) => Number(row?.enrollmentId || 0) === targetId);
+        if (!targetReview) return false;
+
+        setSelectedReviewEnrollmentId(targetId);
         setReviewModalOpen(true);
         setReviewModalStage('form');
-        setSelectedRating(0);
+        const initialRating = Number(targetReview?.rating || 0);
+        setSelectedRating(Number.isFinite(initialRating) && initialRating >= 1 ? Math.min(5, Math.floor(initialRating)) : 0);
         setHoverRating(0);
-        setReviewText(String(activePendingReview?.reviewText || ''));
+        setReviewText(String(targetReview?.reviewText || ''));
         setReviewError('');
         setSubmittedReview(null);
-    }, [activePendingReviewId, reviewModalOpen, activePendingReview?.reviewText]);
+
+        if (options?.markAutoPromptSeen !== false) {
+            setAutoPromptSeenReviewIds((prev) => {
+                const normalizedPrev = Array.isArray(prev) ? prev : [];
+                if (normalizedPrev.includes(targetId)) return normalizedPrev;
+                return [...normalizedPrev, targetId];
+            });
+        }
+        setDismissedReviewIds((prev) => prev.filter((value) => Number(value) !== targetId));
+        return true;
+    }, [pendingReviews]);
+
+    useEffect(() => {
+        if (!autoPendingReviewId) return;
+        if (reviewModalOpen) return;
+        openReviewModalForEnrollment(autoPendingReviewId, { markAutoPromptSeen: true });
+    }, [autoPendingReviewId, reviewModalOpen, openReviewModalForEnrollment]);
 
     useEffect(() => {
         if (!reviewModalOpen) return;
@@ -517,6 +601,7 @@ export default function MyLearning() {
                                         enrollment={enrollment}
                                         formatDuration={formatDuration}
                                         currentUser={user}
+                                        onOpenReviewRequest={openReviewModalForEnrollment}
                                     />
                                 ))}
                             </div>
@@ -717,7 +802,7 @@ export default function MyLearning() {
 }
 
 // --- Course Card ---
-function CourseCard({ enrollment, formatDuration, currentUser }) {
+function CourseCard({ enrollment, formatDuration, currentUser, onOpenReviewRequest }) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [showCertificateModal, setShowCertificateModal] = useState(false);
     const course = enrollment.course;
@@ -990,7 +1075,20 @@ function CourseCard({ enrollment, formatDuration, currentUser }) {
                                                 >
                                                     Learn again
                                                 </Link>
-                                                <button onClick={(e) => { e.preventDefault(); setMenuOpen(false); }} className="w-full text-left px-5 py-3 text-[#052143] text-base font-normal hover:bg-[#F6F8FF] transition-colors" type="button">Rate course</button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        setMenuOpen(false);
+                                                        if (typeof onOpenReviewRequest === 'function') {
+                                                            onOpenReviewRequest(Number(enrollment?.id || 0), { markAutoPromptSeen: false });
+                                                        }
+                                                    }}
+                                                    className="w-full text-left px-5 py-3 text-[#052143] text-base font-normal hover:bg-[#F6F8FF] transition-colors"
+                                                    type="button"
+                                                >
+                                                    Rate course
+                                                </button>
                                             </>
                                         ) : null}
                                         <button onClick={(e) => { e.preventDefault(); setMenuOpen(false); window.location.href = `/courses/${course?.id}/report`; }} className="w-full text-left px-5 py-3 text-[#052143] text-base font-normal hover:bg-[#F6F8FF] transition-colors" type="button">Report</button>

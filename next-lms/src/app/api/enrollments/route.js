@@ -81,7 +81,19 @@ function toProgressNumber(progressPercent) {
 
 function toOptionalScoreNumber(value) {
     if (value == null || value === '') return null;
-    const n = Number(value);
+    // Prisma returns Decimal columns (scoreRaw, scoreScaled, quizAttempt.score)
+    // as Decimal.js instances. Number(decimal) = NaN because decimal.js lacks
+    // [Symbol.toPrimitive]. Coerce via .toNumber()/.toString() so the
+    // Training Results page can render real score values.
+    let raw = value;
+    if (raw && typeof raw === 'object') {
+        if (typeof raw.toNumber === 'function') {
+            try { raw = raw.toNumber(); } catch { raw = raw.toString?.() ?? raw; }
+        } else if (typeof raw.toString === 'function') {
+            raw = raw.toString();
+        }
+    }
+    const n = Number(raw);
     return Number.isFinite(n) ? n : null;
 }
 
@@ -333,7 +345,31 @@ function normalizeEnrollmentCourse(
         : learningProgressRows;
     const latestProgressRow = (sectionProgressRows[0] || learningProgressRows[0] || null);
     const scoreProgressRow = pickScoreProgressRow(sectionProgressRows) || pickScoreProgressRow(learningProgressRows);
-    const scorePercent = toScorePercentFromProgress(scoreProgressRow);
+    const progressScorePercent = toScorePercentFromProgress(scoreProgressRow);
+    // Fallback: when there's no numeric score on learning_progress (common
+    // for video-only lessons or after the alert-parsing fix that stopped
+    // treating threshold numbers as scores), use the best quiz attempt so
+    // the Training Results "SCORE" column isn't stuck at "—".
+    const quizAttemptsForEnrollment = Array.isArray(enrollment?.quiz_attempts)
+        ? enrollment.quiz_attempts
+        : [];
+    let quizScorePercent = null;
+    if (quizAttemptsForEnrollment.length > 0) {
+        const candidate = quizAttemptsForEnrollment
+            .map((attempt) => ({
+                score: toOptionalScoreNumber(attempt?.score),
+                passed: typeof attempt?.passed === 'boolean' ? attempt.passed : null,
+            }))
+            .filter((item) => item.score !== null)
+            .sort((a, b) => {
+                if (a.passed !== b.passed) return (b.passed ? 1 : 0) - (a.passed ? 1 : 0);
+                return (b.score || 0) - (a.score || 0);
+            })[0];
+        if (candidate) {
+            quizScorePercent = Math.max(0, Math.min(100, candidate.score));
+        }
+    }
+    const scorePercent = progressScorePercent !== null ? progressScorePercent : quizScorePercent;
     const progressStatus = String(latestProgressRow?.status || '').toLowerCase();
     const progressPercent = Number(latestProgressRow?.progressPercent || 0);
     const progressSaysFailed =
@@ -1112,6 +1148,21 @@ export async function GET(request) {
                         },
                         orderBy: { id: 'desc' },
                         take: 10,
+                    },
+                    // Quiz attempts are the authoritative quiz score source.
+                    // Training Results / Score column needs these when the
+                    // learning_progress row for the quiz section doesn't carry
+                    // a numeric score (common after the alert-parsing fix that
+                    // stopped extracting thresholds as scores).
+                    quiz_attempts: {
+                        select: {
+                            id: true,
+                            score: true,
+                            passed: true,
+                            submittedAt: true,
+                        },
+                        orderBy: [{ passed: 'desc' }, { score: 'desc' }, { submittedAt: 'desc' }],
+                        take: 5,
                     },
                 },
                 orderBy: { enrolledAt: 'desc' },
