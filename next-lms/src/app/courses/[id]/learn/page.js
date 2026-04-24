@@ -1163,63 +1163,121 @@ export default function LearnPage() {
         // completionVerbSeenForActivityRef so the fallback sync effect can
         // finalize the course.
         const patchedWindows = new WeakSet();
+        const trackedIframes = new WeakSet();
+        const markCompletionVerb = () => {
+            const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
+                ? Math.floor(Number(selectedActivityIndex))
+                : 0;
+            completionVerbSeenForActivityRef.current.add(Math.max(0, selectedIdx));
+        };
         const patchYT = (win) => {
-            if (!win || patchedWindows.has(win)) return false;
+            if (!win) return false;
             let YT;
             try { YT = win.YT; } catch { return false; }
             if (!YT || !YT.Player) return false;
-            if (YT.__lmsPatched) { patchedWindows.add(win); return true; }
-            const origPlayer = YT.Player;
-            const wrapOnStateChange = (orig) => (e) => {
+            const origPlayer = YT.__lmsOrigPlayer || YT.Player;
+            const wrapOnStateChange = (orig) => function lmsOnStateChange(e) {
                 try {
-                    if (e && Number(e.data) === 0) {
-                        const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
-                            ? Math.floor(Number(selectedActivityIndex))
-                            : -1;
-                        if (selectedIdx >= 0) {
-                            completionVerbSeenForActivityRef.current.add(selectedIdx);
-                        }
-                    }
+                    if (e && Number(e.data) === 0) markCompletionVerb();
                 } catch { /* ignore */ }
                 if (typeof orig === 'function') {
                     try { return orig.apply(this, arguments); } catch { /* ignore */ }
                 }
             };
+
+            // Prototype-level patch: wrap addEventListener on the prototype so
+            // EXISTING instances (created before our monkey-patch) also route
+            // their onStateChange through our wrapper. This is critical because
+            // most TinCan wrappers construct their YT.Player before our React
+            // useEffect has a chance to replace the YT.Player constructor.
+            if (!origPlayer.prototype.__lmsProtoPatched) {
+                const origProtoAdd = origPlayer.prototype.addEventListener;
+                if (typeof origProtoAdd === 'function') {
+                    origPlayer.prototype.addEventListener = function (eventName, handler) {
+                        if (eventName === 'onStateChange') {
+                            return origProtoAdd.call(this, eventName, wrapOnStateChange(handler));
+                        }
+                        return origProtoAdd.call(this, eventName, handler);
+                    };
+                    origPlayer.prototype.__lmsProtoPatched = true;
+                }
+            }
+
+            if (patchedWindows.has(win) || YT.__lmsPatched) {
+                patchedWindows.add(win);
+                createParallelTrackers(win);
+                return true;
+            }
+
             const Patched = function (elementOrId, config) {
                 const safeConfig = Object.assign({}, config || {});
                 safeConfig.events = Object.assign({}, safeConfig.events || {});
                 const origHandler = safeConfig.events.onStateChange;
                 safeConfig.events.onStateChange = wrapOnStateChange(origHandler);
-                // Call original constructor with our enhanced events config.
-                const instance = new origPlayer(elementOrId, safeConfig);
-                // Some wrappers register onStateChange AFTER construction via
-                // player.addEventListener. Wrap that too so late-registered
-                // handlers get our injection.
-                if (instance && typeof instance.addEventListener === 'function') {
-                    const origAdd = instance.addEventListener.bind(instance);
-                    instance.addEventListener = (eventName, handler) => {
-                        if (eventName === 'onStateChange') {
-                            return origAdd(eventName, wrapOnStateChange(handler));
-                        }
-                        return origAdd(eventName, handler);
-                    };
-                }
-                return instance;
+                return new origPlayer(elementOrId, safeConfig);
             };
-            // Preserve prototype chain and statics so `instanceof`, static
-            // methods, and any wrapper code inspecting Player keep working.
             Patched.prototype = origPlayer.prototype;
             Object.setPrototypeOf(Patched, origPlayer);
             for (const key of Object.keys(origPlayer)) {
                 try { Patched[key] = origPlayer[key]; } catch { /* ignore */ }
             }
             try {
+                YT.__lmsOrigPlayer = origPlayer;
                 YT.Player = Patched;
                 YT.__lmsPatched = true;
                 patchedWindows.add(win);
+                createParallelTrackers(win);
                 return true;
             } catch { return false; }
         };
+
+        // Parallel tracker: create our OWN YT.Player instance bound to the
+        // same YouTube iframe the wrapper already attached to. YouTube permits
+        // multiple Player handles on the same iframe — they all receive the
+        // same onStateChange events via the shared postMessage channel. This
+        // guarantees we see "ended" even if our prototype/constructor patches
+        // missed the wrapper's original Player (e.g. patch ran too late).
+        function createParallelTrackers(win) {
+            if (!win) return;
+            let doc = null;
+            try { doc = win.document; } catch { return; }
+            if (!doc) return;
+            const iframes = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
+            for (const frame of iframes) {
+                const src = String(frame?.src || '');
+                if (!/youtube(-nocookie)?\.com\/embed\//i.test(src)) continue;
+                if (trackedIframes.has(frame)) continue;
+                // YT.Player needs an element id (or DOM element) to attach.
+                if (!frame.id) frame.id = `lms-yt-track-${Math.random().toString(36).slice(2, 8)}`;
+                const attach = () => {
+                    try {
+                        // eslint-disable-next-line no-new
+                        new win.YT.Player(frame.id, {
+                            events: {
+                                onStateChange: (e) => {
+                                    if (e && Number(e.data) === 0) markCompletionVerb();
+                                },
+                            },
+                        });
+                        trackedIframes.add(frame);
+                    } catch { /* ignore */ }
+                };
+                if (win.YT && typeof win.YT.Player === 'function' && win.YT.loaded) {
+                    attach();
+                } else {
+                    // Wait for YT to finish loading before attaching.
+                    const origReady = win.onYouTubeIframeAPIReady;
+                    win.onYouTubeIframeAPIReady = function () {
+                        if (typeof origReady === 'function') {
+                            try { origReady.apply(this, arguments); } catch { /* ignore */ }
+                        }
+                        attach();
+                    };
+                    // Also retry on next interval tick in case the ready hook
+                    // already fired before we installed our wrapper.
+                }
+            }
+        }
 
         // Try to patch YT as early as possible. If it isn't loaded yet, install
         // a property setter on window.YT so we patch the moment the wrapper
