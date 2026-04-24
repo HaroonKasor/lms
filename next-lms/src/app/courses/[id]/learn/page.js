@@ -1063,23 +1063,30 @@ export default function LearnPage() {
 
         const observers = [];
         const attachedDocs = new WeakSet();
-        const attachObserver = (doc) => {
+        const attachObserver = (doc, docWin) => {
             if (!doc || attachedDocs.has(doc)) return;
             attachedDocs.add(doc);
+            const handleFrame = (frame) => {
+                processFrame(frame);
+                // Also attach our direct same-origin YT.Player tracker. The
+                // MutationObserver fires the moment an iframe is added or its
+                // src changes (e.g. chapter navigation that swaps the video),
+                // so this is the fastest possible attachment path — much
+                // faster than waiting for the 1.5-second walk interval.
+                if (docWin) attachTrackerToFrame(docWin, frame);
+            };
             try {
                 const observer = new MutationObserver((mutations) => {
                     for (const m of mutations) {
                         for (const node of m.addedNodes || []) {
-                            if (node && node.tagName === 'IFRAME') processFrame(node);
-                            // Also check descendants in case a wrapper div was added
+                            if (node && node.tagName === 'IFRAME') handleFrame(node);
                             if (node && node.querySelectorAll) {
                                 const nested = node.querySelectorAll('iframe');
-                                for (const f of nested) processFrame(f);
+                                for (const f of nested) handleFrame(f);
                             }
                         }
-                        // src attribute changed on an existing iframe
                         if (m.type === 'attributes' && m.target?.tagName === 'IFRAME') {
-                            processFrame(m.target);
+                            handleFrame(m.target);
                         }
                     }
                 });
@@ -1136,7 +1143,7 @@ export default function LearnPage() {
                 let doc = null;
                 try { doc = win.document; } catch { return; }
                 if (!doc) return;
-                attachObserver(doc);
+                attachObserver(doc, win);
                 attachForwardingListener(win);
                 const frames = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
                 for (const frame of frames) {
@@ -1164,6 +1171,7 @@ export default function LearnPage() {
         // finalize the course.
         const patchedWindows = new WeakSet();
         const trackedIframes = new WeakSet();
+        const trackedPlayers = [];
         const markCompletionVerb = () => {
             const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
                 ? Math.floor(Number(selectedActivityIndex))
@@ -1237,46 +1245,74 @@ export default function LearnPage() {
         // same onStateChange events via the shared postMessage channel. This
         // guarantees we see "ended" even if our prototype/constructor patches
         // missed the wrapper's original Player (e.g. patch ran too late).
+        // Tracks the src we last attached a tracker to for each iframe. If the
+        // wrapper reuses the same iframe element but swaps its src (chapter
+        // change via loadVideoById-style navigation), the tracker bound to the
+        // old video becomes stale — we detect that by comparing src and attach
+        // a fresh tracker.
+        const trackedIframeSrc = new WeakMap();
+        function attachTrackerToFrame(win, frame) {
+            if (!win || !frame) return;
+            const src = String(frame?.src || '');
+            if (!/youtube(-nocookie)?\.com\/embed\//i.test(src)) return;
+            if (trackedIframeSrc.get(frame) === src) return; // same src, already tracked
+            if (!frame.id) frame.id = `lms-yt-track-${Math.random().toString(36).slice(2, 8)}`;
+            trackedIframeSrc.set(frame, src);
+            trackedIframes.add(frame);
+            const attach = () => {
+                try {
+                    const player = new win.YT.Player(frame.id, {
+                        events: {
+                            onStateChange: (e) => {
+                                if (e && Number(e.data) === 0) markCompletionVerb();
+                            },
+                            onReady: () => {
+                                trackedPlayers.push(player);
+                                // Immediately check state — if the learner already
+                                // dragged to the end BEFORE this tracker was ready
+                                // (common when switching chapters), the state/time
+                                // check here catches it without waiting for the
+                                // 1-second poll interval.
+                                try {
+                                    if (Number(player.getPlayerState?.()) === 0) {
+                                        markCompletionVerb();
+                                        return;
+                                    }
+                                    const ct = Number(player.getCurrentTime?.());
+                                    const dur = Number(player.getDuration?.());
+                                    if (
+                                        Number.isFinite(ct)
+                                        && Number.isFinite(dur)
+                                        && dur > 3
+                                        && ct >= dur - 1
+                                    ) {
+                                        markCompletionVerb();
+                                    }
+                                } catch { /* ignore */ }
+                            },
+                        },
+                    });
+                } catch { /* ignore */ }
+            };
+            if (win.YT && typeof win.YT.Player === 'function' && win.YT.loaded) {
+                attach();
+            } else {
+                const origReady = win.onYouTubeIframeAPIReady;
+                win.onYouTubeIframeAPIReady = function () {
+                    if (typeof origReady === 'function') {
+                        try { origReady.apply(this, arguments); } catch { /* ignore */ }
+                    }
+                    attach();
+                };
+            }
+        }
         function createParallelTrackers(win) {
             if (!win) return;
             let doc = null;
             try { doc = win.document; } catch { return; }
             if (!doc) return;
             const iframes = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
-            for (const frame of iframes) {
-                const src = String(frame?.src || '');
-                if (!/youtube(-nocookie)?\.com\/embed\//i.test(src)) continue;
-                if (trackedIframes.has(frame)) continue;
-                // YT.Player needs an element id (or DOM element) to attach.
-                if (!frame.id) frame.id = `lms-yt-track-${Math.random().toString(36).slice(2, 8)}`;
-                const attach = () => {
-                    try {
-                        // eslint-disable-next-line no-new
-                        new win.YT.Player(frame.id, {
-                            events: {
-                                onStateChange: (e) => {
-                                    if (e && Number(e.data) === 0) markCompletionVerb();
-                                },
-                            },
-                        });
-                        trackedIframes.add(frame);
-                    } catch { /* ignore */ }
-                };
-                if (win.YT && typeof win.YT.Player === 'function' && win.YT.loaded) {
-                    attach();
-                } else {
-                    // Wait for YT to finish loading before attaching.
-                    const origReady = win.onYouTubeIframeAPIReady;
-                    win.onYouTubeIframeAPIReady = function () {
-                        if (typeof origReady === 'function') {
-                            try { origReady.apply(this, arguments); } catch { /* ignore */ }
-                        }
-                        attach();
-                    };
-                    // Also retry on next interval tick in case the ready hook
-                    // already fired before we installed our wrapper.
-                }
-            }
+            for (const frame of iframes) attachTrackerToFrame(win, frame);
         }
 
         // Try to patch YT as early as possible. If it isn't loaded yet, install
@@ -1331,15 +1367,49 @@ export default function LearnPage() {
             walkAndProcess();
             patchAllWindows();
         }, 1500);
-        // Active polling: every 2 seconds, ping every YouTube iframe we've
-        // handshaked with for its current playback state. YouTube responds with
-        // infoDelivery messages which the main listener translates into "ended"
-        // when currentTime >= duration. Fallback path for raw-iframe embeds.
+        // Active polling: every 1 second, check every tracked YT.Player.
+        //
+        // Primary path — direct same-origin JS API call: our parallel
+        // `new YT.Player(iframe.id, ...)` instances expose synchronous
+        // getPlayerState() / getCurrentTime() / getDuration() methods. Calling
+        // them from our window works because the wrapper window is same-origin
+        // and YT.Player proxies to the (cross-origin) YouTube iframe internally.
+        // This is the most reliable way to detect "ended" — independent of
+        // postMessage delivery, YT's own event dispatch, or wrapper forwarding.
+        //
+        // Secondary path — postMessage command ping for raw-iframe embeds that
+        // aren't wrapped in YT.Player yet. YouTube responds with infoDelivery
+        // which the main listener translates into "ended" at currentTime >= dur.
+        //
+        // Any signal (state==0 OR currentTime within 1s of duration) marks the
+        // current activity as completion-verb-seen, which unlocks chapter
+        // advance AND triggers course completion consistently — so dragging
+        // the seek bar to the end behaves the same every time.
         const pollTimer = setInterval(() => {
+            for (const player of trackedPlayers) {
+                try {
+                    if (!player || typeof player.getPlayerState !== 'function') continue;
+                    const state = player.getPlayerState();
+                    if (Number(state) === 0) {
+                        markCompletionVerb();
+                        continue;
+                    }
+                    const currentTime = Number(player.getCurrentTime?.());
+                    const duration = Number(player.getDuration?.());
+                    if (
+                        Number.isFinite(currentTime)
+                        && Number.isFinite(duration)
+                        && duration > 3
+                        && currentTime >= duration - 1
+                    ) {
+                        markCompletionVerb();
+                    }
+                } catch { /* ignore — player might be destroyed or not ready */ }
+            }
             for (const frame of pollQueue) {
                 try { pollFrame(frame); } catch { /* ignore */ }
             }
-        }, 2000);
+        }, 1000);
         return () => {
             clearInterval(walkTimer);
             clearInterval(pollTimer);
@@ -2263,10 +2333,50 @@ export default function LearnPage() {
                 const parsePercentFromText = (value) => {
                     const text = String(value || '').trim();
                     if (!text) return null;
-                    const percentMatch = text.match(/(\d+(?:\.\d+)?)\s*%/);
-                    if (percentMatch?.[1]) {
-                        const parsed = Number(percentMatch[1]);
-                        if (Number.isFinite(parsed)) return Math.max(0, Math.min(100, parsed));
+                    // Collect every percent occurrence with its position so we
+                    // can skip ones that sit inside threshold phrasing like
+                    // "เกณฑ์ 80%" / "threshold 80%" / "ต้องได้อย่างน้อย 80%".
+                    // Previously this function naively returned the first %
+                    // match, which caused a FAIL alert ("ไม่ผ่านเกณฑ์ 80%") to
+                    // be read as "learner got 80%" and pass.
+                    const matches = [...text.matchAll(/(\d+(?:\.\d+)?)\s*%/g)];
+                    if (matches.length === 0) return null;
+                    const thresholdCtx = /(?:เกณฑ์|ต้อง(?:ได้|ผ่าน)|อย่างน้อย|threshold|minimum|at\s*least|pass(?:ing)?\s*(?:score|mark)|required)/i;
+                    // Prefer a percent that clearly belongs to the learner's
+                    // actual score phrasing.
+                    const scoreCtx = /(?:คิดเป็น|ได้|คุณได้|score|result|you\s*(?:got|scored))/i;
+                    const scoreMatch = matches.find((m) => {
+                        const before = text.slice(Math.max(0, m.index - 40), m.index);
+                        return scoreCtx.test(before);
+                    });
+                    if (scoreMatch) {
+                        const n = Number(scoreMatch[1]);
+                        if (Number.isFinite(n)) return Math.max(0, Math.min(100, n));
+                    }
+                    // Otherwise pick the first percent that is NOT inside a
+                    // threshold phrase.
+                    const nonThreshold = matches.find((m) => {
+                        const before = text.slice(Math.max(0, m.index - 40), m.index);
+                        return !thresholdCtx.test(before);
+                    });
+                    if (nonThreshold) {
+                        const n = Number(nonThreshold[1]);
+                        if (Number.isFinite(n)) return Math.max(0, Math.min(100, n));
+                    }
+                    // Every percent was threshold-contextual → no score in text.
+                    return null;
+                };
+
+                const detectPassFailFromText = (value) => {
+                    const text = String(value || '').trim();
+                    if (!text) return null;
+                    // Check FAIL phrases first since many also contain the
+                    // substring "ผ่าน" ("ไม่ผ่าน" = "not pass").
+                    if (/(?:ไม่ผ่าน|not\s*pass|failed|did\s*not\s*pass|didn['']?t\s*pass|ตก\b)/i.test(text)) {
+                        return false;
+                    }
+                    if (/(?:ผ่านเกณฑ์|ผ่านแล้ว|you\s*passed|congratulations)/i.test(text)) {
+                        return true;
                     }
                     return null;
                 };
@@ -2318,13 +2428,16 @@ export default function LearnPage() {
                         ? Math.max(0, Math.min(100, Number(percentValue)))
                         : null;
                     const explicitPassed = typeof passedOverride === 'boolean' ? passedOverride : null;
-                    // When a numeric score is available, the percent threshold is
-                    // authoritative — some packages call sendCurrentPagePassedStatement(true)
-                    // or sendExperiencedStatement unconditionally when the quiz is
-                    // submitted, which must not override a genuinely failing score.
-                    const passByPercent = scorePercent !== null
-                        ? scorePercent >= 80
-                        : (explicitPassed !== null ? explicitPassed : true);
+                    // Priority: explicit pass/fail phrase > numeric score > default.
+                    // An explicit "ไม่ผ่าน" in the alert is authoritative even if
+                    // a threshold number happened to parse as a score. An explicit
+                    // "ผ่านแล้ว" is also trusted because packages may use custom
+                    // passing thresholds lower than our default 80% fallback.
+                    // Only fall back to `scorePercent >= 80` when no phrase hint
+                    // was detected.
+                    const passByPercent = explicitPassed !== null
+                        ? explicitPassed
+                        : (scorePercent !== null ? scorePercent >= 80 : true);
 
                     const hasPriorEvidence = (row) => {
                         if (!row || typeof row !== 'object') return false;
@@ -2412,8 +2525,19 @@ export default function LearnPage() {
                             const mayBeAssessmentResult =
                                 /คะแนน|score|result|quiz|test|exam|assessment|ผ่าน|pass/i.test(text);
                             if (mayBeAssessmentResult) {
+                                const passFailHint = detectPassFailFromText(text);
                                 const percentValue = parsePercentFromText(text);
-                                applyAssessmentPassFromAlert(percentValue);
+                                // When the alert clearly announces a fail
+                                // ("ไม่ผ่านเกณฑ์ 80%"), force passedOverride=false
+                                // so a threshold number in the message can't be
+                                // misread as the learner's score. Swallow the
+                                // percent too in that case — the actual score
+                                // comes in the next alert ("คิดเป็น 63%").
+                                if (passFailHint === false) {
+                                    applyAssessmentPassFromAlert(null, false);
+                                } else {
+                                    applyAssessmentPassFromAlert(percentValue, passFailHint);
+                                }
                             }
                         } catch {
                             // ignore alert parsing failures
@@ -6378,37 +6502,24 @@ export default function LearnPage() {
                 forwardFromSelected = i + 1;
                 continue;
             }
-            // Fallback for the currently-selected content lesson: treat as cleared when
-            // we have concrete evidence the content actually finished, even if the
-            // package never wrote completed=true into its dataIndex. Evidence:
+            // Fallback for the currently-selected content lesson: only unlock the
+            // next chapter when we have CONCRETE evidence the video actually
+            // finished. No dwell-based shortcut — if the learner needs a minimum
+            // watch time, the TinCan package itself can enforce it. Accepted
+            // signals (same as course-completion logic, kept in sync):
             //   (a) a nested HTML5 <video> has played to its end, OR
-            //   (b) an xAPI "completed" verb was received while this lesson was selected, OR
-            //   (c) the learner has dwelled on this lesson long enough with recent
-            //       interaction that a reasonable watch-through is implied.
-            // Assessments still require a real pass — this fallback only applies to
-            // non-assessment (video/content) lessons.
-            const dwellSinceSelected = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
-            // Don't require recent mouse/keyboard interaction — watching a video is
-            // legitimate non-interactive behavior, and cross-origin iframes (YouTube)
-            // swallow mousemove events so interaction tracking would underreport.
-            // Instead, require the tab to currently be visible and the learner to
-            // have had *some* interaction on the page at least once (so we aren't
-            // auto-unlocking idle tabs left open in the background).
-            let tabVisible = true;
-            try { tabVisible = typeof document !== 'undefined' && document.visibilityState === 'visible'; } catch { tabVisible = true; }
-            const hasEverInteracted = Number(lastUserInteractionAtRef.current || 0) > 0;
-            const hasDwellEvidence =
-                Number.isFinite(dwellSinceSelected)
-                && dwellSinceSelected >= 60000
-                && tabVisible
-                && hasEverInteracted;
+            //   (b) an xAPI "completed" verb / YouTube onStateChange=ended was
+            //       received while this lesson was selected (captured in
+            //       completionVerbSeenForActivityRef via the YT.Player monkey-
+            //       patch and parallel tracker)
+            // Assessments still require a real pass — this fallback only applies
+            // to non-assessment (video/content) lessons.
             if (
                 i === selectedSafe
                 && !isAssessmentActivity(activities[i])
                 && (
                     hasIframeVideoReachedEnd()
                     || completionVerbSeenForActivityRef.current.has(i)
-                    || hasDwellEvidence
                 )
             ) {
                 forwardFromSelected = i + 1;
