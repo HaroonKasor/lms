@@ -3899,8 +3899,20 @@ export default function LearnPage() {
                 ? Math.floor(Number(selectedActivityIndex))
                 : -1;
             const candidateIdx = detectedIdx >= 0 ? detectedIdx : selectedIdx;
+            // Mirror the evidence the fallback-sync effect passes in. Without
+            // completedByPackage / completedByVerb the re-check here always fails
+            // for YouTube-embedded courses (where the wrapper never writes a
+            // completed=true activity status), blocking the COMPLETED PATCH even
+            // after the video has ended.
+            const evidenceIdx = Math.max(0, candidateIdx);
+            const completedByPackage =
+                completionVerbSeenForActivityRef.current.has(evidenceIdx)
+                || hasIframeVideoReachedEnd();
+            const completedByVerb = completionVerbSeenForActivityRef.current.has(evidenceIdx);
             const canCompleteNow = canFinalizeTinCanCompletion({
                 completedByActivities,
+                completedByPackage,
+                completedByVerb,
                 activityIndex: candidateIdx,
                 activityStatuses: statuses,
             });
@@ -4085,8 +4097,19 @@ export default function LearnPage() {
                 activities.length > 0 &&
                 statuses.length > 0 &&
                 statuses.every((item, idx) => isTinCanLessonPassed(item, activities[idx]));
+            // Same fix as syncEnrollmentStatus re-check: include completedByPackage
+            // / completedByVerb so the progress PATCH isn't silently demoted back
+            // to LEARNING + 99% when the only completion evidence is a package
+            // signal (YouTube onStateChange / patched YT.Player / xAPI verb).
+            const evidenceIdx = Math.max(0, candidateIdx);
+            const completedByPackage =
+                completionVerbSeenForActivityRef.current.has(evidenceIdx)
+                || hasIframeVideoReachedEnd();
+            const completedByVerb = completionVerbSeenForActivityRef.current.has(evidenceIdx);
             const canCompleteNow = canFinalizeTinCanCompletion({
                 completedByActivities,
+                completedByPackage,
+                completedByVerb,
                 activityIndex: candidateIdx,
                 activityStatuses: statuses,
             });
