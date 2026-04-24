@@ -398,6 +398,18 @@ export default function LearnPage() {
     const initializedStatementGateRef = useRef('');
     const lessonEntryStatementGateRef = useRef('');
     const logLessonMapDebug = useCallback(() => {}, []);
+    // Near-end tolerance for "video finished" evidence. Keep a small buffer for
+    // fractional durations / late metadata so 4:59/5:00 still counts as ended.
+    const nearEndSlackSeconds = 2.5;
+    const isNearVideoEnd = useCallback((currentTimeValue, durationValue) => {
+        const ct = Number(currentTimeValue);
+        const dur = Number(durationValue);
+        if (!Number.isFinite(ct) || !Number.isFinite(dur) || dur <= 0) return false;
+        // For long videos allow small absolute slack; for short clips cap slack
+        // to at most 10% of duration (min 0.5s) to avoid early false positives.
+        const allowedSlack = Math.min(nearEndSlackSeconds, Math.max(0.5, dur * 0.1));
+        return ct >= (dur - allowedSlack);
+    }, [nearEndSlackSeconds]);
 
     useEffect(() => {
         tinCanActivityStatusRef.current = Array.isArray(tinCanActivityStatus) ? tinCanActivityStatus : [];
@@ -963,8 +975,7 @@ export default function LearnPage() {
                 if (
                     Number.isFinite(currentTime)
                     && Number.isFinite(duration)
-                    && duration > 5
-                    && currentTime >= duration - 1.5
+                    && isNearVideoEnd(currentTime, duration)
                 ) {
                     completionVerbSeenForActivityRef.current.add(selectedIdx);
                 }
@@ -972,7 +983,7 @@ export default function LearnPage() {
         };
         window.addEventListener('message', onMessage);
         return () => window.removeEventListener('message', onMessage);
-    }, [selectedActivityIndex]);
+    }, [selectedActivityIndex, isNearVideoEnd]);
 
     // Actively subscribe to nested YouTube iframes so onStateChange events fire.
     // YouTube only emits state-change messages after the parent posts a
@@ -1171,7 +1182,20 @@ export default function LearnPage() {
         // finalize the course.
         const patchedWindows = new WeakSet();
         const trackedIframes = new WeakSet();
+        // Track per-player metadata so we can ignore stale players after an
+        // iframe src swap (same DOM element reused for next chapter).
         const trackedPlayers = [];
+        const pushTrackedPlayer = (entry) => {
+            if (!entry || !entry.player || !entry.frame) return;
+            // Replace duplicate tracker for same frame+src.
+            for (let i = trackedPlayers.length - 1; i >= 0; i--) {
+                const row = trackedPlayers[i];
+                if (row?.frame === entry.frame && row?.trackedSrc === entry.trackedSrc) {
+                    trackedPlayers.splice(i, 1);
+                }
+            }
+            trackedPlayers.push(entry);
+        };
         const markCompletionVerb = () => {
             const selectedIdx = Number.isFinite(Number(selectedActivityIndex))
                 ? Math.floor(Number(selectedActivityIndex))
@@ -1267,7 +1291,7 @@ export default function LearnPage() {
                                 if (e && Number(e.data) === 0) markCompletionVerb();
                             },
                             onReady: () => {
-                                trackedPlayers.push(player);
+                                pushTrackedPlayer({ player, frame, trackedSrc: src });
                                 // Immediately check state — if the learner already
                                 // dragged to the end BEFORE this tracker was ready
                                 // (common when switching chapters), the state/time
@@ -1283,8 +1307,7 @@ export default function LearnPage() {
                                     if (
                                         Number.isFinite(ct)
                                         && Number.isFinite(dur)
-                                        && dur > 3
-                                        && ct >= dur - 1
+                                        && isNearVideoEnd(ct, dur)
                                     ) {
                                         markCompletionVerb();
                                     }
@@ -1381,12 +1404,27 @@ export default function LearnPage() {
         // aren't wrapped in YT.Player yet. YouTube responds with infoDelivery
         // which the main listener translates into "ended" at currentTime >= dur.
         //
-        // Any signal (state==0 OR currentTime within 1s of duration) marks the
+        // Any signal (state==0 OR currentTime within ~2.5s of duration) marks the
         // current activity as completion-verb-seen, which unlocks chapter
         // advance AND triggers course completion consistently — so dragging
         // the seek bar to the end behaves the same every time.
         const pollTimer = setInterval(() => {
-            for (const player of trackedPlayers) {
+            for (let i = trackedPlayers.length - 1; i >= 0; i--) {
+                const tracked = trackedPlayers[i];
+                const player = tracked?.player;
+                const frame = tracked?.frame;
+                const trackedSrc = String(tracked?.trackedSrc || '');
+                if (!player || !frame || frame.isConnected === false) {
+                    trackedPlayers.splice(i, 1);
+                    continue;
+                }
+                // Skip stale player handles if the wrapper reused the same iframe
+                // element but swapped src for the next chapter.
+                const liveSrc = String(frame?.src || '');
+                if (!liveSrc || liveSrc !== trackedSrc) {
+                    trackedPlayers.splice(i, 1);
+                    continue;
+                }
                 try {
                     if (!player || typeof player.getPlayerState !== 'function') continue;
                     const state = player.getPlayerState();
@@ -1399,8 +1437,7 @@ export default function LearnPage() {
                     if (
                         Number.isFinite(currentTime)
                         && Number.isFinite(duration)
-                        && duration > 3
-                        && currentTime >= duration - 1
+                        && isNearVideoEnd(currentTime, duration)
                     ) {
                         markCompletionVerb();
                     }
@@ -1416,10 +1453,11 @@ export default function LearnPage() {
             for (const o of observers) {
                 try { o.disconnect(); } catch { /* ignore */ }
             }
+            trackedPlayers.length = 0;
             // Best-effort cleanup: can't iterate a WeakSet, but listeners on
             // unloaded iframes are garbage-collected with them anyway.
         };
-    }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc, selectedActivityIndex]);
+    }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc, selectedActivityIndex, isNearVideoEnd]);
 
     const computeTinCanProgress = useCallback((position, total, completed = false) => {
         const totalLessons = Math.max(1, Number(total) || 0);
@@ -6443,7 +6481,11 @@ export default function LearnPage() {
                     if (video.ended === true) return true;
                     const ct = Number(video.currentTime);
                     const dur = Number(video.duration);
-                    if (Number.isFinite(ct) && Number.isFinite(dur) && dur > 1 && ct >= dur - 1.5) {
+                    if (
+                        Number.isFinite(ct)
+                        && Number.isFinite(dur)
+                        && isNearVideoEnd(ct, dur)
+                    ) {
                         return true;
                     }
                 }
@@ -6461,7 +6503,7 @@ export default function LearnPage() {
         } catch {
             return false;
         }
-    }, []);
+    }, [isNearVideoEnd]);
 
     const getMaxUnlockedActivityIndex = useCallback(() => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
