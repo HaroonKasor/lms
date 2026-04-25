@@ -807,9 +807,17 @@ export default function CourseManagementPage() {
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
                     <label className="sm:w-[220px] text-right shrink-0">Course Code</label>
                     <div className="flex flex-col gap-1">
-                        <input type="text" value={courseForm.courseCode} onChange={e => setCourseForm({ ...courseForm, courseCode: e.target.value })} className="w-[300px] max-w-full border border-gray-300 rounded px-2 py-[5px] outline-none focus:border-[#687EFF]" />
+                        <input
+                            type="text"
+                            value={courseForm.courseCode}
+                            readOnly
+                            disabled
+                            tabIndex={-1}
+                            aria-readonly="true"
+                            className="w-[300px] max-w-full border border-gray-300 rounded px-2 py-[5px] outline-none bg-[#F1F5F9] text-[#64748B] cursor-not-allowed"
+                        />
                         {!editingCourseId && (
-                            <span className="text-[11px] text-[#94A3B8]">Auto-generated. Leave as-is or edit if you need a custom code.</span>
+                            <span className="text-[11px] text-[#94A3B8]">Auto-generated.</span>
                         )}
                     </div>
                 </div>
