@@ -619,11 +619,11 @@ export default function AdminLmsDashboard({ children }) {
                                                     <div className="flex items-start gap-4 w-full relative">
                                                         {/* Avatar */}
                                                         <div className="w-[56px] h-[56px] rounded-full border border-[#687EFF] p-[3px] shrink-0">
-                                                            <div className="relative w-full h-full overflow-hidden rounded-full bg-white">
+                                                            <div className="relative w-full h-full overflow-hidden rounded-full bg-[#F5F7FF]">
                                                                 <img
                                                                     src={act.img}
                                                                     alt={act.name}
-                                                                    className="absolute inset-0 w-full h-full object-cover"
+                                                                    className="absolute inset-0 w-full h-full object-contain object-center"
                                                                     referrerPolicy="no-referrer"
                                                                     onError={(event) => {
                                                                         event.currentTarget.onerror = null;
