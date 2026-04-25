@@ -406,6 +406,9 @@ export default function LearnPage() {
     // Near-end tolerance for "video finished" evidence. Keep a small buffer for
     // fractional durations / late metadata so 4:59/5:00 still counts as ended.
     const nearEndSlackSeconds = 2.5;
+    // Grace window used to attribute late YouTube completion signals to the
+    // previous chapter right after chapter switch / auto-advance.
+    const completionSignalTransitionGraceMs = 3000;
     // Keep manual chapter jump intent alive long enough for slow networks /
     // heavy TinCan runtime initialization to settle.
     const manualSelectionHoldMs = 25000;
@@ -936,6 +939,12 @@ export default function LearnPage() {
         const currentIdx = Number.isFinite(Number(selectedActivityIndex))
             ? Math.floor(Number(selectedActivityIndex))
             : -1;
+        if (currentIdx >= 0) {
+            const knownChangedAt = Number(selectedActivityChangedAtRef.current || 0);
+            if (!Number.isFinite(knownChangedAt) || knownChangedAt <= 0) {
+                selectedActivityChangedAtRef.current = Date.now();
+            }
+        }
         return () => {
             // When selectedActivityIndex changes (or component unmounts), save the value
             // that was "current" during this render as the new "previous".
@@ -945,6 +954,115 @@ export default function LearnPage() {
             }
         };
     }, [selectedActivityIndex]);
+
+    const resolveCompletionSignalActivityIndex = useCallback((options = {}) => {
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return -1;
+
+        const explicitIndex = Number(options?.activityIndex);
+        if (Number.isFinite(explicitIndex)) {
+            return Math.max(0, Math.min(activities.length - 1, Math.floor(explicitIndex)));
+        }
+
+        const sourceHint = String(options?.sourceHint || '').trim();
+        if (sourceHint) {
+            const sourceKey = normalizeActivityPathKey(sourceHint);
+            if (sourceKey) {
+                for (let i = 0; i < activities.length; i++) {
+                    const activity = activities[i];
+                    const rawCandidates = [
+                        activity?.configNodeUrl,
+                        activity?.configNormalizedUrl,
+                        activity?.launch,
+                        activity?.activityId,
+                        activity?.id,
+                    ];
+                    const candidateKeys = rawCandidates
+                        .map((value) => normalizeActivityPathKey(value))
+                        .filter((value) => Boolean(value));
+                    if (candidateKeys.some((value) => value === sourceKey)) {
+                        return i;
+                    }
+                    if (candidateKeys.some((value) => (
+                        sourceKey.endsWith(value)
+                        || value.endsWith(sourceKey)
+                    ))) {
+                        return i;
+                    }
+                }
+            }
+        }
+
+        const selectedIdx = Number.isFinite(Number(selectedActivityIndexRef.current))
+            ? Math.max(0, Math.min(activities.length - 1, Math.floor(Number(selectedActivityIndexRef.current))))
+            : -1;
+        const previousIdx = Number.isFinite(Number(previousSelectedActivityIndexRef.current))
+            ? Math.max(0, Math.min(activities.length - 1, Math.floor(Number(previousSelectedActivityIndexRef.current))))
+            : -1;
+        const changedAt = Number(selectedActivityChangedAtRef.current || 0);
+        const ageSinceChange = Number.isFinite(changedAt) && changedAt > 0
+            ? Math.max(0, Date.now() - changedAt)
+            : Number.POSITIVE_INFINITY;
+
+        if (previousIdx >= 0 && ageSinceChange < completionSignalTransitionGraceMs) {
+            return previousIdx;
+        }
+        if (selectedIdx >= 0) return selectedIdx;
+        if (previousIdx >= 0) return previousIdx;
+        return 0;
+    }, [content?.activities, normalizeActivityPathKey, completionSignalTransitionGraceMs]);
+
+    const markTinCanCompletionSignal = useCallback((options = {}) => {
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return -1;
+
+        const activityIndex = resolveCompletionSignalActivityIndex(options);
+        if (activityIndex < 0 || activityIndex >= activities.length) return -1;
+        completionVerbSeenForActivityRef.current.add(activityIndex);
+
+        const activity = activities[activityIndex];
+        const isAssessmentLike = Boolean(
+            activity?.assessment === true
+            || activity?.config?.isAssessment === true
+            || /quiz|test|exam|assessment|post[\s-_]?test|pre[\s-_]?test|แบบทดสอบ|ทดสอบ/i.test(
+                String(activity?.name || activity?.title || activity?.launch || activity?.activityId || activity?.id || '')
+            )
+        );
+        if (isAssessmentLike) return activityIndex;
+
+        const current = Array.isArray(tinCanActivityStatusRef.current)
+            ? tinCanActivityStatusRef.current
+            : [];
+        const targetLength = Math.max(current.length, activityIndex + 1);
+        const next = current.slice(0, targetLength);
+        while (next.length < targetLength) next.push(null);
+        const existing = (next[activityIndex] && typeof next[activityIndex] === 'object')
+            ? next[activityIndex]
+            : {};
+        const alreadyCleared = Boolean(
+            existing?.passed
+            || existing?.completed
+            || existing?.completion === true
+            || existing?.success === true
+            || String(existing?.status || '').toLowerCase() === 'passed'
+            || String(existing?.status || '').toLowerCase() === 'completed'
+        );
+        if (alreadyCleared) return activityIndex;
+
+        next[activityIndex] = {
+            ...existing,
+            attempted: true,
+            quizzed: Boolean(existing?.quizzed),
+            completed: true,
+            completion: true,
+            passed: true,
+            success: true,
+            status: 'passed',
+        };
+        tinCanActivityStatusRef.current = next;
+        try { setTinCanActivityStatus(next); } catch { /* ignore */ }
+        return activityIndex;
+    }, [content?.activities, resolveCompletionSignalActivityIndex]);
 
     // Listen for YouTube player messages. YouTube's IFrame API posts two kinds of
     // messages we care about:
@@ -966,14 +1084,10 @@ export default function LearnPage() {
                 payload = raw;
             }
             if (!payload || typeof payload !== 'object') return;
-            const selectedIdx = Number.isFinite(Number(selectedActivityIndexRef.current))
-                ? Math.floor(Number(selectedActivityIndexRef.current))
-                : -1;
-            if (selectedIdx < 0) return;
 
             // Explicit end-of-video signal.
             if (payload.event === 'onStateChange' && Number(payload.info) === 0) {
-                completionVerbSeenForActivityRef.current.add(selectedIdx);
+                markTinCanCompletionSignal();
                 return;
             }
             // Playback heartbeat — treat near-end as ended.
@@ -981,7 +1095,7 @@ export default function LearnPage() {
                 const info = payload.info;
                 // Some infoDelivery payloads carry an explicit playerState field.
                 if (Number(info.playerState) === 0) {
-                    completionVerbSeenForActivityRef.current.add(selectedIdx);
+                    markTinCanCompletionSignal();
                     return;
                 }
                 const currentTime = Number(info.currentTime);
@@ -991,13 +1105,13 @@ export default function LearnPage() {
                     && Number.isFinite(duration)
                     && isNearVideoEnd(currentTime, duration)
                 ) {
-                    completionVerbSeenForActivityRef.current.add(selectedIdx);
+                    markTinCanCompletionSignal();
                 }
             }
         };
         window.addEventListener('message', onMessage);
         return () => window.removeEventListener('message', onMessage);
-    }, [isNearVideoEnd]);
+    }, [isNearVideoEnd, markTinCanCompletionSignal]);
 
     // Actively subscribe to nested YouTube iframes so onStateChange events fire.
     // YouTube only emits state-change messages after the parent posts a
@@ -1210,59 +1324,8 @@ export default function LearnPage() {
             }
             trackedPlayers.push(entry);
         };
-        // Read the currently-selected activity from a ref instead of the closure
-        // over selectedActivityIndex. The prototype-level YT.Player patch below
-        // is guarded by __lmsProtoPatched so it only wraps addEventListener ONCE
-        // per YT window — which means the closure captured during the FIRST
-        // effect run is what stays wired up even after the learner advances to
-        // a new chapter. Before this ref indirection, the wrapper kept marking
-        // the OLD activity index after chapter change, leaving subsequent
-        // chapters unable to unlock because the unlock signal landed on an
-        // already-unlocked index.
-        const markCompletionVerb = () => {
-            const refVal = Number(selectedActivityIndexRef.current);
-            if (!Number.isFinite(refVal)) return;
-            const idx = Math.max(0, Math.floor(refVal));
-            completionVerbSeenForActivityRef.current.add(idx);
-
-            // ALSO promote the verb into the per-activity status so the MAIN
-            // unlock loop in getMaxUnlockedActivityIndex (which reads
-            // tinCanActivityStatusRef, not completionVerbSeenForActivityRef)
-            // treats this chapter as cleared — without this, the fallback path
-            // unlocks only the NEXT chapter, and on chapter navigation / effect
-            // re-runs later chapters stop unlocking once the main loop hits an
-            // already-watched activity that never got an explicit package status.
-            const current = Array.isArray(tinCanActivityStatusRef.current)
-                ? tinCanActivityStatusRef.current
-                : [];
-            const totalActivities = Array.isArray(content?.activities)
-                ? content.activities.length
-                : current.length;
-            const target = Math.max(totalActivities, idx + 1);
-            const next = current.slice(0, target);
-            while (next.length < target) next.push(null);
-            const existing = (next[idx] && typeof next[idx] === 'object') ? next[idx] : {};
-            const alreadyCleared = Boolean(
-                existing?.passed
-                || existing?.completed
-                || existing?.completion === true
-                || existing?.success === true
-                || String(existing?.status || '').toLowerCase() === 'passed'
-                || String(existing?.status || '').toLowerCase() === 'completed'
-            );
-            if (alreadyCleared) return;
-            next[idx] = {
-                ...existing,
-                attempted: true,
-                quizzed: Boolean(existing?.quizzed),
-                completed: true,
-                completion: true,
-                passed: true,
-                success: true,
-                status: 'passed',
-            };
-            tinCanActivityStatusRef.current = next;
-            try { setTinCanActivityStatus(next); } catch { /* ignore */ }
+        const markCompletionVerb = (options = {}) => {
+            markTinCanCompletionSignal(options);
         };
         const patchYT = (win) => {
             if (!win) return false;
@@ -1272,7 +1335,11 @@ export default function LearnPage() {
             const origPlayer = YT.__lmsOrigPlayer || YT.Player;
             const wrapOnStateChange = (orig) => function lmsOnStateChange(e) {
                 try {
-                    if (e && Number(e.data) === 0) markCompletionVerb();
+                    if (e && Number(e.data) === 0) {
+                        let sourceHint = '';
+                        try { sourceHint = String(this?.getIframe?.()?.src || ''); } catch { sourceHint = ''; }
+                        markCompletionVerb({ sourceHint });
+                    }
                 } catch { /* ignore */ }
                 if (typeof orig === 'function') {
                     try { return orig.apply(this, arguments); } catch { /* ignore */ }
@@ -1350,7 +1417,9 @@ export default function LearnPage() {
                     const player = new win.YT.Player(frame.id, {
                         events: {
                             onStateChange: (e) => {
-                                if (e && Number(e.data) === 0) markCompletionVerb();
+                                if (e && Number(e.data) === 0) {
+                                    markCompletionVerb({ sourceHint: src });
+                                }
                             },
                             onReady: () => {
                                 pushTrackedPlayer({ player, frame, trackedSrc: src });
@@ -1361,7 +1430,7 @@ export default function LearnPage() {
                                 // 1-second poll interval.
                                 try {
                                     if (Number(player.getPlayerState?.()) === 0) {
-                                        markCompletionVerb();
+                                        markCompletionVerb({ sourceHint: src });
                                         return;
                                     }
                                     const ct = Number(player.getCurrentTime?.());
@@ -1371,7 +1440,7 @@ export default function LearnPage() {
                                         && Number.isFinite(dur)
                                         && isNearVideoEnd(ct, dur)
                                     ) {
-                                        markCompletionVerb();
+                                        markCompletionVerb({ sourceHint: src });
                                     }
                                 } catch { /* ignore */ }
                             },
@@ -1491,7 +1560,7 @@ export default function LearnPage() {
                     if (!player || typeof player.getPlayerState !== 'function') continue;
                     const state = player.getPlayerState();
                     if (Number(state) === 0) {
-                        markCompletionVerb();
+                        markCompletionVerb({ sourceHint: liveSrc });
                         continue;
                     }
                     const currentTime = Number(player.getCurrentTime?.());
@@ -1501,7 +1570,7 @@ export default function LearnPage() {
                         && Number.isFinite(duration)
                         && isNearVideoEnd(currentTime, duration)
                     ) {
-                        markCompletionVerb();
+                        markCompletionVerb({ sourceHint: liveSrc });
                     }
                 } catch { /* ignore — player might be destroyed or not ready */ }
             }
@@ -1519,7 +1588,7 @@ export default function LearnPage() {
             // Best-effort cleanup: can't iterate a WeakSet, but listeners on
             // unloaded iframes are garbage-collected with them anyway.
         };
-    }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc, isNearVideoEnd]);
+    }, [isLaunchMode, content?.type, resumeLoaded, iframeSrc, isNearVideoEnd, markTinCanCompletionSignal]);
 
     const computeTinCanProgress = useCallback((position, total, completed = false) => {
         const totalLessons = Math.max(1, Number(total) || 0);
@@ -6701,6 +6770,75 @@ export default function LearnPage() {
         return completionVerbSeenForActivityRef.current.has(safeIndex);
     }, [content?.activities, hasIframeVideoReachedEnd, probeYoutubePlayersForCompletion]);
 
+    const markTinCanActivityClearedFromHost = useCallback((activityIndex) => {
+        const activities = Array.isArray(content?.activities) ? content.activities : [];
+        if (activities.length === 0) return;
+        const safeIndex = Math.max(0, Math.min(activities.length - 1, Math.floor(Number(activityIndex) || 0)));
+
+        completionVerbSeenForActivityRef.current.add(safeIndex);
+
+        const previous = Array.isArray(tinCanActivityStatusRef.current) ? tinCanActivityStatusRef.current : [];
+        const targetLength = Math.max(previous.length, safeIndex + 1);
+        const nextStatuses = previous.slice(0, targetLength);
+        while (nextStatuses.length < targetLength) nextStatuses.push(null);
+        const existing = (nextStatuses[safeIndex] && typeof nextStatuses[safeIndex] === 'object') ? nextStatuses[safeIndex] : {};
+        nextStatuses[safeIndex] = {
+            ...existing,
+            attempted: true,
+            completed: true,
+            passed: true,
+            quizzed: Boolean(existing?.quizzed),
+            success: true,
+            completion: true,
+            status: 'passed',
+        };
+        tinCanActivityStatusRef.current = nextStatuses;
+        setTinCanActivityStatus(nextStatuses);
+
+        // Sync back into package runtime state so package lock and LMS lock stay aligned.
+        try {
+            const frameWindow = iframeRef.current?.contentWindow;
+            if (!frameWindow) return;
+            const dataIndex = Array.isArray(frameWindow?.currentState?.dataIndex) ? frameWindow.currentState.dataIndex : null;
+            const runtimePage = mapActivityIndexToRuntimePage(safeIndex);
+            const fallbackCurrentPage = Number(frameWindow?.currentPage);
+            const writeIndex = Number.isFinite(Number(runtimePage)) && Number(runtimePage) >= 0
+                ? Math.floor(Number(runtimePage))
+                : (Number.isFinite(fallbackCurrentPage) && fallbackCurrentPage >= 0 ? Math.floor(fallbackCurrentPage) : -1);
+
+            if (Array.isArray(dataIndex) && writeIndex >= 0 && writeIndex < dataIndex.length) {
+                const current = dataIndex[writeIndex] && typeof dataIndex[writeIndex] === 'object'
+                    ? dataIndex[writeIndex]
+                    : { pageIndex: writeIndex };
+                dataIndex[writeIndex] = {
+                    ...current,
+                    attempted: true,
+                    passed: true,
+                    completed: true,
+                    quizzed: Boolean(current?.quizzed),
+                };
+            }
+
+            if (typeof frameWindow.setContentStatusPassed === 'function') {
+                try { frameWindow.setContentStatusPassed(); } catch { /* ignore */ }
+            }
+            if (typeof frameWindow.setCurrentState === 'function') {
+                try { frameWindow.setCurrentState(); } catch { /* ignore */ }
+            }
+            if (typeof frameWindow.sendCurrentState === 'function') {
+                try { frameWindow.sendCurrentState(); } catch { /* ignore */ }
+            }
+            if (typeof frameWindow.updateStatus === 'function') {
+                try { frameWindow.updateStatus(); } catch { /* ignore */ }
+            }
+            if (typeof frameWindow.drawTOC === 'function') {
+                try { frameWindow.drawTOC(); } catch { /* ignore */ }
+            }
+        } catch {
+            // Ignore iframe sync failures; local LMS state already promoted.
+        }
+    }, [content?.activities, mapActivityIndexToRuntimePage]);
+
     const getMaxUnlockedActivityIndex = useCallback(() => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         if (activities.length === 0) return 0;
@@ -6804,9 +6942,9 @@ export default function LearnPage() {
             if (immediateNext && selectedActivity && !isAssessmentActivity(selectedActivity)) {
                 const gotCompletionEvidence = await waitForLessonCompletionEvidence(selectedSnapshot, { maxWaitMs: 1800 });
                 if (gotCompletionEvidence) {
-                    completionVerbSeenForActivityRef.current.add(selectedSnapshot);
-                    maxUnlocked = getMaxUnlockedActivityIndex();
+                    markTinCanActivityClearedFromHost(selectedSnapshot);
                 }
+                maxUnlocked = getMaxUnlockedActivityIndex();
             }
         }
         if (chapterLockEnabled && safeIndex > maxUnlocked) {
@@ -6826,7 +6964,7 @@ export default function LearnPage() {
         );
         resumeGuardUntilRef.current = 0;
         applyTincanResumeToIframe();
-    }, [content, chapterLockEnabled, getMaxUnlockedActivityIndex, applyTincanResumeToIframe, logLessonMapDebug, mapActivityIndexToRuntimePage, detectActivityIndexFromIframe, manualSelectionHoldMs, isAssessmentActivity, waitForLessonCompletionEvidence]);
+    }, [content, chapterLockEnabled, getMaxUnlockedActivityIndex, applyTincanResumeToIframe, logLessonMapDebug, mapActivityIndexToRuntimePage, detectActivityIndexFromIframe, manualSelectionHoldMs, isAssessmentActivity, waitForLessonCompletionEvidence, markTinCanActivityClearedFromHost]);
 
     const getMaxUnlockedWebPageIndex = useCallback(() => {
         const knownTotal = Math.max(
