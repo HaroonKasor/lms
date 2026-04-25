@@ -470,9 +470,21 @@ export default function CourseManagementPage() {
         if (learnerPage > totalLearnerPages) setLearnerPage(totalLearnerPages);
     }, [learnerPage, totalLearnerPages]);
 
+    const generateNextCourseCode = useCallback(() => {
+        const numericCodes = (courses || [])
+            .map((c) => String(c?.courseCode || '').trim())
+            .filter((code) => /^\d+$/.test(code))
+            .map(Number);
+        const next = numericCodes.length > 0 ? Math.max(...numericCodes) + 1 : 1;
+        const padWidth = numericCodes.length > 0
+            ? Math.max(2, String(Math.max(...numericCodes)).length)
+            : 2;
+        return String(next).padStart(padWidth, '0');
+    }, [courses]);
+
     const openCourseCreate = () => {
         setEditingCourseId(null);
-        setCourseForm(getDefaultCourseForm());
+        setCourseForm({ ...getDefaultCourseForm(), courseCode: generateNextCourseCode() });
         setView('COURSE_CREATE');
     };
 
@@ -528,15 +540,23 @@ export default function CourseManagementPage() {
             pushToast('error', 'Please select a category before creating the course.', 'Missing field');
             return;
         }
-        const normalizedCourseCode = String(courseForm.courseCode || '').trim();
+        const isCreateMode = !editingCourseId;
+        let normalizedCourseCode = String(courseForm.courseCode || '').trim();
+        if (isCreateMode && !normalizedCourseCode) {
+            normalizedCourseCode = generateNextCourseCode();
+        }
         if (normalizedCourseCode) {
             const duplicateExists = courses.some((course) => {
                 if (editingCourseId && course.id === editingCourseId) return false;
                 return String(course.courseCode || '').trim().toLowerCase() === normalizedCourseCode.toLowerCase();
             });
             if (duplicateExists) {
-                pushToast('error', 'This course code is already in use. Please choose another one.', 'Duplicate course code');
-                return;
+                if (isCreateMode) {
+                    normalizedCourseCode = generateNextCourseCode();
+                } else {
+                    pushToast('error', 'This course code is already in use. Please choose another one.', 'Duplicate course code');
+                    return;
+                }
             }
         }
 
@@ -786,7 +806,12 @@ export default function CourseManagementPage() {
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
                     <label className="sm:w-[220px] text-right shrink-0">Course Code</label>
-                    <input type="text" value={courseForm.courseCode} onChange={e => setCourseForm({ ...courseForm, courseCode: e.target.value })} className="w-[300px] max-w-full border border-gray-300 rounded px-2 py-[5px] outline-none focus:border-[#687EFF]" />
+                    <div className="flex flex-col gap-1">
+                        <input type="text" value={courseForm.courseCode} onChange={e => setCourseForm({ ...courseForm, courseCode: e.target.value })} className="w-[300px] max-w-full border border-gray-300 rounded px-2 py-[5px] outline-none focus:border-[#687EFF]" />
+                        {!editingCourseId && (
+                            <span className="text-[11px] text-[#94A3B8]">Auto-generated. Leave as-is or edit if you need a custom code.</span>
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex flex-col sm:flex-row gap-4 sm:items-center">
