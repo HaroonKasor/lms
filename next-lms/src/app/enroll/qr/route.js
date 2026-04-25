@@ -15,14 +15,67 @@ import {
     resolvePrerequisiteCourses,
 } from '@/lib/server/enrollment-rules';
 
-function buildLoginRedirectUrl(requestUrl) {
-    const loginUrl = new URL('/login', requestUrl.origin);
+function normalizeBaseUrl(value = '') {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+        const url = new URL(withProtocol);
+        url.pathname = '';
+        url.search = '';
+        url.hash = '';
+        return url.toString().replace(/\/+$/, '');
+    } catch {
+        return '';
+    }
+}
+
+function isLocalOrPrivateHost(hostname = '') {
+    const host = String(hostname || '').trim().toLowerCase();
+    if (!host) return true;
+    if (host === 'localhost' || host === '0.0.0.0' || host === '::1') return true;
+    if (host.startsWith('127.')) return true;
+    if (host.startsWith('10.')) return true;
+    if (host.startsWith('192.168.')) return true;
+    if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return true;
+    return false;
+}
+
+function resolveAppBaseUrl(request) {
+    const candidates = [
+        process.env.NEXT_PUBLIC_APP_URL,
+        process.env.APP_URL,
+    ]
+        .map((x) => normalizeBaseUrl(x))
+        .filter(Boolean);
+
+    const forwardedProto = String(request?.headers?.get('x-forwarded-proto') || '').split(',')[0].trim();
+    const forwardedHost = String(request?.headers?.get('x-forwarded-host') || '').split(',')[0].trim();
+    const host = forwardedHost || String(request?.headers?.get('host') || '').trim();
+    const proto = forwardedProto || 'https';
+    const requestCandidate = normalizeBaseUrl(`${proto}://${host}`);
+    if (requestCandidate) candidates.push(requestCandidate);
+
+    const publicCandidate = candidates.find((candidate) => {
+        try {
+            return !isLocalOrPrivateHost(new URL(candidate).hostname);
+        } catch {
+            return false;
+        }
+    });
+    if (publicCandidate) return publicCandidate;
+
+    return candidates[0] || '';
+}
+
+function buildLoginRedirectUrl(requestUrl, origin) {
+    const loginUrl = new URL('/login', origin || requestUrl.origin);
     loginUrl.searchParams.set('next', `${requestUrl.pathname}${requestUrl.search}`);
     return loginUrl;
 }
 
-function buildFallbackRedirect(requestUrl, code = 'invalid_qr') {
-    const fallback = new URL('/dashboard', requestUrl.origin);
+function buildFallbackRedirect(requestUrl, code = 'invalid_qr', origin) {
+    const fallback = new URL('/dashboard', origin || requestUrl.origin);
     fallback.searchParams.set('qr', code);
     return fallback;
 }
@@ -77,26 +130,28 @@ function canRoleEnroll(roleCodes = [], allowedRoleCodes = []) {
 export async function GET(request) {
     try {
         const requestUrl = new URL(request.url);
+        const appBaseUrl = resolveAppBaseUrl(request);
+        const appOrigin = appBaseUrl || requestUrl.origin;
         const session = await getRequestSession(request);
         if (!session?.uid) {
-            return NextResponse.redirect(buildLoginRedirectUrl(requestUrl), 307);
+            return NextResponse.redirect(buildLoginRedirectUrl(requestUrl, appOrigin), 307);
         }
 
         const token = String(requestUrl.searchParams.get('t') || '').trim();
         if (!token) {
-            return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'missing_token'), 307);
+            return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'missing_token', appOrigin), 307);
         }
 
         const payload = await verifySessionToken(token);
         if (!payload || payload.kind !== 'qr-enroll') {
-            return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'invalid_token'), 307);
+            return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'invalid_token', appOrigin), 307);
         }
 
         const courseId = Number(payload.courseId || 0);
         const sectionIdRaw = Number(payload.sectionId || 0);
         const sectionId = Number.isInteger(sectionIdRaw) && sectionIdRaw > 0 ? sectionIdRaw : null;
         if (!Number.isInteger(courseId) || courseId <= 0) {
-            return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'invalid_course'), 307);
+            return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'invalid_course', appOrigin), 307);
         }
 
         const organizationId = await ensureDefaultOrganization();
@@ -105,7 +160,7 @@ export async function GET(request) {
             select: { id: true, title: true, maxEnrollment: true },
         });
         if (!course) {
-            return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'course_not_found'), 307);
+            return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'course_not_found', appOrigin), 307);
         }
 
         const courseCompatMaps = await getCourseCompatMaps([course.id]);
@@ -143,7 +198,7 @@ export async function GET(request) {
                 prerequisiteCourses,
             });
             if (missingPrerequisites.length > 0) {
-                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'missing_prerequisites'), 307);
+                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'missing_prerequisites', appOrigin), 307);
             }
         }
 
@@ -151,12 +206,13 @@ export async function GET(request) {
             const courseWindow = evaluateRegisterWindow(courseSettings);
             if (!courseWindow.allowed) {
                 return NextResponse.redirect(
-                    buildFallbackRedirect(
-                        requestUrl,
-                        courseWindow.reason === 'not_open_yet' ? 'course_register_not_open' : 'course_register_closed'
-                    ),
-                    307
-                );
+                        buildFallbackRedirect(
+                            requestUrl,
+                            courseWindow.reason === 'not_open_yet' ? 'course_register_not_open' : 'course_register_closed',
+                            appOrigin
+                        ),
+                        307
+                    );
             }
         }
 
@@ -172,7 +228,7 @@ export async function GET(request) {
                 select: { id: true, isActive: true, maxLearner: true },
             });
             if (!selectedSection?.id || selectedSection.isActive === false) {
-                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'invalid_section'), 307);
+                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'invalid_section', appOrigin), 307);
             }
         } else {
             selectedSection = await prisma.section.findFirst({
@@ -198,7 +254,7 @@ export async function GET(request) {
                 sectionSettingsBySectionId
             );
             if (!canRoleEnroll(targetRoleCodes, allowedRoleCodes)) {
-                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'forbidden_by_role'), 307);
+                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'forbidden_by_role', appOrigin), 307);
             }
 
             if (typeof sectionSettings?.autoApprove === 'boolean') {
@@ -211,7 +267,8 @@ export async function GET(request) {
                     return NextResponse.redirect(
                         buildFallbackRedirect(
                             requestUrl,
-                            sectionRegisterWindow.reason === 'not_open_yet' ? 'section_register_not_open' : 'section_register_closed'
+                            sectionRegisterWindow.reason === 'not_open_yet' ? 'section_register_not_open' : 'section_register_closed',
+                            appOrigin
                         ),
                         307
                     );
@@ -219,7 +276,7 @@ export async function GET(request) {
 
                 const sectionLearnWindow = evaluateLearnWindow(sectionSettings);
                 if (!sectionLearnWindow.allowed) {
-                    return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'section_expired'), 307);
+                    return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'section_expired', appOrigin), 307);
                 }
             }
 
@@ -239,7 +296,7 @@ export async function GET(request) {
                     select: { enrollmentId: true },
                 });
                 if (reservedSeats.length >= sectionMaxLearner) {
-                    return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'section_full'), 307);
+                    return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'section_full', appOrigin), 307);
                 }
             }
 
@@ -264,7 +321,7 @@ export async function GET(request) {
                 },
             });
             if (currentCount >= courseMaxEnrollment) {
-                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'course_full'), 307);
+                return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'course_full', appOrigin), 307);
             }
         }
 
@@ -347,8 +404,8 @@ export async function GET(request) {
         }
 
         const destination = enrollmentStatus === 'enrolled' && !session.isAdmin
-            ? new URL(`/courses/${course.id}`, requestUrl.origin)
-            : new URL(`/courses/${course.id}/learn`, requestUrl.origin);
+            ? new URL(`/courses/${course.id}`, appOrigin)
+            : new URL(`/courses/${course.id}/learn`, appOrigin);
 
         if (enrollmentStatus === 'enrolled' && !session.isAdmin) {
             destination.searchParams.set('pendingApproval', '1');
@@ -364,6 +421,8 @@ export async function GET(request) {
     } catch (err) {
         console.error('[enroll/qr][GET] failed', err);
         const requestUrl = new URL(request.url);
-        return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'internal_error'), 307);
+        const appBaseUrl = resolveAppBaseUrl(request);
+        const appOrigin = appBaseUrl || requestUrl.origin;
+        return NextResponse.redirect(buildFallbackRedirect(requestUrl, 'internal_error', appOrigin), 307);
     }
 }
