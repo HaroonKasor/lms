@@ -22,12 +22,15 @@ import {
 } from '@/components/admin/ui/AdminPrimitives';
 
 function toCsv(rows = []) {
-    const header = ['No', 'Username', 'First Name', 'Last Name', 'Full score / Total', 'Score %', 'Result', 'Attempt', 'Time spent(mins)'];
+    const header = ['No', 'Username', 'First Name', 'Last Name', 'Course Category', 'Course', 'Exam', 'Full score / Total', 'Score %', 'Result', 'Attempt', 'Time spent(mins)'];
     const body = rows.map((row) => [
         row.no,
         row.username,
         row.firstName,
         row.lastName,
+        row.categoryName,
+        row.courseName,
+        row.quizName,
         row.score,
         row.percent,
         row.result,
@@ -61,9 +64,9 @@ export default function ExaminationScorePage() {
     const [entries, setEntries] = useState(10);
     const [page, setPage] = useState(1);
     const [meta, setMeta] = useState({
-        categoryName: '-',
-        courseName: '-',
-        quizName: '-',
+        categoryName: 'All',
+        courseName: 'All',
+        quizName: 'All',
     });
 
     const fetchReport = async (nextSelected = selected) => {
@@ -93,17 +96,9 @@ export default function ExaminationScorePage() {
                 scoreRanges: Array.isArray(data?.filters?.scoreRanges) ? data.filters.scoreRanges : [],
             });
             setMeta({
-                categoryName: data?.selected?.categoryName || '-',
-                courseName: data?.selected?.courseName || '-',
-                quizName: data?.selected?.quizName || '-',
-            });
-            setSelected({
-                categoryId: data?.selected?.categoryId ? String(data.selected.categoryId) : '',
-                courseId: data?.selected?.courseId ? String(data.selected.courseId) : '',
-                quizId: data?.selected?.quizId ? String(data.selected.quizId) : '',
-                userId: data?.selected?.userId ? String(data.selected.userId) : '',
-                scoreRange: String(data?.selected?.scoreRange || 'ALL'),
-                q: String(data?.selected?.q || ''),
+                categoryName: data?.selected?.categoryName || 'All',
+                courseName: data?.selected?.courseName || 'All',
+                quizName: data?.selected?.quizName || 'All',
             });
         } catch (error) {
             console.error(error);
@@ -220,6 +215,16 @@ export default function ExaminationScorePage() {
                         <button onClick={() => fetchReport(selected)} className={adminPrimaryButtonClass}>
                             {loading ? 'Loading...' : 'View'}
                         </button>
+                        <button
+                            onClick={() => {
+                                const cleared = { categoryId: '', courseId: '', quizId: '', userId: '', scoreRange: 'ALL', q: '' };
+                                setSelected(cleared);
+                                fetchReport(cleared);
+                            }}
+                            className={adminSecondaryButtonClass}
+                        >
+                            Clear
+                        </button>
                         <button onClick={handleExport} className={adminSecondaryButtonClass}>Export</button>
                     </div>
 
@@ -295,13 +300,14 @@ export default function ExaminationScorePage() {
                     />
 
                     <AdminTableWrap>
-                        <AdminTable className="min-w-[980px]">
+                        <AdminTable className="min-w-[1180px]">
                             <AdminTableHead>
                                 <tr>
                                     <AdminTh className="w-[64px]">No.</AdminTh>
                                     <AdminTh>Username</AdminTh>
-                                    <AdminTh>First Name</AdminTh>
-                                    <AdminTh>Last Name</AdminTh>
+                                    <AdminTh>Name</AdminTh>
+                                    <AdminTh>Course</AdminTh>
+                                    <AdminTh>Exam</AdminTh>
                                     <AdminTh className="text-center">Score</AdminTh>
                                     <AdminTh className="text-center">%</AdminTh>
                                     <AdminTh className="text-center">Result</AdminTh>
@@ -311,11 +317,17 @@ export default function ExaminationScorePage() {
                             </AdminTableHead>
                             <tbody>
                                 {pagedRows.map((row, index) => (
-                                    <tr key={`${row.username}-${row.no}-${index}`} className="border-b border-[#EEF2FF] last:border-b-0 hover:bg-[#F8FAFF]">
+                                    <tr key={`${row.username}-${row.courseName}-${row.quizName}-${row.no}-${index}`} className="border-b border-[#EEF2FF] last:border-b-0 hover:bg-[#F8FAFF]">
                                         <AdminTd className="font-medium text-[#0F2243]">{row.no}.</AdminTd>
                                         <AdminTd className="break-all">{row.username}</AdminTd>
-                                        <AdminTd>{row.firstName}</AdminTd>
-                                        <AdminTd>{row.lastName}</AdminTd>
+                                        <AdminTd>
+                                            <div>{`${row.firstName !== '-' ? row.firstName : ''} ${row.lastName !== '-' ? row.lastName : ''}`.trim() || '-'}</div>
+                                        </AdminTd>
+                                        <AdminTd>
+                                            <div>{row.courseName}</div>
+                                            <div className="text-[11px] text-[#94A3B8]">{row.categoryName}</div>
+                                        </AdminTd>
+                                        <AdminTd>{row.quizName}</AdminTd>
                                         <AdminTd className="text-center">{row.score}</AdminTd>
                                         <AdminTd className="text-center">{row.percent}</AdminTd>
                                         <AdminTd className="text-center">
@@ -328,7 +340,7 @@ export default function ExaminationScorePage() {
                                     </tr>
                                 ))}
                                 {rows.length === 0 && (
-                                    <AdminBodyStateRow colSpan={9}>
+                                    <AdminBodyStateRow colSpan={10}>
                                         {loading ? 'Loading examination results...' : 'No examination result found'}
                                     </AdminBodyStateRow>
                                 )}

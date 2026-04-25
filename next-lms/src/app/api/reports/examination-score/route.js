@@ -44,11 +44,6 @@ function toRangeLabel(score) {
 
 function toOptionalNumber(value) {
     if (value == null || value === '') return null;
-    // Prisma Decimal columns (quizAttempt.score, scoreRaw, scoreScaled) come
-    // back as Decimal.js instances — Number(decimal) returns NaN because
-    // decimal.js lacks [Symbol.toPrimitive]. Same coercion used in
-    // my-course/route.js; without it the admin examination-score report
-    // silently rendered every score as null.
     let raw = value;
     if (raw && typeof raw === 'object') {
         if (typeof raw.toNumber === 'function') {
@@ -68,7 +63,6 @@ function scorePercentFromLearningProgress(row = null) {
     if (scaled !== null && (raw === null || raw > 100)) return clampPercent(scaled <= 1 ? scaled * 100 : scaled);
 
     if (raw !== null) {
-        // Some legacy progress rows stored tracked seconds in scoreRaw before scoreScaled existed.
         if (raw > 100 && scaled === null) return null;
         return clampPercent(raw <= 1 ? raw * 100 : raw);
     }
@@ -115,6 +109,16 @@ function resolveTimeSpentMinutes(progressRows = []) {
     return Number((seconds / 60).toFixed(2));
 }
 
+function buildPersonInfo(enrollment) {
+    const user = enrollment?.organization_users?.users;
+    const profile = user?.profile;
+    const username = String(user?.username || user?.email || '-');
+    const firstName = String(profile?.firstName || '');
+    const lastName = String(profile?.lastName || '');
+    const fullName = `${firstName} ${lastName}`.trim() || username;
+    return { username, firstName, lastName, fullName };
+}
+
 export async function GET(request) {
     try {
         const { response } = await requireSession(request, { requireAdmin: true, allowInstructor: true });
@@ -137,10 +141,7 @@ export async function GET(request) {
                 select: { id: true, name: true },
             }),
             prisma.course.findMany({
-                where: {
-                    organization_id: organizationId,
-                    ...(categoryId > 0 ? { categoryId } : {}),
-                },
+                where: { organization_id: organizationId },
                 orderBy: { title: 'asc' },
                 include: {
                     categories: { select: { name: true } },
@@ -167,179 +168,172 @@ export async function GET(request) {
             quizzes: (course.quizzes || []).map((quiz) => ({
                 id: Number(quiz.id),
                 name: String(quiz.title || '-'),
+                courseId: Number(course.id),
+                courseName: String(course.title || '-'),
+                categoryId: Number(course.categoryId || 0) || null,
+                categoryName: String(course?.categories?.name || '-'),
                 sectionId: Number(quiz.sectionId || 0),
                 questionCount: Array.isArray(quiz.questions) ? quiz.questions.length : 0,
                 passingScore: Number(quiz.passingScore || 0),
             })),
         }));
 
-        const selectedCourse = courseIdParam > 0
-            ? courses.find((course) => Number(course.id) === courseIdParam)
-            : courses.find((course) => course.quizzes.length > 0) || courses[0];
-        const selectedCourseId = Number(selectedCourse?.id || 0);
-        const quizzes = selectedCourse?.quizzes || [];
-        const selectedQuiz = quizIdParam > 0
-            ? quizzes.find((quiz) => Number(quiz.id) === quizIdParam)
-            : quizzes[0];
-        const selectedQuizId = Number(selectedQuiz?.id || 0);
+        const allQuizzes = courses.flatMap((course) => course.quizzes);
+        const quizById = new Map(allQuizzes.map((quiz) => [Number(quiz.id), quiz]));
 
-        let rows = [];
-        let users = [];
+        const quizzesForFilter = (() => {
+            if (courseIdParam > 0) {
+                const course = courses.find((c) => Number(c.id) === courseIdParam);
+                return course?.quizzes || [];
+            }
+            if (categoryId > 0) {
+                return allQuizzes.filter((quiz) => Number(quiz.categoryId) === categoryId);
+            }
+            return allQuizzes;
+        })();
 
-        if (selectedCourseId > 0) {
-            if (selectedQuizId > 0) {
-                const attempts = await prisma.quizAttempt.findMany({
-                    where: {
-                        course_id: selectedCourseId,
-                        quizId: selectedQuizId,
-                    },
-                    include: {
-                        enrollments: {
-                            include: {
-                                organization_users: {
-                                    include: {
-                                        users: {
-                                            include: { profile: true },
-                                        },
-                                    },
+        const courseIdsInScope = (() => {
+            if (courseIdParam > 0) return [courseIdParam];
+            if (categoryId > 0) {
+                return courses
+                    .filter((c) => Number(c.categoryId) === categoryId)
+                    .map((c) => Number(c.id));
+            }
+            return courses.map((c) => Number(c.id));
+        })();
+
+        const quizIdsInScope = (() => {
+            if (quizIdParam > 0) return [quizIdParam];
+            return quizzesForFilter.map((q) => Number(q.id));
+        })();
+
+        let attemptRows = [];
+        let progressRowsList = [];
+
+        if (courseIdsInScope.length > 0) {
+            const attemptWhere = {
+                course_id: { in: courseIdsInScope },
+                ...(quizIdsInScope.length > 0 ? { quizId: { in: quizIdsInScope } } : {}),
+                ...(userIdParam > 0 ? { enrollments: { userId: userIdParam } } : {}),
+            };
+            const attempts = await prisma.quizAttempt.findMany({
+                where: attemptWhere,
+                include: {
+                    enrollments: {
+                        include: {
+                            organization_users: {
+                                include: {
+                                    users: { include: { profile: true } },
                                 },
-                                learning_progress: selectedQuiz?.sectionId
-                                    ? {
-                                        where: { sectionId: selectedQuiz.sectionId },
-                                        select: { currentTime: true, duration: true },
-                                    }
-                                    : {
-                                        select: { currentTime: true, duration: true },
-                                    },
+                            },
+                            learning_progress: {
+                                select: { sectionId: true, currentTime: true, duration: true },
                             },
                         },
                     },
-                    orderBy: [{ enrollmentId: 'asc' }, { attemptNo: 'desc' }, { submittedAt: 'desc' }],
+                },
+                orderBy: [{ course_id: 'asc' }, { quizId: 'asc' }, { enrollmentId: 'asc' }, { attemptNo: 'desc' }, { submittedAt: 'desc' }],
+            });
+
+            attemptRows = attempts.map((attempt) => {
+                const enrollment = attempt?.enrollments;
+                const quiz = quizById.get(Number(attempt?.quizId || 0));
+                const { username, firstName, lastName, fullName } = buildPersonInfo(enrollment);
+                const attemptScore = toOptionalNumber(attempt?.score);
+                const scorePercent = attemptScore === null ? 0 : clampPercent(attemptScore);
+                const totalQuestions = Number(quiz?.questionCount || 0);
+                const rawScore = totalQuestions > 0
+                    ? Math.round((scorePercent / 100) * totalQuestions)
+                    : Math.round(scorePercent);
+                const sectionScopedProgress = (enrollment?.learning_progress || []).filter((p) => {
+                    if (!quiz?.sectionId) return true;
+                    return Number(p.sectionId) === Number(quiz.sectionId);
                 });
+                const timeSpentMinutes = resolveTimeSpentMinutes(
+                    sectionScopedProgress.length > 0 ? sectionScopedProgress : (enrollment?.learning_progress || []),
+                );
 
-                const usersById = new Map();
-                for (const attempt of attempts) {
-                    const key = Number(attempt?.enrollments?.userId || 0);
-                    if (!key || usersById.has(key)) continue;
-                    const user = attempt?.enrollments?.organization_users?.users;
-                    const profile = user?.profile;
-                    const name = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim()
-                        || user?.username
-                        || user?.email
-                        || `User ${attempt?.enrollments?.userId}`;
-                    usersById.set(key, {
-                        id: Number(attempt?.enrollments?.userId || 0),
-                        username: String(user?.username || user?.email || '-'),
-                        name,
-                    });
-                }
+                return {
+                    no: 0,
+                    enrollmentId: Number(enrollment?.id || 0),
+                    userId: Number(enrollment?.userId || 0),
+                    username,
+                    firstName: firstName || '-',
+                    lastName: lastName || '-',
+                    courseId: Number(attempt?.course_id || 0),
+                    courseName: quiz?.courseName || '-',
+                    categoryName: quiz?.categoryName || '-',
+                    quizId: Number(attempt?.quizId || 0),
+                    quizName: quiz?.name || '-',
+                    scorePercent: Number(scorePercent.toFixed(2)),
+                    scoreText: totalQuestions > 0 ? `${rawScore}/${totalQuestions}` : `${Math.round(scorePercent)}/100`,
+                    result: resolveAssessmentResult({
+                        percent: attemptScore === null ? null : scorePercent,
+                        success: typeof attempt?.passed === 'boolean' ? attempt.passed : null,
+                    }),
+                    attempt: Number(attempt?.attemptNo || 1),
+                    timeSpent: timeSpentMinutes === null ? '-' : timeSpentMinutes.toFixed(2),
+                    searchText: `${username} ${fullName} ${quiz?.name || ''} ${quiz?.courseName || ''}`.toLowerCase(),
+                };
+            });
 
-                users = Array.from(usersById.values());
-
-                rows = attempts.map((attempt) => {
-                    const enrollment = attempt?.enrollments;
-                    const user = enrollment?.organization_users?.users;
-                    const profile = user?.profile;
-
-                    const username = String(user?.username || user?.email || '-');
-                    const firstName = String(profile?.firstName || '');
-                    const lastName = String(profile?.lastName || '');
-                    const fullName = `${firstName} ${lastName}`.trim();
-                    const attemptScore = toOptionalNumber(attempt?.score);
-                    const scorePercent = attemptScore === null ? 0 : clampPercent(attemptScore);
-                    const totalQuestions = Number(selectedQuiz?.questionCount || 0);
-                    const rawScore = totalQuestions > 0
-                        ? Math.round((scorePercent / 100) * totalQuestions)
-                        : Math.round(scorePercent);
-                    const timeSpentMinutes = resolveTimeSpentMinutes(enrollment?.learning_progress || []);
-
-                    return {
-                        no: 0,
-                        enrollmentId: Number(enrollment?.id || 0),
-                        userId: Number(enrollment?.userId || 0),
-                        username,
-                        firstName: firstName || '-',
-                        lastName: lastName || '-',
-                        scorePercent: Number(scorePercent.toFixed(2)),
-                        scoreText: totalQuestions > 0 ? `${rawScore}/${totalQuestions}` : `${Math.round(scorePercent)}/100`,
-                        result: resolveAssessmentResult({
-                            percent: attemptScore === null ? null : scorePercent,
-                            success: typeof attempt?.passed === 'boolean' ? attempt.passed : null,
-                        }),
-                        attempt: Number(attempt?.attemptNo || 1),
-                        timeSpent: timeSpentMinutes === null ? '-' : timeSpentMinutes.toFixed(2),
-                        searchText: `${username} ${fullName}`.toLowerCase(),
-                    };
-                });
-            } else {
-                const progressRows = await prisma.learningProgress.findMany({
-                    where: {
-                        courseId: selectedCourseId,
-                        enrollments: { organization_id: organizationId },
-                        OR: [
-                            { scoreRaw: { not: null } },
-                            { scoreScaled: { not: null } },
-                        ],
+            // Fallback: course-level scores stored in learningProgress for courses without quizAttempt rows
+            const progressRows = await prisma.learningProgress.findMany({
+                where: {
+                    courseId: { in: courseIdsInScope },
+                    enrollments: {
+                        organization_id: organizationId,
+                        ...(userIdParam > 0 ? { userId: userIdParam } : {}),
                     },
-                    include: {
-                        enrollments: {
-                            include: {
-                                organization_users: {
-                                    include: {
-                                        users: {
-                                            include: { profile: true },
-                                        },
-                                    },
+                    OR: [
+                        { scoreRaw: { not: null } },
+                        { scoreScaled: { not: null } },
+                    ],
+                },
+                include: {
+                    enrollments: {
+                        include: {
+                            organization_users: {
+                                include: {
+                                    users: { include: { profile: true } },
                                 },
-                                learning_progress: {
-                                    select: { currentTime: true, duration: true },
-                                },
+                            },
+                            learning_progress: {
+                                select: { currentTime: true, duration: true },
+                            },
+                            courses: {
+                                include: { categories: true },
                             },
                         },
                     },
-                    orderBy: [{ enrollmentId: 'asc' }, { id: 'desc' }],
-                });
+                },
+                orderBy: [{ enrollmentId: 'asc' }, { id: 'desc' }],
+            });
 
-                const latestByEnrollment = new Map();
-                for (const progressRow of progressRows) {
-                    const key = Number(progressRow.enrollmentId);
-                    if (latestByEnrollment.has(key)) continue;
-                    const percent = scorePercentFromLearningProgress(progressRow);
-                    // Skip rows where the score is a stray default (0 from
-                    // an "initialized" xAPI statement on a video lesson) —
-                    // those are not real graded attempts.
-                    const isRealScore = percent !== null && (percent > 0 || progressRow?.success === true);
-                    if (isRealScore) {
-                        latestByEnrollment.set(key, progressRow);
-                    }
+            const latestByEnrollment = new Map();
+            for (const progressRow of progressRows) {
+                const key = Number(progressRow.enrollmentId);
+                if (latestByEnrollment.has(key)) continue;
+                const percent = scorePercentFromLearningProgress(progressRow);
+                const isRealScore = percent !== null && (percent > 0 || progressRow?.success === true);
+                if (isRealScore) {
+                    latestByEnrollment.set(key, progressRow);
                 }
+            }
 
-                const latestProgressRows = Array.from(latestByEnrollment.values());
-                users = latestProgressRows.map((progressRow) => {
-                    const user = progressRow?.enrollments?.organization_users?.users;
-                    const profile = user?.profile;
-                    const name = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim()
-                        || user?.username
-                        || user?.email
-                        || `User ${progressRow?.enrollments?.userId}`;
-                    return {
-                        id: Number(progressRow?.enrollments?.userId || 0),
-                        username: String(user?.username || user?.email || '-'),
-                        name,
-                    };
-                });
+            // Skip enrollments that already have a quizAttempt row for the scoped quiz
+            const enrollmentIdsWithAttempt = new Set(attemptRows.map((row) => Number(row.enrollmentId)));
 
-                rows = latestProgressRows.map((progressRow) => {
+            progressRowsList = Array.from(latestByEnrollment.values())
+                .filter((progressRow) => !enrollmentIdsWithAttempt.has(Number(progressRow?.enrollmentId)))
+                .map((progressRow) => {
                     const enrollment = progressRow?.enrollments;
-                    const user = enrollment?.organization_users?.users;
-                    const profile = user?.profile;
-                    const username = String(user?.username || user?.email || '-');
-                    const firstName = String(profile?.firstName || '');
-                    const lastName = String(profile?.lastName || '');
-                    const fullName = `${firstName} ${lastName}`.trim();
+                    const { username, firstName, lastName, fullName } = buildPersonInfo(enrollment);
                     const scorePercent = scorePercentFromLearningProgress(progressRow);
                     const safeScorePercent = Number.isFinite(Number(scorePercent)) ? Number(scorePercent) : 0;
                     const timeSpentMinutes = resolveTimeSpentMinutes(enrollment?.learning_progress || []);
+                    const courseName = String(enrollment?.courses?.title || '-');
+                    const categoryName = String(enrollment?.courses?.categories?.name || '-');
 
                     return {
                         no: 0,
@@ -348,29 +342,48 @@ export async function GET(request) {
                         username,
                         firstName: firstName || '-',
                         lastName: lastName || '-',
+                        courseId: Number(enrollment?.courseId || 0),
+                        courseName,
+                        categoryName,
+                        quizId: 0,
+                        quizName: '-',
                         scorePercent: Number(safeScorePercent.toFixed(2)),
                         scoreText: `${Math.round(safeScorePercent)}/100`,
                         result: resolveLearningProgressResult(progressRow),
                         attempt: 1,
                         timeSpent: timeSpentMinutes === null ? '-' : timeSpentMinutes.toFixed(2),
-                        searchText: `${username} ${fullName}`.toLowerCase(),
+                        searchText: `${username} ${fullName} ${courseName}`.toLowerCase(),
                     };
                 });
-            }
-
-            rows = rows
-                .filter((row) => {
-                    if (userIdParam > 0 && Number(row.userId) !== userIdParam) return false;
-                    if (!matchesScoreRange(row.scorePercent, scoreRange)) return false;
-                    if (q && !row.searchText.includes(q)) return false;
-                    return true;
-                })
-                .sort((a, b) => b.scorePercent - a.scorePercent)
-                .map((row, index) => ({
-                    ...row,
-                    no: index + 1,
-                }));
         }
+
+        let rows = [...attemptRows, ...progressRowsList];
+
+        const usersMap = new Map();
+        for (const row of rows) {
+            const id = Number(row.userId);
+            if (!id || usersMap.has(id)) continue;
+            usersMap.set(id, {
+                id,
+                username: row.username,
+                name: `${row.firstName !== '-' ? row.firstName : ''} ${row.lastName !== '-' ? row.lastName : ''}`.trim() || row.username,
+            });
+        }
+        const users = Array.from(usersMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+        rows = rows
+            .filter((row) => {
+                if (userIdParam > 0 && Number(row.userId) !== userIdParam) return false;
+                if (!matchesScoreRange(row.scorePercent, scoreRange)) return false;
+                if (q && !row.searchText.includes(q)) return false;
+                return true;
+            })
+            .sort((a, b) => {
+                if (a.courseName !== b.courseName) return a.courseName.localeCompare(b.courseName);
+                if (a.quizName !== b.quizName) return a.quizName.localeCompare(b.quizName);
+                return b.scorePercent - a.scorePercent;
+            })
+            .map((row, index) => ({ ...row, no: index + 1 }));
 
         const bins = {
             '0-20': 0,
@@ -391,6 +404,19 @@ export async function GET(request) {
             { name: '81-100', uv: bins['81-100'], fill: '#687EFF' },
         ];
 
+        const selectedCategory = categoryId > 0
+            ? categories.find((item) => Number(item.id) === categoryId) || null
+            : null;
+        const selectedCourse = courseIdParam > 0
+            ? courses.find((course) => Number(course.id) === courseIdParam) || null
+            : null;
+        const selectedQuiz = quizIdParam > 0
+            ? quizById.get(quizIdParam) || null
+            : null;
+        const selectedUser = userIdParam > 0
+            ? users.find((u) => Number(u.id) === userIdParam) || null
+            : null;
+
         return NextResponse.json({
             chartData,
             rows: rows.map((row) => ({
@@ -398,6 +424,9 @@ export async function GET(request) {
                 username: row.username,
                 firstName: row.firstName,
                 lastName: row.lastName,
+                courseName: row.courseName,
+                categoryName: row.categoryName,
+                quizName: row.quizName,
                 score: row.scoreText,
                 percent: `${Math.round(row.scorePercent)}%`,
                 result: row.result,
@@ -405,20 +434,30 @@ export async function GET(request) {
                 timeSpent: row.timeSpent,
             })),
             selected: {
-                categoryId: selectedCourse?.categoryId || null,
-                categoryName: selectedCourse?.category || '-',
-                courseId: selectedCourseId || null,
-                courseName: selectedCourse?.name || '-',
-                quizId: selectedQuizId || null,
-                quizName: selectedQuiz?.name || '-',
-                userId: userIdParam > 0 ? userIdParam : null,
+                categoryId: selectedCategory ? Number(selectedCategory.id) : null,
+                categoryName: selectedCategory ? selectedCategory.name : 'All',
+                courseId: selectedCourse ? Number(selectedCourse.id) : null,
+                courseName: selectedCourse ? selectedCourse.name : 'All',
+                quizId: selectedQuiz ? Number(selectedQuiz.id) : null,
+                quizName: selectedQuiz ? selectedQuiz.name : 'All',
+                userId: selectedUser ? Number(selectedUser.id) : null,
+                userName: selectedUser ? selectedUser.name : 'All',
                 scoreRange: searchParams.get('scoreRange') || 'ALL',
                 q: String(searchParams.get('q') || ''),
             },
             filters: {
                 categories: categories.map((item) => ({ id: Number(item.id), name: item.name })),
-                courses: courses.map((course) => ({ id: Number(course.id), name: course.name })),
-                quizzes: quizzes.map((quiz) => ({ id: Number(quiz.id), name: quiz.name })),
+                courses: courses.map((course) => ({
+                    id: Number(course.id),
+                    name: course.name,
+                    categoryId: course.categoryId,
+                })),
+                quizzes: quizzesForFilter.map((quiz) => ({
+                    id: Number(quiz.id),
+                    name: quiz.name,
+                    courseId: Number(quiz.courseId),
+                    courseName: quiz.courseName,
+                })),
                 users,
                 scoreRanges: [
                     { id: 'ALL', name: 'All' },

@@ -402,6 +402,12 @@ export default function LearnPage() {
     // installed during the first useEffect run and don't re-close over React
     // state when the effect re-runs on chapter change).
     const selectedActivityIndexRef = useRef(0);
+    // Mirror player time/duration as refs so completion-evidence callbacks can
+    // read latest values without re-creating on every player heartbeat. Used
+    // as a last-resort fallback when cross-origin YouTube iframes block both
+    // direct DOM access and reliable postMessage state events.
+    const currentTimeRef = useRef(0);
+    const durationRef = useRef(0);
     const logLessonMapDebug = useCallback(() => {}, []);
     // Near-end tolerance for "video finished" evidence. Keep a small buffer for
     // fractional durations / late metadata so 4:59/5:00 still counts as ended.
@@ -431,6 +437,16 @@ export default function LearnPage() {
             ? Math.max(0, Math.floor(Number(selectedActivityIndex)))
             : 0;
     }, [selectedActivityIndex]);
+
+    useEffect(() => {
+        const value = Number(currentTime);
+        currentTimeRef.current = Number.isFinite(value) ? value : 0;
+    }, [currentTime]);
+
+    useEffect(() => {
+        const value = Number(duration);
+        durationRef.current = Number.isFinite(value) ? value : 0;
+    }, [duration]);
 
     const markLearningInteraction = useCallback(() => {
         const now = Date.now();
@@ -6743,8 +6759,14 @@ export default function LearnPage() {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
         if (activities.length === 0) return false;
         const safeIndex = Math.max(0, Math.min(activities.length - 1, Math.floor(Number(activityIndex) || 0)));
+        // LMS-side player time/duration as last-resort evidence: cross-origin
+        // YouTube iframes block hasIframeVideoReachedEnd() and the buggy
+        // setuptincan.js can throw before sending the "completed" verb. The
+        // host player still reports time/duration via its own postMessage
+        // channel, so use that as the final fallback before locking the user.
+        const playerNearEnd = () => isNearVideoEnd(currentTimeRef.current, durationRef.current);
         if (completionVerbSeenForActivityRef.current.has(safeIndex)) return true;
-        if (hasIframeVideoReachedEnd()) {
+        if (hasIframeVideoReachedEnd() || playerNearEnd()) {
             completionVerbSeenForActivityRef.current.add(safeIndex);
             return true;
         }
@@ -6762,13 +6784,13 @@ export default function LearnPage() {
             }
             await new Promise((resolve) => setTimeout(resolve, tickMs));
             if (completionVerbSeenForActivityRef.current.has(safeIndex)) return true;
-            if (hasIframeVideoReachedEnd()) {
+            if (hasIframeVideoReachedEnd() || playerNearEnd()) {
                 completionVerbSeenForActivityRef.current.add(safeIndex);
                 return true;
             }
         }
         return completionVerbSeenForActivityRef.current.has(safeIndex);
-    }, [content?.activities, hasIframeVideoReachedEnd, probeYoutubePlayersForCompletion]);
+    }, [content?.activities, hasIframeVideoReachedEnd, probeYoutubePlayersForCompletion, isNearVideoEnd]);
 
     const markTinCanActivityClearedFromHost = useCallback((activityIndex) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
@@ -6898,6 +6920,7 @@ export default function LearnPage() {
                 && (
                     hasIframeVideoReachedEnd()
                     || completionVerbSeenForActivityRef.current.has(i)
+                    || isNearVideoEnd(currentTimeRef.current, durationRef.current)
                 )
             ) {
                 forwardFromSelected = i + 1;
@@ -6917,7 +6940,7 @@ export default function LearnPage() {
             )
         );
         return Math.max(runtimeUnlocked, localUnlocked, selectedSafe, highestSeenSafe, forwardFromSelected);
-    }, [content, chapterLockEnabled, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity, hasIframeVideoReachedEnd]);
+    }, [content, chapterLockEnabled, tinCanActivityStatus, isTinCanLessonClearedForAdvance, findTinCanStatusRowForActivity, isAssessmentActivity, hasIframeVideoReachedEnd, isNearVideoEnd]);
 
     const handleManualActivitySelect = useCallback(async (idx) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];

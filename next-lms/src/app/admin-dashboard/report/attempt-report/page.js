@@ -8,6 +8,7 @@ import {
     AdminEntriesControl,
     AdminPageHeader,
     AdminPagination,
+    AdminSearchInput,
     AdminTable,
     AdminTableHead,
     AdminTableWrap,
@@ -19,15 +20,19 @@ import {
     adminSelectClass,
 } from '@/components/admin/ui/AdminPrimitives';
 
-function flattenSectionsToCsv(sections = []) {
-    const header = ['Section', 'No', 'Date and Time', 'Study Duration (Minutes)'];
-    const rows = [];
-    for (const section of sections) {
-        for (const record of section.records || []) {
-            rows.push([section.title, record.id, record.date, record.duration]);
-        }
-    }
-    return [header, ...rows]
+function rowsToCsv(rows = []) {
+    const header = ['No', 'User', 'Email', 'Course Category', 'Course', 'Section / Activity', 'Date and Time', 'Study Duration (Minutes)'];
+    const body = rows.map((row) => [
+        row.no,
+        row.userName,
+        row.userEmail,
+        row.categoryName,
+        row.courseName,
+        row.sectionTitle,
+        row.date,
+        row.duration,
+    ]);
+    return [header, ...body]
         .map((line) => line.map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(','))
         .join('\n');
 }
@@ -45,14 +50,16 @@ export default function AttemptReport() {
         userId: '',
     });
     const [meta, setMeta] = useState({
-        userName: '-',
-        categoryName: '-',
-        courseName: '-',
-        sessionName: '-',
+        userName: 'All',
+        categoryName: 'All',
+        courseName: 'All',
+        enrollmentCount: 0,
+        totalCount: 0,
     });
-    const [sections, setSections] = useState([]);
-    const [entries, setEntries] = useState(10);
-    const [sectionPages, setSectionPages] = useState({});
+    const [rows, setRows] = useState([]);
+    const [entries, setEntries] = useState(20);
+    const [page, setPage] = useState(1);
+    const [search, setSearch] = useState('');
 
     const fetchReport = async (nextSelected = selected) => {
         setLoading(true);
@@ -74,47 +81,67 @@ export default function AttemptReport() {
                 users: Array.isArray(data?.filters?.users) ? data.filters.users : [],
             });
             setMeta({
-                userName: data?.selected?.userName || '-',
-                categoryName: data?.selected?.categoryName || '-',
-                courseName: data?.selected?.courseName || '-',
-                sessionName: data?.selected?.sessionName || '-',
+                userName: data?.selected?.userName || 'All',
+                categoryName: data?.selected?.categoryName || 'All',
+                courseName: data?.selected?.courseName || 'All',
+                enrollmentCount: Number(data?.enrollmentCount || 0),
+                totalCount: Number(data?.totalCount || 0),
             });
-            setSections(Array.isArray(data?.sections) ? data.sections : []);
-
-            setSelected({
-                categoryId: data?.selected?.categoryId ? String(data.selected.categoryId) : '',
-                courseId: data?.selected?.courseId ? String(data.selected.courseId) : '',
-                userId: data?.selected?.userId ? String(data.selected.userId) : '',
-            });
+            setRows(Array.isArray(data?.rows) ? data.rows : []);
+            setPage(1);
         } catch (error) {
             console.error(error);
-            setSections([]);
+            setRows([]);
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => {
-        fetchReport();
+        fetchReport({ categoryId: '', courseId: '', userId: '' });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    useEffect(() => {
-        setSectionPages({});
-    }, [sections, entries]);
-
     const selectedCourses = useMemo(() => {
         if (!selected.categoryId) return filters.courses;
-        const category = filters.categories.find((item) => String(item.id) === String(selected.categoryId));
-        if (!category) return filters.courses;
-        return filters.courses.filter((course) => {
-            const match = String(course.categoryId || '') === String(category.id);
-            return match || !course.categoryId;
+        return filters.courses.filter((course) => String(course.categoryId || '') === String(selected.categoryId));
+    }, [filters.courses, selected.categoryId]);
+
+    const filteredRows = useMemo(() => {
+        const q = String(search || '').trim().toLowerCase();
+        if (!q) return rows;
+        return rows.filter((row) => {
+            const haystack = [
+                row.userName,
+                row.userEmail,
+                row.username,
+                row.courseName,
+                row.categoryName,
+                row.sectionTitle,
+                row.date,
+            ].map((value) => String(value || '').toLowerCase()).join(' ');
+            return haystack.includes(q);
         });
-    }, [filters.courses, filters.categories, selected.categoryId]);
+    }, [rows, search]);
+
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / entries));
+    const startRow = filteredRows.length === 0 ? 0 : (page - 1) * entries + 1;
+    const endRow = Math.min(page * entries, filteredRows.length);
+    const pagedRows = useMemo(
+        () => filteredRows.slice((page - 1) * entries, (page - 1) * entries + entries),
+        [filteredRows, page, entries],
+    );
+
+    useEffect(() => {
+        setPage(1);
+    }, [filteredRows.length, entries]);
+
+    useEffect(() => {
+        if (page > totalPages) setPage(totalPages);
+    }, [page, totalPages]);
 
     const handleExport = () => {
-        const csv = flattenSectionsToCsv(sections);
+        const csv = rowsToCsv(filteredRows);
         const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -126,16 +153,23 @@ export default function AttemptReport() {
         URL.revokeObjectURL(url);
     };
 
+    const handleClear = () => {
+        const cleared = { categoryId: '', courseId: '', userId: '' };
+        setSelected(cleared);
+        setSearch('');
+        fetchReport(cleared);
+    };
+
     return (
         <AdminShell>
             <div className="w-full relative z-10 pb-20">
                 <AdminPageHeader
                     title="Report: Attempt Report"
-                    description="Review learner attempt history by section and export it for follow-up."
+                    description="Review learner attempt history across courses and export it for follow-up."
                 />
 
                 <AdminCard title="Attempt Report" contentClassName="space-y-6 mt-2">
-                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                         <select
                             value={selected.categoryId}
                             onChange={(e) => setSelected((prev) => ({ ...prev, categoryId: e.target.value, courseId: '' }))}
@@ -158,11 +192,6 @@ export default function AttemptReport() {
                             ))}
                         </select>
 
-                        <div className="flex h-[42px] items-center rounded-xl border border-[#DDE4FF] bg-[#F8FAFF] px-3 text-[13px] text-[#334155]">
-                            <span className="mr-1 font-semibold text-[#0F2243]">Session:</span>
-                            <span className="truncate text-[#64748B]">{meta.sessionName || '-'}</span>
-                        </div>
-
                         <select
                             value={selected.userId}
                             onChange={(e) => setSelected((prev) => ({ ...prev, userId: e.target.value }))}
@@ -179,15 +208,16 @@ export default function AttemptReport() {
                         <button onClick={() => fetchReport(selected)} className={adminPrimaryButtonClass}>
                             {loading ? 'Loading...' : 'View'}
                         </button>
+                        <button onClick={handleClear} className={adminSecondaryButtonClass}>Clear</button>
                         <button onClick={handleExport} className={adminSecondaryButtonClass}>Export</button>
                     </div>
 
-                    <div className="grid gap-3 lg:grid-cols-2">
+                    <div className="grid gap-3 lg:grid-cols-4">
                         {[
                             ['User', meta.userName],
                             ['Course Category', meta.categoryName],
                             ['Course', meta.courseName],
-                            ['Session', meta.sessionName],
+                            ['Records', `${meta.totalCount} from ${meta.enrollmentCount} enrollment${meta.enrollmentCount === 1 ? '' : 's'}`],
                         ].map(([label, value]) => (
                             <div key={label} className="rounded-2xl border border-[#E8EEFF] bg-[#FBFCFF] px-4 py-3">
                                 <div className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#8A94B2]">{label}</div>
@@ -197,70 +227,65 @@ export default function AttemptReport() {
                     </div>
                 </AdminCard>
 
-                <div className="mt-8 flex flex-col gap-6">
-                    {sections.map((section, idx) => (
-                        <AdminCard key={idx} title={section.title || `Section ${idx + 1}`} headerTone="secondary">
-                            {(() => {
-                                const sectionKey = `${section.title || 'section'}-${idx}`;
-                                const records = Array.isArray(section.records) ? section.records : [];
-                                const totalPages = Math.max(1, Math.ceil(records.length / entries));
-                                const currentPage = Math.min(sectionPages[sectionKey] || 1, totalPages);
-                                const start = (currentPage - 1) * entries;
-                                const pagedRecords = records.slice(start, start + entries);
+                <AdminCard title="Attempts" headerTone="secondary" contentClassName="mt-2">
+                    <AdminToolbar
+                        left={<AdminEntriesControl value={entries} onChange={setEntries} label="records" />}
+                        right={(
+                            <AdminSearchInput
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                placeholder="Search user / course / section"
+                            />
+                        )}
+                    />
 
-                                return (
-                                    <>
-                                        <AdminToolbar
-                                            left={<AdminEntriesControl value={entries} onChange={setEntries} label="records per section" />}
-                                        />
-                                        <AdminTableWrap>
-                                            <AdminTable className="min-w-[640px]">
-                                                <AdminTableHead>
-                                                    <tr>
-                                                        <AdminTh className="w-[80px]">No.</AdminTh>
-                                                        <AdminTh>Date and Time</AdminTh>
-                                                        <AdminTh className="w-[220px]">Study Duration (Minutes)</AdminTh>
-                                                    </tr>
-                                                </AdminTableHead>
-                                                <tbody>
-                                                    {pagedRecords.map((row) => (
-                                                        <tr key={`${section.title}-${row.id}`} className="border-b border-[#EEF2FF] last:border-b-0 hover:bg-[#F8FAFF]">
-                                                            <AdminTd className="font-medium text-[#0F2243]">{row.id}.</AdminTd>
-                                                            <AdminTd>{row.date}</AdminTd>
-                                                            <AdminTd>{row.duration}</AdminTd>
-                                                        </tr>
-                                                    ))}
-                                                    {records.length === 0 && (
-                                                        <AdminBodyStateRow colSpan={3}>
-                                                            {loading ? 'Loading attempt data...' : 'No attempt records'}
-                                                        </AdminBodyStateRow>
-                                                    )}
-                                                </tbody>
-                                            </AdminTable>
-                                        </AdminTableWrap>
-                                        <AdminPagination
-                                            currentPage={currentPage}
-                                            totalPages={totalPages}
-                                            onPageChange={(nextPage) => setSectionPages((prev) => ({ ...prev, [sectionKey]: nextPage }))}
-                                            totalItems={records.length}
-                                            startRow={records.length === 0 ? 0 : start + 1}
-                                            endRow={Math.min(start + entries, records.length)}
-                                        />
-                                    </>
-                                );
-                            })()}
-                        </AdminCard>
-                    ))}
-                    {sections.length === 0 && (
-                        <AdminCard headerTone="secondary">
-                            <div className="py-8 text-center text-[13px] text-[#64748B]">
-                                {loading ? 'Loading attempt data...' : 'No attempt data found'}
-                            </div>
-                        </AdminCard>
-                    )}
-                </div>
+                    <AdminTableWrap>
+                        <AdminTable className="min-w-[1080px]">
+                            <AdminTableHead>
+                                <tr>
+                                    <AdminTh className="w-[64px]">No.</AdminTh>
+                                    <AdminTh className="w-[200px]">User</AdminTh>
+                                    <AdminTh className="w-[160px]">Category</AdminTh>
+                                    <AdminTh>Course</AdminTh>
+                                    <AdminTh>Section / Activity</AdminTh>
+                                    <AdminTh className="w-[200px]">Date and Time</AdminTh>
+                                    <AdminTh className="w-[150px] text-center">Duration (mins)</AdminTh>
+                                </tr>
+                            </AdminTableHead>
+                            <tbody>
+                                {pagedRows.map((row) => (
+                                    <tr key={`${row.enrollmentId}-${row.no}`} className="border-b border-[#EEF2FF] last:border-b-0 hover:bg-[#F8FAFF]">
+                                        <AdminTd className="font-medium text-[#0F2243]">{row.no}.</AdminTd>
+                                        <AdminTd>
+                                            <div className="font-medium text-[#0F2243]">{row.userName}</div>
+                                            <div className="text-[12px] text-[#64748B]">{row.userEmail || row.username || '-'}</div>
+                                        </AdminTd>
+                                        <AdminTd>{row.categoryName}</AdminTd>
+                                        <AdminTd>{row.courseName}</AdminTd>
+                                        <AdminTd>{row.sectionTitle}</AdminTd>
+                                        <AdminTd>{row.date}</AdminTd>
+                                        <AdminTd className="text-center">{row.duration}</AdminTd>
+                                    </tr>
+                                ))}
+                                {filteredRows.length === 0 && (
+                                    <AdminBodyStateRow colSpan={7}>
+                                        {loading ? 'Loading attempt data...' : 'No attempt data found'}
+                                    </AdminBodyStateRow>
+                                )}
+                            </tbody>
+                        </AdminTable>
+                    </AdminTableWrap>
+
+                    <AdminPagination
+                        currentPage={page}
+                        totalPages={totalPages}
+                        onPageChange={setPage}
+                        totalItems={filteredRows.length}
+                        startRow={startRow}
+                        endRow={endRow}
+                    />
+                </AdminCard>
             </div>
         </AdminShell>
     );
 }
-
