@@ -4,7 +4,9 @@
       "Bash(git checkout *)",
       "Bash(npx eslint *)",
       "Bash(/d/Ramkhamheng/project/lms/next-lms/node_modules/.bin/next build *)",
-      "Read(//d/d/Ramkhamheng/project/lms/next-lms/src/app/**)"
+      "Read(//d/d/Ramkhamheng/project/lms/next-lms/src/app/**)",
+      "Bash(node -e \"require\\('./src/app/admin-dashboard/report/lrs-viewer/screen.js'\\)\")",
+      "Bash(npx --no-install eslint \"src/app/admin-dashboard/report/lrs-viewer/\" \"src/app/api/admin/lrs/\")"
     ]
   }
 }
