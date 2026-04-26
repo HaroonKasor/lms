@@ -6693,6 +6693,76 @@ export default function LearnPage() {
         }
     }, [isNearVideoEnd]);
 
+    // Synchronous on-demand check: walk wrapper iframes for YouTube embeds
+    // and try to read playback state via the SAME-ORIGIN YT.Player JS API
+    // directly (bypassing the cross-origin postMessage round-trip). This is
+    // the single most reliable signal we have when:
+    //   - YouTube widget postMessage replies fail to reach us due to origin
+    //     mismatch errors (very common with TinCan-wrapped embeds)
+    //   - the parallel tracker hasn't attached yet for the current chapter
+    //   - the buggy package script crashed before sending xAPI verbs
+    // We try YT.get() first (returns existing player handles) and only fall
+    // back to constructing a fresh YT.Player if needed. Returns true if any
+    // visible YouTube iframe reports near-end (or explicit ended state).
+    const detectYoutubeNearEndSync = useCallback(() => {
+        try {
+            const root = iframeRef.current?.contentWindow;
+            if (!root) return false;
+            const visited = new Set();
+            const checkPlayer = (player) => {
+                if (!player) return false;
+                try {
+                    if (typeof player.getPlayerState === 'function' && Number(player.getPlayerState()) === 0) {
+                        return true;
+                    }
+                } catch { /* ignore */ }
+                try {
+                    const ct = Number(typeof player.getCurrentTime === 'function' ? player.getCurrentTime() : NaN);
+                    const dur = Number(typeof player.getDuration === 'function' ? player.getDuration() : NaN);
+                    if (Number.isFinite(ct) && Number.isFinite(dur) && dur > 0 && isNearVideoEnd(ct, dur)) {
+                        return true;
+                    }
+                } catch { /* ignore */ }
+                return false;
+            };
+            const walk = (win) => {
+                if (!win || visited.has(win)) return false;
+                visited.add(win);
+                let doc = null;
+                try { doc = win.document; } catch { return false; }
+                if (!doc) return false;
+                let YT = null;
+                try { YT = win.YT; } catch { YT = null; }
+                const frames = doc.querySelectorAll ? doc.querySelectorAll('iframe') : [];
+                for (const frame of frames) {
+                    try {
+                        const src = String(frame?.src || '');
+                        if (/youtube(-nocookie)?\.com\/embed\//i.test(src)) {
+                            if (!frame.id) frame.id = `lms-yt-sync-${Math.random().toString(36).slice(2, 8)}`;
+                            // Try to grab an existing YT.Player handle bound to this iframe.
+                            let player = null;
+                            if (YT && typeof YT.get === 'function') {
+                                try { player = YT.get(frame.id); } catch { player = null; }
+                            }
+                            // Fall back to constructing a fresh tracker if YT is loaded
+                            // but no handle exists yet — YouTube allows multiple handles
+                            // per iframe; this gives us a same-origin JS path immediately.
+                            if (!player && YT && typeof YT.Player === 'function' && YT.loaded) {
+                                try { player = new YT.Player(frame.id, {}); } catch { player = null; }
+                            }
+                            if (checkPlayer(player)) return true;
+                        }
+                    } catch { /* ignore frame errors */ }
+                    try { if (walk(frame.contentWindow)) return true; } catch { /* cross-origin */ }
+                }
+                return false;
+            };
+            return walk(root);
+        } catch {
+            return false;
+        }
+    }, [isNearVideoEnd]);
+
     // Best-effort probe: ask nested YouTube players for current state/time so
     // infoDelivery/onStateChange events are emitted immediately instead of
     // waiting for their natural heartbeat cadence.
@@ -6744,7 +6814,7 @@ export default function LearnPage() {
         if (activities.length === 0) return false;
         const safeIndex = Math.max(0, Math.min(activities.length - 1, Math.floor(Number(activityIndex) || 0)));
         if (completionVerbSeenForActivityRef.current.has(safeIndex)) return true;
-        if (hasIframeVideoReachedEnd()) {
+        if (hasIframeVideoReachedEnd() || detectYoutubeNearEndSync()) {
             completionVerbSeenForActivityRef.current.add(safeIndex);
             return true;
         }
@@ -6762,13 +6832,13 @@ export default function LearnPage() {
             }
             await new Promise((resolve) => setTimeout(resolve, tickMs));
             if (completionVerbSeenForActivityRef.current.has(safeIndex)) return true;
-            if (hasIframeVideoReachedEnd()) {
+            if (hasIframeVideoReachedEnd() || detectYoutubeNearEndSync()) {
                 completionVerbSeenForActivityRef.current.add(safeIndex);
                 return true;
             }
         }
         return completionVerbSeenForActivityRef.current.has(safeIndex);
-    }, [content?.activities, hasIframeVideoReachedEnd, probeYoutubePlayersForCompletion]);
+    }, [content?.activities, hasIframeVideoReachedEnd, probeYoutubePlayersForCompletion, detectYoutubeNearEndSync]);
 
     const markTinCanActivityClearedFromHost = useCallback((activityIndex) => {
         const activities = Array.isArray(content?.activities) ? content.activities : [];
@@ -6945,33 +7015,6 @@ export default function LearnPage() {
                     markTinCanActivityClearedFromHost(selectedSnapshot);
                 }
                 maxUnlocked = getMaxUnlockedActivityIndex();
-            }
-        }
-        if (chapterLockEnabled && safeIndex > maxUnlocked) {
-            // Escape hatch: when automatic completion detection fails (cross-origin
-            // YouTube iframes block postMessage replies, buggy TinCan packages crash
-            // before sending the "completed" verb, etc.), let the learner explicitly
-            // confirm they finished the lesson and proceed. Guarded by:
-            //   - non-assessment lessons only (assessments still require a real pass)
-            //   - immediate-next clicks only (no skipping multiple chapters)
-            //   - minimum dwell time on the current chapter (prevents instant bypass)
-            const immediateNext = safeIndex === Math.min(activities.length - 1, selectedSnapshot + 1);
-            const selectedActivity = activities[selectedSnapshot];
-            const dwellMs = Date.now() - Number(selectedActivityChangedAtRef.current || 0);
-            const minDwellMs = 30 * 1000;
-            const canOfferOverride =
-                immediateNext
-                && selectedActivity
-                && !isAssessmentActivity(selectedActivity)
-                && Number(selectedActivityChangedAtRef.current || 0) > 0
-                && dwellMs >= minDwellMs;
-
-            if (canOfferOverride && typeof window !== 'undefined' && typeof window.confirm === 'function') {
-                const confirmed = window.confirm('ระบบยังไม่ได้รับสัญญาณว่าคุณดูบทนี้จบ\nหากคุณดูจบจริงแล้ว กด OK เพื่อไปบทถัดไป');
-                if (confirmed) {
-                    markTinCanActivityClearedFromHost(selectedSnapshot);
-                    maxUnlocked = getMaxUnlockedActivityIndex();
-                }
             }
         }
         if (chapterLockEnabled && safeIndex > maxUnlocked) {
