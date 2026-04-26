@@ -3,6 +3,7 @@
 import Image from 'next/image';
 import { X, Menu, Send, ChevronRight, Sparkles, BookOpen, Lightbulb, FileText } from 'lucide-react';
 import { useMemo, useRef, useState, useEffect } from 'react';
+import { getUser } from '@/lib/auth';
 
 const STUDY_ACTIONS = [
     {
@@ -34,6 +35,7 @@ const ASSESSMENT_ACTIONS = [
 const ASSESSMENT_TITLE_PATTERN = /(quiz|exam|test|assessment|แบบทดสอบ|ข้อสอบ|post[- ]?test|pre[- ]?test|midterm|final)/i;
 const YOUTUBE_HOST_PATTERN = /(?:youtube\.com|youtu\.be)/i;
 const MAX_OUTLINE_ITEMS = 40;
+const MAX_FEEDBACK_REASON_CHARS = 300;
 
 function isYoutubeSource(input) {
     const value = String(input || '').trim();
@@ -68,6 +70,24 @@ function normalizeLessonOutline(raw) {
         .slice(0, MAX_OUTLINE_ITEMS);
 }
 
+function createMessageId() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function buildRecentConversationForFeedback(messages, assistantMessageId) {
+    const index = messages.findIndex((item) => item?.id === assistantMessageId);
+    if (index < 0) return [];
+    const start = Math.max(0, index - 5);
+    const slice = messages.slice(start, index + 1);
+    return slice.map((item) => ({
+        role: item.role === 'assistant' ? 'assistant' : 'user',
+        content: String(item.content || '').slice(0, 1200),
+    }));
+}
+
 function TypingIndicator() {
     return (
         <div className="flex items-center gap-2">
@@ -87,6 +107,108 @@ function TypingIndicator() {
     );
 }
 
+function ThumbsUpIcon({ className = 'h-3.5 w-3.5' }) {
+    return (
+        <svg viewBox="0 0 24 24" fill="none" className={className} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M14 10V5a3 3 0 0 0-3-3l-3.5 8" />
+            <path d="M7.5 10H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h3.5a2 2 0 0 0 1.9-1.4L11 14h7a2 2 0 0 0 1.93-2.52l-1-4A2 2 0 0 0 17 6h-4.2" />
+        </svg>
+    );
+}
+
+function ThumbsDownIcon({ className = 'h-3.5 w-3.5' }) {
+    return (
+        <svg viewBox="0 0 24 24" fill="none" className={className} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M10 14v5a3 3 0 0 0 3 3l3.5-8" />
+            <path d="M16.5 14H20a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-3.5a2 2 0 0 0-1.9 1.4L13 10H6a2 2 0 0 0-1.93 2.52l1 4A2 2 0 0 0 7 18h4.2" />
+        </svg>
+    );
+}
+
+function AssistantFeedbackBox({
+    message,
+    canSubmitFeedback,
+    draft,
+    isSubmitting,
+    errorText,
+    onPickRating,
+    onReasonChange,
+    onSubmit,
+}) {
+    if (!canSubmitFeedback || !String(message?.content || '').trim()) return null;
+
+    if (message?.feedback?.rating) {
+        const isHelpful = message.feedback.rating === 'up';
+        return (
+            <div className="mt-1 ml-8 inline-flex items-center gap-1.5 text-[11px] text-gray-400">
+                {isHelpful ? <ThumbsUpIcon className="h-3.5 w-3.5" /> : <ThumbsDownIcon className="h-3.5 w-3.5" />}
+                <span>Thanks for your feedback ({isHelpful ? 'Helpful' : 'Not helpful'})</span>
+            </div>
+        );
+    }
+
+    const pickedRating = draft?.rating === 'up' || draft?.rating === 'down' ? draft.rating : '';
+    const reason = String(draft?.reason || '');
+    return (
+        <div className="mt-1 ml-8 max-w-[85%] rounded-xl border border-gray-200 bg-white p-2">
+            <div className="flex items-center gap-2">
+                <button
+                    type="button"
+                    onClick={() => onPickRating('up')}
+                    disabled={isSubmitting}
+                    className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${pickedRating === 'up'
+                        ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
+                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                        }`}
+                >
+                    <span className="inline-flex items-center gap-1.5">
+                        <ThumbsUpIcon />
+                        Helpful
+                    </span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => onPickRating('down')}
+                    disabled={isSubmitting}
+                    className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${pickedRating === 'down'
+                        ? 'border-rose-300 bg-rose-50 text-rose-700'
+                        : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+                        }`}
+                >
+                    <span className="inline-flex items-center gap-1.5">
+                        <ThumbsDownIcon />
+                        Not helpful
+                    </span>
+                </button>
+            </div>
+            {pickedRating ? (
+                <div className="mt-2">
+                    <input
+                        type="text"
+                        value={reason}
+                        onChange={(e) => onReasonChange(e.target.value)}
+                        placeholder="Additional reason (optional)"
+                        disabled={isSubmitting}
+                        className="w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs outline-none focus:border-violet-300"
+                    />
+                    <div className="mt-1.5 flex items-center justify-between">
+                        <span className="text-[11px] text-gray-400">{reason.length}/{MAX_FEEDBACK_REASON_CHARS}</span>
+                        <button
+                            type="button"
+                            onClick={onSubmit}
+                            disabled={isSubmitting}
+                            className="rounded-lg bg-violet-600 px-2.5 py-1 text-xs text-white disabled:opacity-60"
+                        >
+                            {isSubmitting ? 'Submitting...' : 'Submit feedback'}
+                        </button>
+                    </div>
+                    {errorText ? <p className="mt-1 text-[11px] text-rose-500">{errorText}</p> : null}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
 export default function LearningAiAssistant({
     onClose,
     lessonTitle = '',
@@ -100,6 +222,10 @@ export default function LearningAiAssistant({
     const [message, setMessage] = useState('');
     const [chatMessages, setChatMessages] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [feedbackDrafts, setFeedbackDrafts] = useState({});
+    const [feedbackSubmitting, setFeedbackSubmitting] = useState({});
+    const [feedbackErrors, setFeedbackErrors] = useState({});
+    const [canSubmitFeedback, setCanSubmitFeedback] = useState(false);
     const activeRequestRef = useRef(null);
     const messagesEndRef = useRef(null);
 
@@ -141,6 +267,24 @@ export default function LearningAiAssistant({
         }
     }, []);
 
+    useEffect(() => {
+        const syncUserState = () => {
+            setCanSubmitFeedback(Boolean(getUser()));
+        };
+        const onStorage = (event) => {
+            if (event?.key && event.key !== 'lms_user') return;
+            syncUserState();
+        };
+
+        syncUserState();
+        window.addEventListener('lms_user_updated', syncUserState);
+        window.addEventListener('storage', onStorage);
+        return () => {
+            window.removeEventListener('lms_user_updated', syncUserState);
+            window.removeEventListener('storage', onStorage);
+        };
+    }, []);
+
     const sendMessage = async (rawText, options = {}) => {
         const text = String(rawText || '').trim();
         if (!text || isLoading) return;
@@ -150,9 +294,25 @@ export default function LearningAiAssistant({
             activeRequestRef.current = null;
         }
 
-        const assistantId = `assistant_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        const nextMessages = [...chatMessages, { role: 'user', content: text }, { id: assistantId, role: 'assistant', content: '' }];
-        const requestMessages = [...chatMessages, { role: 'user', content: text }].map((item) => ({
+        const userMessage = {
+            id: createMessageId(),
+            role: 'user',
+            content: text,
+            createdAt: new Date().toISOString(),
+        };
+        const assistantId = createMessageId();
+        const assistantMessage = {
+            id: assistantId,
+            role: 'assistant',
+            content: '',
+            createdAt: new Date().toISOString(),
+            feedback: null,
+            intent: null,
+            provider: null,
+            intentConfidence: null,
+        };
+        const nextMessages = [...chatMessages, userMessage, assistantMessage];
+        const requestMessages = [...chatMessages, userMessage].map((item) => ({
             role: item.role,
             content: String(item.content || ''),
         }));
@@ -204,6 +364,32 @@ export default function LearningAiAssistant({
                 const reader = res.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = '';
+
+                const consumeEvent = (event) => {
+                    if (event?.type === 'delta') {
+                        const delta = String(event?.text || '');
+                        if (!delta) return;
+                        streamedText += delta;
+                        applyAssistant((item) => ({ ...item, content: streamedText }));
+                        return;
+                    }
+                    if (event?.type === 'final') {
+                        const meta = event?.meta && typeof event.meta === 'object' ? event.meta : {};
+                        applyAssistant((item) => ({
+                            ...item,
+                            intent: String(meta?.intent || '').trim() || null,
+                            provider: String(meta?.provider || '').trim() || null,
+                            intentConfidence: Number.isFinite(Number(meta?.intentConfidence))
+                                ? Math.max(0, Math.min(1, Number(meta.intentConfidence)))
+                                : null,
+                        }));
+                        return;
+                    }
+                    if (event?.type === 'error') {
+                        throw new Error(String(event?.error || 'stream_error'));
+                    }
+                };
+
                 while (true) {
                     const { value, done } = await reader.read();
                     if (done) break;
@@ -219,21 +405,30 @@ export default function LearningAiAssistant({
                         } catch {
                             continue;
                         }
-                        if (event?.type === 'delta') {
-                            const delta = String(event?.text || '');
-                            if (!delta) continue;
-                            streamedText += delta;
-                            applyAssistant((item) => ({ ...item, content: streamedText }));
-                        } else if (event?.type === 'error') {
-                            throw new Error(String(event?.error || 'stream_error'));
-                        }
+                        consumeEvent(event);
+                    }
+                }
+                const trailing = String(buffer || '').trim();
+                if (trailing) {
+                    try {
+                        consumeEvent(JSON.parse(trailing));
+                    } catch {
+                        // ignore trailing parse errors
                     }
                 }
             } else {
                 const data = await res.json().catch(() => ({}));
                 const content = String(data?.content || '').trim();
                 streamedText = content;
-                applyAssistant((item) => ({ ...item, content: content || 'เกิดข้อผิดพลาด กรุณาลองใหม่ครับ' }));
+                applyAssistant((item) => ({
+                    ...item,
+                    content: content || 'เกิดข้อผิดพลาด กรุณาลองใหม่ครับ',
+                    intent: String(data?.meta?.intent || '').trim() || null,
+                    provider: String(data?.meta?.provider || '').trim() || null,
+                    intentConfidence: Number.isFinite(Number(data?.meta?.intentConfidence))
+                        ? Math.max(0, Math.min(1, Number(data.meta.intentConfidence)))
+                        : null,
+                }));
             }
             if (!streamedText.trim()) {
                 applyAssistant((item) => ({ ...item, content: 'ไม่พบข้อความตอบกลับ ลองใหม่อีกครั้งได้เลยครับ' }));
@@ -250,6 +445,96 @@ export default function LearningAiAssistant({
             activeRequestRef.current = null;
             setIsLoading(false);
         }
+    };
+
+    const submitFeedback = async (targetMessage) => {
+        const messageId = String(targetMessage?.id || '');
+        if (!messageId || !canSubmitFeedback) return;
+        if (feedbackSubmitting[messageId]) return;
+        if (targetMessage?.feedback?.rating) return;
+
+        const draft = feedbackDrafts[messageId] || {};
+        const rating = draft.rating === 'up' || draft.rating === 'down' ? draft.rating : '';
+        if (!rating) {
+            setFeedbackErrors((prev) => ({ ...prev, [messageId]: 'Please choose Helpful or Not helpful before submitting.' }));
+            return;
+        }
+        const reason = String(draft.reason || '').slice(0, MAX_FEEDBACK_REASON_CHARS).trim();
+
+        setFeedbackSubmitting((prev) => ({ ...prev, [messageId]: true }));
+        setFeedbackErrors((prev) => ({ ...prev, [messageId]: '' }));
+        try {
+            const res = await fetch('/api/chat-feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    messageId,
+                    rating,
+                    reason,
+                    assistantMessage: String(targetMessage.content || ''),
+                    conversation: buildRecentConversationForFeedback(chatMessages, messageId),
+                    pagePath: typeof window !== 'undefined' ? window.location.pathname : '',
+                    intent: String(targetMessage?.intent || '').trim(),
+                    provider: String(targetMessage?.provider || '').trim(),
+                    intentConfidence: Number(targetMessage?.intentConfidence || 0),
+                }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                if (res.status === 401) {
+                    throw new Error('Please sign in to submit feedback.');
+                }
+                throw new Error(String(data?.error || 'Unable to submit feedback.'));
+            }
+
+            setChatMessages((prev) => prev.map((item) => (
+                item.id === messageId
+                    ? {
+                        ...item,
+                        feedback: {
+                            rating,
+                            reason,
+                            submittedAt: String(data?.submittedAt || new Date().toISOString()),
+                            feedbackId: String(data?.feedbackId || ''),
+                        },
+                    }
+                    : item
+            )));
+            setFeedbackDrafts((prev) => {
+                const next = { ...prev };
+                delete next[messageId];
+                return next;
+            });
+        } catch (err) {
+            setFeedbackErrors((prev) => ({ ...prev, [messageId]: String(err?.message || 'Feedback submission failed.') }));
+        } finally {
+            setFeedbackSubmitting((prev) => ({ ...prev, [messageId]: false }));
+        }
+    };
+
+    const handlePickRating = (messageId, rating) => {
+        setFeedbackDrafts((prev) => {
+            const current = prev[messageId] || {};
+            return {
+                ...prev,
+                [messageId]: {
+                    rating,
+                    reason: String(current.reason || ''),
+                },
+            };
+        });
+        setFeedbackErrors((prev) => ({ ...prev, [messageId]: '' }));
+    };
+
+    const handleReasonChange = (messageId, value) => {
+        const reason = String(value || '').slice(0, MAX_FEEDBACK_REASON_CHARS);
+        setFeedbackDrafts((prev) => ({
+            ...prev,
+            [messageId]: {
+                rating: prev?.[messageId]?.rating || '',
+                reason,
+            },
+        }));
     };
 
     const handleSend = () => {
@@ -311,17 +596,31 @@ export default function LearningAiAssistant({
                 ) : (
                     <div className="space-y-3">
                         {chatMessages.map((msg, i) => (
-                            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                <div
-                                    className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
-                                        msg.role === 'user'
-                                            ? 'bg-violet-600 text-white rounded-br-md'
-                                            : 'bg-gray-100 text-gray-700 rounded-bl-md'
-                                    }`}
-                                    style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                                >
-                                    {msg.content}
+                            <div key={msg?.id || i}>
+                                <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                    <div
+                                        className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                                            msg.role === 'user'
+                                                ? 'bg-violet-600 text-white rounded-br-md'
+                                                : 'bg-gray-100 text-gray-700 rounded-bl-md'
+                                        }`}
+                                        style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                                    >
+                                        {msg.content}
+                                    </div>
                                 </div>
+                                {msg.role === 'assistant' ? (
+                                    <AssistantFeedbackBox
+                                        message={msg}
+                                        canSubmitFeedback={canSubmitFeedback}
+                                        draft={feedbackDrafts[msg.id] || null}
+                                        isSubmitting={Boolean(feedbackSubmitting[msg.id])}
+                                        errorText={feedbackErrors[msg.id] || ''}
+                                        onPickRating={(rating) => handlePickRating(msg.id, rating)}
+                                        onReasonChange={(value) => handleReasonChange(msg.id, value)}
+                                        onSubmit={() => submitFeedback(msg)}
+                                    />
+                                ) : null}
                             </div>
                         ))}
                         {isLoading && chatMessages[chatMessages.length - 1]?.content === '' ? <TypingIndicator /> : null}
