@@ -26,14 +26,23 @@ function toQuestionAnswers(q) {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function toLegacyQuestions(questions = []) {
-    return questions.map((q) => ({
-        id: q.id,
-        question: q.questionText,
-        options: Array.isArray(q.choicesJson) ? q.choicesJson : [],
-        correctAnswer: toQuestionAnswers(q),
-    }));
+function toLegacyQuestions(questions = [], { includeAnswers = true } = {}) {
+    return questions.map((q) => {
+        const base = {
+            id: q.id,
+            question: q.questionText,
+            options: Array.isArray(q.choicesJson) ? q.choicesJson : [],
+        };
+        return includeAnswers ? { ...base, correctAnswer: toQuestionAnswers(q) } : base;
+    });
 }
+
+function hasStaffAccess(session) {
+    return Boolean(session?.isAdmin) || String(session?.role || '').toLowerCase() === 'instructor';
+}
+
+// Learners may only touch quizzes of courses they are actively enrolled in.
+const INACTIVE_ENROLLMENT_STATUSES = ['cancelled', 'dropped'];
 
 function toLegacyQuizSummary(quiz) {
     return {
@@ -46,12 +55,12 @@ function toLegacyQuizSummary(quiz) {
     };
 }
 
-function toLegacyQuizDetail(quiz) {
+function toLegacyQuizDetail(quiz, { includeAnswers = true } = {}) {
     return {
         ...toLegacyQuizSummary(quiz),
         courseId: quiz.courseId,
         sectionId: quiz.sectionId,
-        questions: toLegacyQuestions(quiz.questions || []),
+        questions: toLegacyQuestions(quiz.questions || [], { includeAnswers }),
         attempts: quiz.quiz_attempts || [],
     };
 }
@@ -68,26 +77,65 @@ function resolveDisplayName(user) {
  */
 export async function GET(request) {
     try {
-        const { response } = await requireSession(request);
+        const { session, response } = await requireSession(request);
         if (response) return response;
+        const staff = hasStaffAccess(session);
 
         const { searchParams } = new URL(request.url);
         const courseId = searchParams.get('courseId');
         const quizId = searchParams.get('id');
 
         if (quizId) {
+            const parsedQuizId = parseInt(quizId, 10);
+            if (!Number.isInteger(parsedQuizId)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 });
             const quiz = await prisma.quiz.findUnique({
-                where: { id: parseInt(quizId, 10) },
+                where: { id: parsedQuizId },
                 include: {
                     questions: { orderBy: { orderNo: 'asc' } },
                     quiz_attempts: true,
                 },
             });
             if (!quiz) return NextResponse.json({ error: 'Quiz not found' }, { status: 404 });
-            return NextResponse.json(toLegacyQuizDetail(quiz));
+            if (staff) return NextResponse.json(toLegacyQuizDetail(quiz));
+
+            const enrollment = await prisma.enrollment.findFirst({
+                where: {
+                    userId: session.uid,
+                    courseId: quiz.courseId,
+                    status: { notIn: INACTIVE_ENROLLMENT_STATUSES },
+                },
+                select: { id: true },
+            });
+            if (!enrollment) return NextResponse.json({ error: 'Enrollment required' }, { status: 403 });
+
+            const ownAttempts = (quiz.quiz_attempts || [])
+                .filter((a) => a.enrollmentId === enrollment.id)
+                .map((a) => ({
+                    id: a.id,
+                    attemptNo: a.attemptNo,
+                    score: a.score,
+                    passed: a.passed,
+                    submittedAt: a.submittedAt,
+                }));
+            return NextResponse.json({
+                ...toLegacyQuizDetail({ ...quiz, quiz_attempts: [] }, { includeAnswers: false }),
+                attempts: ownAttempts,
+            });
         }
 
         if (!courseId) return NextResponse.json({ error: 'courseId required' }, { status: 400 });
+
+        if (!staff) {
+            const enrollment = await prisma.enrollment.findFirst({
+                where: {
+                    userId: session.uid,
+                    courseId: parseInt(courseId, 10),
+                    status: { notIn: INACTIVE_ENROLLMENT_STATUSES },
+                },
+                select: { id: true },
+            });
+            if (!enrollment) return NextResponse.json({ error: 'Enrollment required' }, { status: 403 });
+        }
 
         const quizzes = await prisma.quiz.findMany({
             where: { courseId: parseInt(courseId, 10), status: 'published' },
@@ -203,7 +251,7 @@ export async function POST(request) {
             },
             select: { id: true, status: true, completedAt: true },
         });
-        if (!enrollment) {
+        if (!enrollment || INACTIVE_ENROLLMENT_STATUSES.includes(String(enrollment.status || '').toLowerCase())) {
             return NextResponse.json({ error: 'Enrollment required' }, { status: 403 });
         }
 

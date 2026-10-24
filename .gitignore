@@ -62,3 +62,4 @@ next-lms/public/messageImage_*.png
 # Local-only Docker overrides
 # -----------------------------
 docker-compose.override.yml
+.claude/settings.local.json
