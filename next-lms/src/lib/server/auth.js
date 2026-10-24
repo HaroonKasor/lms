@@ -68,6 +68,12 @@ export async function requireSession(request, options = {}) {
 }
 
 export function getRequestIp(request) {
+    // cf-connecting-ip is client-settable unless the app is only reachable via Cloudflare,
+    // so it is honoured only when TRUST_CF_CONNECTING_IP=true.
+    if (String(process.env.TRUST_CF_CONNECTING_IP || '').trim().toLowerCase() === 'true') {
+        const cfIp = request?.headers?.get('cf-connecting-ip');
+        if (cfIp && cfIp.trim()) return cfIp.trim();
+    }
     const forwarded = request?.headers?.get('x-forwarded-for');
     if (forwarded) {
         const first = forwarded.split(',')[0]?.trim();

@@ -3,8 +3,8 @@ import {
     LOGOUT_MARKER_COOKIE_NAME,
     SESSION_COOKIE_NAME,
     verifySessionToken,
-} from './src/lib/session';
-import { takeRateLimitToken } from './src/lib/server/rate-limit';
+} from './lib/session';
+import { takeRateLimitToken } from './lib/server/rate-limit';
 
 const AUTH_PAGES = ['/login', '/register'];
 const PUBLIC_API_PATHS = new Set([
@@ -19,6 +19,10 @@ const PUBLIC_API_PATHS = new Set([
     '/api/contact',
     '/api/cookie-consent',
     '/api/newsletter/subscribe',
+    '/api/health',
+    '/api/auth/touch',
+    // Protected by its own CRON_SECRET check inside the route.
+    '/api/cron/enrollment-expiry-reminders',
 ]);
 const USER_PROTECTED_PREFIXES = [
     '/dashboard',
@@ -52,7 +56,14 @@ const API_RATE_LIMIT_AUTH = {
     maxAttempts: 30,
 };
 
+// Keep in sync with getRequestIp() in src/lib/server/auth.js.
+// cf-connecting-ip is client-settable unless the app is only reachable via Cloudflare,
+// so it is honoured only when TRUST_CF_CONNECTING_IP=true.
 function getRequestIp(request) {
+    if (String(process.env.TRUST_CF_CONNECTING_IP || '').trim().toLowerCase() === 'true') {
+        const cfIp = request.headers.get('cf-connecting-ip');
+        if (cfIp && cfIp.trim()) return cfIp.trim();
+    }
     const forwarded = request.headers.get('x-forwarded-for');
     if (forwarded) {
         const first = forwarded.split(',')[0]?.trim();
@@ -61,6 +72,16 @@ function getRequestIp(request) {
     const realIp = request.headers.get('x-real-ip');
     if (realIp) return realIp.trim();
     return 'unknown';
+}
+
+// Anonymous read-only endpoints used by public pages.
+function isPublicApiRequest(request, pathname) {
+    if (PUBLIC_API_PATHS.has(pathname)) return true;
+    if (request.method !== 'GET') return false;
+    const params = request.nextUrl.searchParams;
+    if (pathname === '/api/courses') return params.get('public') === 'true';
+    if (pathname === '/api/course-reviews') return params.has('courseId');
+    return false;
 }
 
 function jsonError(status, message, extraHeaders = {}) {
@@ -161,7 +182,7 @@ function resolveLegacyPhpRoute(request) {
     }
 }
 
-export async function middleware(request) {
+export async function proxy(request) {
     const { pathname } = request.nextUrl;
     const isApiRequest = pathname === '/api' || pathname.startsWith('/api/');
 
@@ -207,7 +228,7 @@ export async function middleware(request) {
             }
         }
 
-        const isPublicApi = PUBLIC_API_PATHS.has(pathname);
+        const isPublicApi = isPublicApiRequest(request, pathname);
         if (!isPublicApi && !isAuthenticated) {
             return jsonError(401, 'Unauthorized');
         }
